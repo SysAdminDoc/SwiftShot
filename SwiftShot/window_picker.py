@@ -11,7 +11,6 @@ Matches Greenshot's CaptureForm.cs behavior precisely:
   - Z to toggle zoom magnifier
   - Arrow keys to nudge cursor 1px, Ctrl+Arrow 10px
   - Enter/Click to confirm, Escape to cancel
-  - NO tooltip info, NO window title, NO dimensions - just green highlight
   - Pre-enumerate windows to avoid self-detection issues
 """
 
@@ -23,14 +22,15 @@ from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap, QFont, QCursor
 from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QTimer, pyqtSignal
 
+from utils import virtual_geometry
+
 
 # ---------------------------------------------------------------------------
 # Rectangle Animator (matches Greenshot's RectangleAnimator)
 # ---------------------------------------------------------------------------
 
 class RectAnimator:
-    """Animates a rectangle with Quintic ease-out over 700ms,
-    matching Greenshot's windowAnimator exactly."""
+    """Animates a rectangle with Quintic ease-out over 700ms."""
 
     def __init__(self, duration_ms=700):
         self.duration = duration_ms / 1000.0
@@ -54,7 +54,6 @@ class RectAnimator:
         self.active = True
 
     def animate_from_cursor(self, cursor_pos, target):
-        """Greenshot: new Rectangle(cursorPos, Size.Empty) -> captureRect"""
         target = QRectF(target)
         self.start_rect = QRectF(cursor_pos.x(), cursor_pos.y(), 0, 0)
         self.end_rect = QRectF(target)
@@ -94,11 +93,10 @@ WNDENUMPROC = WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 class WindowPicker(QWidget):
     """Greenshot-exact interactive window capture overlay."""
 
-    element_selected = pyqtSignal(QRect)   # screen-coord rect
-    switch_to_region = pyqtSignal()        # Space pressed
+    element_selected = pyqtSignal(QRect)
+    switch_to_region = pyqtSignal()
     cancelled = pyqtSignal()
 
-    # Greenshot's exact colors from CaptureForm.cs
     GREEN_FILL = QColor(60, 179, 113, 50)
     OVERLAY_PEN = QColor(0, 0, 0, 50)
     DARK_OVERLAY = QColor(0, 0, 0, 40)
@@ -121,16 +119,11 @@ class WindowPicker(QWidget):
         self._magnifier_zoom = 4
         self._own_hwnd = 0
 
-        desktop = QApplication.desktop()
-        if desktop:
-            geo = desktop.geometry()
-            self._desktop_offset = QPoint(geo.x(), geo.y())
-            self._desktop_geo = geo
-            self.setFixedSize(geo.width(), geo.height())
-            self.move(geo.x(), geo.y())
-        else:
-            self._desktop_offset = QPoint(0, 0)
-            self._desktop_geo = QRect(0, 0, 1920, 1080)
+        geo = virtual_geometry()
+        self._desktop_offset = QPoint(geo.x(), geo.y())
+        self._desktop_geo = geo
+        self.setFixedSize(geo.width(), geo.height())
+        self.move(geo.x(), geo.y())
 
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint |
@@ -149,7 +142,6 @@ class WindowPicker(QWidget):
         self._timer.start(16)
 
     def show_spanning(self):
-        """Show the overlay spanning all monitors."""
         self.show()
         if hasattr(self, '_desktop_geo'):
             self.setGeometry(self._desktop_geo)
@@ -218,8 +210,6 @@ class WindowPicker(QWidget):
             screen_rect.width(), screen_rect.height()
         )
 
-    # --- Window detection ---
-
     def _enum_direct_children(self, parent_hwnd):
         if parent_hwnd in self._child_cache:
             return self._child_cache[parent_hwnd]
@@ -268,8 +258,6 @@ class WindowPicker(QWidget):
             self._current_hwnd = 0
             self._current_rect = QRect()
 
-    # --- Keyboard: PgDown/PgUp/Space/Z/Arrows ---
-
     def _page_down(self):
         if not self._current_hwnd:
             return
@@ -295,13 +283,9 @@ class WindowPicker(QWidget):
         self.current_pos = self.mapFromGlobal(QCursor.pos())
         self._update_highlight()
 
-    # --- Timer ---
-
     def _on_tick(self):
         if self._animator.tick():
             self.update()
-
-    # --- Paint ---
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -323,19 +307,30 @@ class WindowPicker(QWidget):
 
         if self._show_magnifier:
             self._draw_magnifier(painter)
+
+        # Mode hints
+        hints = []
         if self._parent_stack:
             depth = len(self._parent_stack)
-            txt = f"Child level {depth}  |  PgUp: back  |  PgDown: deeper"
-            font = QFont("Segoe UI", 9)
-            painter.setFont(font)
-            fm = painter.fontMetrics()
+            hints.append(f"Child level {depth}  |  PgUp: back  |  PgDown: deeper")
+        hints.append("Space: Region Mode  |  Z: magnifier  |  Esc: cancel")
+
+        font = QFont("Segoe UI", 9)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+
+        for i, txt in enumerate(hints):
             tw, th = fm.horizontalAdvance(txt) + 20, fm.height() + 10
-            x, y = self.width() - tw - 12, self.height() - th - 12
+            if i == 0 and self._parent_stack:
+                x, y = self.width() - tw - 12, self.height() - th - 12
+            else:
+                x, y = (self.width() - tw) // 2, 10 + i * (th + 4)
             painter.setBrush(QColor(30, 30, 46, 200))
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(x, y, tw, th, 4, 4)
             painter.setPen(QColor(205, 214, 244))
             painter.drawText(x + 10, y + fm.ascent() + 5, txt)
+
         painter.end()
 
     def _draw_magnifier(self, painter):
@@ -359,8 +354,6 @@ class WindowPicker(QWidget):
         painter.drawLine(cx - 8, cy, cx + 8, cy)
         painter.drawLine(cx, cy - 8, cx, cy + 8)
 
-    # --- Events ---
-
     def mouseMoveEvent(self, event):
         self.current_pos = event.pos()
         self._update_highlight()
@@ -369,21 +362,29 @@ class WindowPicker(QWidget):
         if event.button() == Qt.LeftButton:
             if not self._current_rect.isEmpty():
                 self._timer.stop()
-                self.element_selected.emit(self._current_rect)
+                self.hide()  # Hide immediately so screen is unblocked
+                result_rect = self._to_display(self._current_rect)
+                # Defer signal emission -- closing from inside mousePressEvent
+                # with BypassWindowManagerHint can freeze the screen
+                QTimer.singleShot(50, lambda: self.element_selected.emit(result_rect))
         elif event.button() == Qt.RightButton:
             self._timer.stop()
-            self.cancelled.emit()
+            self.hide()
+            QTimer.singleShot(50, lambda: self.cancelled.emit())
 
     def keyPressEvent(self, event):
         key = event.key()
         step = 10 if event.modifiers() & Qt.ControlModifier else 1
         if key == Qt.Key_Escape:
             self._timer.stop()
-            self.cancelled.emit()
+            self.hide()
+            QTimer.singleShot(50, lambda: self.cancelled.emit())
         elif key in (Qt.Key_Return, Qt.Key_Enter):
             if not self._current_rect.isEmpty():
                 self._timer.stop()
-                self.element_selected.emit(self._current_rect)
+                self.hide()
+                result_rect = self._to_display(self._current_rect)
+                QTimer.singleShot(50, lambda: self.element_selected.emit(result_rect))
         elif key == Qt.Key_Space:
             self._timer.stop()
             self.switch_to_region.emit()

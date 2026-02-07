@@ -6,10 +6,6 @@ Strategy (zero-dependency first):
   1. Windows 10/11 built-in OCR via PowerShell (WinRT OcrEngine)
   2. pytesseract (if Tesseract is installed)
   3. Graceful error with install instructions
-
-The Windows OCR engine supports 25+ languages and uses the
-same API as Greenshot's Win10 OCR plugin, without requiring
-any UWP/WinRT package installation.
 """
 
 import os
@@ -17,8 +13,9 @@ import sys
 import subprocess
 import tempfile
 
+from logger import log
 
-# PowerShell script that invokes Windows.Media.Ocr.OcrEngine
+
 _WIN_OCR_SCRIPT = r'''
 param([string]$ImagePath)
 
@@ -30,7 +27,6 @@ try {
     $null = [Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime]
     $null = [Windows.Storage.Streams.RandomAccessStream,Windows.Storage.Streams,ContentType=WindowsRuntime]
 
-    # Helper to await WinRT async operations
     $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
         $_.Name -eq 'AsTask' -and
         $_.GetParameters().Count -eq 1 -and
@@ -77,17 +73,17 @@ catch {
 
 
 def ocr_pixmap(pixmap):
-    """Run OCR on a QPixmap. Returns extracted text string.
-    Raises RuntimeError on failure.
-    """
-    # Save pixmap to a temp PNG file
+    """Run OCR on a QPixmap. Returns extracted text string."""
+    log.info("Starting OCR on pixmap")
     tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
     tmp_path = tmp.name
     tmp.close()
 
     try:
         pixmap.save(tmp_path, 'PNG')
-        return ocr_file(tmp_path)
+        result = ocr_file(tmp_path)
+        log.info(f"OCR extracted {len(result)} characters")
+        return result
     finally:
         try:
             os.unlink(tmp_path)
@@ -99,7 +95,7 @@ def ocr_file(image_path):
     """Run OCR on an image file. Returns extracted text string."""
     image_path = os.path.abspath(image_path)
 
-    # Strategy 1: Windows built-in OCR (Win10/11, zero dependencies)
+    # Strategy 1: Windows built-in OCR
     if sys.platform == 'win32':
         try:
             return _ocr_windows(image_path)
@@ -108,18 +104,19 @@ def ocr_file(image_path):
     else:
         win_error = "Not on Windows"
 
-    # Strategy 2: pytesseract (if available)
+    # Strategy 2: pytesseract
+    tess_error = None
     try:
         return _ocr_tesseract(image_path)
     except ImportError:
-        pass
+        tess_error = "pytesseract not installed"
     except Exception as e:
         tess_error = str(e)
 
-    # Both failed
     raise RuntimeError(
         f"OCR failed.\n\n"
-        f"Windows OCR: {win_error}\n\n"
+        f"Windows OCR: {win_error}\n"
+        f"Tesseract OCR: {tess_error}\n\n"
         f"To use Tesseract OCR as fallback:\n"
         f"  1. Install Tesseract: winget install UB-Mannheim.TesseractOCR\n"
         f"  2. Install Python binding: pip install pytesseract\n"
@@ -129,25 +126,31 @@ def ocr_file(image_path):
 
 def _ocr_windows(image_path):
     """Use Windows 10/11 WinRT OcrEngine via PowerShell."""
-    result = subprocess.run(
-        [
-            'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-            '-Command', _WIN_OCR_SCRIPT
-        ],
-        capture_output=True, text=True, timeout=30,
-        env={**os.environ, 'ImagePath': image_path}
+    script_tmp = tempfile.NamedTemporaryFile(
+        suffix='.ps1', mode='w', delete=False, encoding='utf-8'
     )
+    script_path = script_tmp.name
+    script_tmp.write(_WIN_OCR_SCRIPT)
+    script_tmp.close()
 
-    # PowerShell passes $ImagePath via environment variable
-    # Re-run with the correct argument passing method
-    result = subprocess.run(
-        [
-            'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-            '-Command',
-            f'$ImagePath = "{image_path}"; ' + _WIN_OCR_SCRIPT.replace('param([string]$ImagePath)', '')
-        ],
-        capture_output=True, text=True, timeout=30
-    )
+    try:
+        creation_flags = 0
+        if sys.platform == 'win32':
+            creation_flags = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run(
+            [
+                'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-File', script_path, '-ImagePath', image_path
+            ],
+            capture_output=True, text=True, timeout=30,
+            encoding='utf-8', errors='replace',
+            creationflags=creation_flags
+        )
+    finally:
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
 
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
@@ -174,11 +177,15 @@ def _ocr_tesseract(image_path):
 def is_ocr_available():
     """Quick check if any OCR engine is available."""
     if sys.platform == 'win32':
-        # Windows 10+ should always have OCR available
-        import platform
-        build = int(platform.version().split('.')[-1])
-        if build >= 10240:  # Windows 10+
-            return True
+        try:
+            import platform
+            version_str = platform.version().split('.')[-1]
+            # Safely parse build number (handles insider builds with letters)
+            build = int(''.join(c for c in version_str if c.isdigit()) or '0')
+            if build >= 10240:
+                return True
+        except Exception:
+            pass
     try:
         import pytesseract
         return True

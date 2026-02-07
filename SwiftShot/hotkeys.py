@@ -16,6 +16,8 @@ import threading
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from logger import log
+
 
 # Win32 constants
 WH_KEYBOARD_LL = 13
@@ -74,6 +76,7 @@ class _HotkeyBridge(QObject):
                 cb()
             except Exception as e:
                 print(f"Hotkey callback error ({combo}): {e}")
+                log.error(f"Hotkey callback error ({combo}): {e}")
 
 
 class HotkeyManager:
@@ -100,7 +103,7 @@ class HotkeyManager:
             return
         modifiers, vk = self._parse_combo(key_combo)
         if vk is None:
-            print(f"Warning: Could not parse hotkey: {key_combo}")
+            log.warning(f"Could not parse hotkey: {key_combo}")
             return
         self._bindings[(modifiers, vk)] = key_combo
         self._callbacks[key_combo] = callback
@@ -140,9 +143,8 @@ class HotkeyManager:
 
     def _get_active_modifiers(self):
         """Check which modifier keys are currently held down."""
-        gas = ctypes.WinDLL('user32', use_last_error=True).GetAsyncKeyState
-        gas.argtypes = [ctypes.c_int]
-        gas.restype = ctypes.c_short
+        # Use the cached user32 ref from the hook thread (set in _hook_thread)
+        gas = self._user32.GetAsyncKeyState
         mods = MOD_NONE
         if gas(VK_LSHIFT) & 0x8000 or gas(VK_RSHIFT) & 0x8000:
             mods |= MOD_SHIFT
@@ -245,7 +247,7 @@ class HotkeyManager:
 
         if not self._hook:
             err = ctypes.get_last_error()
-            print(f"Warning: Could not install keyboard hook (error {err})")
+            log.warning(f"Could not install keyboard hook (error {err})")
             return
 
         # Message pump -- required for LL hooks to work
