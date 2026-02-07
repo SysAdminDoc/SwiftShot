@@ -8,7 +8,7 @@
       1. Detect or install Python 3.8+ (via winget)
       2. Create an isolated virtual environment
       3. Install PyQt5 and Pillow into the venv
-      4. Generate a program icon (.ico)
+      4. Extract the embedded program icon (.ico)
       5. Create a single-click launcher (SwiftShot.cmd)
       6. Create Desktop and Start Menu shortcuts
       7. Optionally add SwiftShot to Windows Startup
@@ -389,61 +389,106 @@ if ($result -match "ALL_OK") {
 }
 
 # ===================================================================
-# STEP 4: Generate Application Icon
+# STEP 4: Application Icon (embedded - no dependencies required)
 # ===================================================================
 Write-Section "Step 4: Application Icon"
 
 if (Test-Path $IconPath) {
     Write-OK "Icon already exists: $IconName"
 } else {
-    Write-Step "Generating application icon..."
+    Write-Step "Extracting embedded application icon..."
 
-    $iconScript = @"
-import sys
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    sizes = [(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)]
-    images = []
-    for size in sizes:
-        img = Image.new('RGBA', size, (0,0,0,0))
-        draw = ImageDraw.Draw(img)
-        w, h = size
-        pad = max(1, w // 16)
-        # Rounded rect background
-        draw.rounded_rectangle([pad, pad, w-pad-1, h-pad-1],
-                               radius=max(2, w//5),
-                               fill=(137, 180, 250, 255))
-        # Camera body
-        bx1, by1 = int(w*0.18), int(h*0.28)
-        bx2, by2 = int(w*0.82), int(h*0.75)
-        draw.rounded_rectangle([bx1, by1, bx2, by2],
-                               radius=max(1, w//12),
-                               fill=(30, 30, 46, 255))
-        # Lens circle
-        cx, cy = w//2, int(h*0.48)
-        lr = int(w*0.16)
-        draw.ellipse([cx-lr, cy-lr, cx+lr, cy+lr], fill=(137, 180, 250, 255))
-        # Inner lens
-        ilr = max(1, lr//2)
-        draw.ellipse([cx-ilr, cy-ilr, cx+ilr, cy+ilr], fill=(30, 30, 46, 255))
-        # Flash
-        fx = int(w*0.25)
-        fy = int(h*0.32)
-        fs = max(1, w//10)
-        draw.rectangle([fx, fy, fx+fs, fy+max(1,fs//2)], fill=(249, 226, 175, 255))
-        images.append(img)
-    images[0].save(sys.argv[1], format='ICO', sizes=[(s[0],s[1]) for s in sizes],
-                   append_images=images[1:])
-    print("ICON_OK")
-except Exception as e:
-    print(f"ICON_FAIL:{e}")
-"@
+    # Multi-size ICO (16/24/32/48/64/128/256) embedded as base64.
+    # Catppuccin Mocha themed camera icon - blue rounded rect + dark camera body.
+    $iconB64 = "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"
 
-    $result = & $VenvPython -c $iconScript $IconPath 2>&1
-    if ($result -match "ICON_OK") {
-        Write-OK "Icon generated: $IconName"
-    } else {
-        Write-Warn "Could not generate icon: $result"
+    try {
+        $iconBytes = [System.Convert]::FromBase64String($iconB64)
+        [System.IO.File]::WriteAllBytes($IconPath, $iconBytes)
+        Write-OK "Icon extracted: $IconName ($($iconBytes.Length) bytes, 7 sizes)"
+    } catch {
+        Write-Warn "Could not extract icon: $_"
         Write-Info "Shortcuts will use default icon."
     }
 }
