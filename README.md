@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="swiftshot.png" alt="SwiftShot" width="128" height="128">
-</p>
-
 <h1 align="center">SwiftShot</h1>
 
 <p align="center">
