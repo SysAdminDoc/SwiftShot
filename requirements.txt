@@ -1,0 +1,10 @@
+config
+ctypes.wintypes
+logger
+numpy
+ocr_dialog
+Pillow
+PyQt5
+urllib.error
+urllib.request
+utils
