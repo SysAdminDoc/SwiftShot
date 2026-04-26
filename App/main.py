@@ -5,6 +5,26 @@ Entry point with logging and update checking.
 
 import sys
 import os
+from pathlib import Path
+from PyQt5.QtGui import QIcon
+
+
+# codex-branding:start
+def _branding_icon_path() -> Path:
+    candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir / "icon.png")
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "icon.png")
+    current = Path(__file__).resolve()
+    candidates.extend([current.parent / "icon.png", current.parent.parent / "icon.png", current.parent.parent.parent / "icon.png"])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return Path("icon.png")
+# codex-branding:end
 
 
 def main():
@@ -24,6 +44,10 @@ def main():
         pass
 
     app = QApplication(sys.argv)
+
+    branding_icon = QIcon(str(_branding_icon_path()))
+
+    app.setWindowIcon(branding_icon)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("SwiftShot")
     app.setOrganizationName("SwiftShot")
