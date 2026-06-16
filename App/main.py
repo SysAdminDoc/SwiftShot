@@ -52,16 +52,16 @@ def main():
     app.setApplicationName("SwiftShot")
     app.setOrganizationName("SwiftShot")
 
-    # Apply global dark theme
-    try:
-        from theme import apply_dark_theme
-        apply_dark_theme(app)
-    except Exception as e:
-        log.warning(f"Could not apply theme: {e}")
-
     # Config is auto-loaded during import
     from config import config
     log.info("Configuration loaded")
+
+    # Apply global theme
+    try:
+        from theme import apply_theme
+        apply_theme(app, config.THEME)
+    except Exception as e:
+        log.warning(f"Could not apply theme: {e}")
 
     # Start application
     from app import SwiftShotApp

@@ -5,12 +5,14 @@ def test_config_save_and_reload_round_trip(fresh_config):
     cfg = fresh_config.Config()
     cfg.OUTPUT_FILE_FORMAT = "jpg"
     cfg.OUTPUT_JPEG_QUALITY = 72
+    cfg.THEME = "light"
     cfg.save()
 
     reloaded = fresh_config.Config()
 
     assert reloaded.OUTPUT_FILE_FORMAT == "jpg"
     assert reloaded.OUTPUT_JPEG_QUALITY == 72
+    assert reloaded.THEME == "light"
 
 
 def test_config_reset_preserves_state_and_restores_defaults(fresh_config):

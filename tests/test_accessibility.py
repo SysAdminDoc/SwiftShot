@@ -57,6 +57,7 @@ def test_settings_controls_have_accessible_names(qapp):
 
     assert dialog.accessibleName() == "SwiftShot preferences"
     assert dialog.tabs.accessibleName() == "Preferences sections"
+    assert dialog.theme.findData("light") >= 0
     assert unnamed == []
 
 

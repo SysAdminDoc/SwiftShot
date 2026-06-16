@@ -152,18 +152,12 @@ class SwiftShotApp:
         return None
 
     def _create_tray_icon(self):
+        from theme import stylesheet_for_theme
+
         self.tray_icon = QSystemTrayIcon(self.app.windowIcon(), self.app)
 
         menu = QMenu()
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #1e1e2e; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 6px; padding: 4px;
-            }
-            QMenu::item { padding: 6px 28px 6px 20px; border-radius: 4px; }
-            QMenu::item:selected { background-color: #45475a; }
-            QMenu::separator { height: 1px; background-color: #313244; margin: 4px 8px; }
-        """)
+        menu.setStyleSheet(stylesheet_for_theme(config.THEME))
 
         menu.addAction("Capture Menu\tPrintScreen").triggered.connect(self.show_capture_menu)
         menu.addSeparator()
@@ -831,8 +825,13 @@ class SwiftShotApp:
     def show_settings(self):
         try:
             from settings_dialog import SettingsDialog
+            from theme import stylesheet_for_theme
+
             dialog = SettingsDialog()
-            dialog.exec_()
+            if dialog.exec_() == QDialog.Accepted and self.tray_icon:
+                menu = self.tray_icon.contextMenu()
+                if menu:
+                    menu.setStyleSheet(stylesheet_for_theme(config.THEME))
         except Exception as e:
             log.error(f"Settings dialog failed: {e}")
 

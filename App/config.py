@@ -95,6 +95,7 @@ class Config:
     CHECK_FOR_UPDATES = True
     SHOW_NOTIFICATIONS = True
     LANGUAGE = "en-US"
+    THEME = "dark"  # "dark" or "light"
 
     # --- Persisted State ---
     LAST_SAVE_DIR = ""

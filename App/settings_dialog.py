@@ -10,13 +10,15 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QComboBox, QCheckBox, QSpinBox, QLineEdit,
     QSlider, QColorDialog, QPushButton, QLabel, QGroupBox,
-    QFileDialog, QMessageBox, QDialogButtonBox, QAbstractButton
+    QFileDialog, QMessageBox, QDialogButtonBox, QAbstractButton,
+    QApplication
 )
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import FILENAME_TEMPLATE_HELP, OUTPUT_FILE_FORMAT_CHOICES, config
 from logger import log
+from theme import THEME_LABELS, apply_theme, colors_for_theme, stylesheet_for_theme
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +69,15 @@ class HotkeyRecorderWidget(QLineEdit):
         self.setFocus()
 
     def _update_style(self, recording):
+        colors = colors_for_theme(config.THEME)
         if recording:
             self.setAccessibleDescription(
                 "Recording shortcut. Press a key combination, Escape to cancel, or Backspace to clear."
             )
             self.setStyleSheet(
-                "QLineEdit { background-color: #45475a; color: #f9e2af; "
-                "border: 2px solid #f9e2af; border-radius: 4px; "
+                f"QLineEdit {{ background-color: {colors['BG3']}; "
+                f"color: {colors['YELLOW']}; "
+                f"border: 2px solid {colors['YELLOW']}; border-radius: 4px; "
                 "padding: 4px 8px; min-height: 24px; font-weight: bold; }"
             )
         else:
@@ -81,10 +85,11 @@ class HotkeyRecorderWidget(QLineEdit):
                 "Shortcut field. Press Enter or click to start recording a key combination."
             )
             self.setStyleSheet(
-                "QLineEdit { background-color: #313244; color: #cdd6f4; "
-                "border: 1px solid #45475a; border-radius: 4px; "
+                f"QLineEdit {{ background-color: {colors['BG2']}; "
+                f"color: {colors['TEXT_PRI']}; "
+                f"border: 1px solid {colors['BORDER']}; border-radius: 4px; "
                 "padding: 4px 8px; min-height: 24px; }"
-                "QLineEdit:hover { border-color: #89b4fa; }"
+                f"QLineEdit:hover {{ border-color: {colors['ACCENT']}; }}"
             )
 
     def mousePressEvent(self, event):
@@ -251,6 +256,13 @@ class SettingsDialog(QDialog):
         self.show_notifications.setChecked(config.SHOW_NOTIFICATIONS)
         layout.addRow(self.show_notifications)
 
+        self.theme = QComboBox()
+        for value, label in THEME_LABELS.items():
+            self.theme.addItem(label, value)
+        idx = self.theme.findData(config.THEME)
+        self.theme.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addRow("Theme:", self.theme)
+
         self.play_sound = QCheckBox("Play capture sound")
         self.play_sound.setChecked(config.PLAY_CAMERA_SOUND)
         layout.addRow(self.play_sound)
@@ -297,6 +309,7 @@ class SettingsDialog(QDialog):
         # Timed capture settings
         timer_group = QGroupBox("Timed Capture")
         tg_layout = QFormLayout(timer_group)
+        colors = colors_for_theme(config.THEME)
 
         self.timer_enabled = QCheckBox("Enable timed capture by default")
         self.timer_enabled.setChecked(config.CAPTURE_TIMER_ENABLED)
@@ -313,7 +326,7 @@ class SettingsDialog(QDialog):
         tg_layout.addRow("Timer duration:", self.timer_seconds)
 
         tg_layout.addRow(QLabel(
-            "<i style='color:#6c7086;'>Select region/window first, then interact<br>"
+            f"<i style='color:{colors['TEXT_MUT']};'>Select region/window first, then interact<br>"
             "with the screen during countdown. Screenshot<br>"
             "is taken when timer ends.</i>"
         ))
@@ -333,7 +346,8 @@ class SettingsDialog(QDialog):
             "Click any shortcut field, then press the desired key combination.\n"
             "Press Backspace to clear a binding. Press Escape to cancel."
         )
-        info.setStyleSheet("color: #a6adc8; font-size: 9pt;")
+        colors = colors_for_theme(config.THEME)
+        info.setStyleSheet(f"color: {colors['TEXT_SEC']}; font-size: 9pt;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -371,7 +385,7 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel(""))
 
         restart_note = QLabel(
-            "<i style='color:#f9e2af;'>Hotkey changes require a restart "
+            f"<i style='color:{colors['YELLOW']};'>Hotkey changes require a restart "
             "to take effect.</i>"
         )
         form.addRow(restart_note)
@@ -558,12 +572,13 @@ class SettingsDialog(QDialog):
         layout.addRow(QLabel(""))
 
         config_label = QLabel(f"Config: {config.config_dir}")
-        config_label.setStyleSheet("color: #6c7086; font-size: 9pt;")
+        colors = colors_for_theme(config.THEME)
+        config_label.setStyleSheet(f"color: {colors['TEXT_MUT']}; font-size: 9pt;")
         config_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addRow(config_label)
 
         log_label = QLabel(f"Log: {config.log_file}")
-        log_label.setStyleSheet("color: #6c7086; font-size: 9pt;")
+        log_label.setStyleSheet(f"color: {colors['TEXT_MUT']}; font-size: 9pt;")
         log_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addRow(log_label)
 
@@ -589,10 +604,11 @@ class SettingsDialog(QDialog):
         self.filename_preview.setText(preview)
 
     def _update_color_btn(self, btn, color):
+        colors = colors_for_theme(config.THEME)
         btn.setStyleSheet(
             f"QPushButton {{ background-color: {color.name()}; "
-            f"border: 2px solid #45475a; border-radius: 4px; }}"
-            f"QPushButton:hover {{ border-color: #89b4fa; }}"
+            f"border: 2px solid {colors['BORDER']}; border-radius: 4px; }}"
+            f"QPushButton:hover {{ border-color: {colors['ACCENT']}; }}"
         )
 
     def _pick_highlight_color(self):
@@ -676,6 +692,7 @@ class SettingsDialog(QDialog):
         config.CHECK_FOR_UPDATES = self.check_updates.isChecked()
         config.SHOW_NOTIFICATIONS = self.show_notifications.isChecked()
         config.PLAY_CAMERA_SOUND = self.play_sound.isChecked()
+        config.THEME = self.theme.currentData() or "dark"
         actions = ["editor", "save", "clipboard"]
         config.AFTER_CAPTURE_ACTION = actions[
             self.after_capture.currentIndex()]
@@ -733,6 +750,10 @@ class SettingsDialog(QDialog):
             pass
 
         config.save()
+        app = QApplication.instance()
+        if app:
+            apply_theme(app, config.THEME)
+        self.setStyleSheet(self._stylesheet())
         log.info("Settings saved")
         self.accept()
 
@@ -752,6 +773,7 @@ class SettingsDialog(QDialog):
             self.minimize_tray: "Minimize to system tray",
             self.check_updates: "Check for updates on startup",
             self.show_notifications: "Show tray notifications",
+            self.theme: "Application theme",
             self.play_sound: "Play capture sound",
             self.after_capture: "After capture action",
             self.copy_path: "Copy file path to clipboard after saving",
@@ -821,61 +843,4 @@ class SettingsDialog(QDialog):
         return " ".join(text.replace("&", "").split())
 
     def _stylesheet(self):
-        return """
-            QDialog { background-color: #1e1e2e; }
-            QTabWidget::pane {
-                border: 1px solid #45475a; border-radius: 6px;
-                background: #1e1e2e;
-            }
-            QTabBar::tab {
-                background: #313244; color: #cdd6f4; padding: 8px 14px;
-                border: 1px solid #45475a; border-bottom: none;
-                border-top-left-radius: 6px; border-top-right-radius: 6px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background: #1e1e2e; border-bottom: 2px solid #89b4fa;
-            }
-            QTabBar::tab:hover { background: #45475a; }
-            QWidget { background-color: #1e1e2e; color: #cdd6f4; }
-            QLabel { background: transparent; }
-            QCheckBox { spacing: 8px; }
-            QCheckBox::indicator { width: 16px; height: 16px; }
-            QGroupBox {
-                font-weight: bold; border: 1px solid #45475a;
-                border-radius: 6px; margin-top: 8px; padding-top: 16px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin; left: 12px; padding: 0 4px;
-            }
-            QComboBox, QSpinBox, QLineEdit {
-                background-color: #313244; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 4px;
-                padding: 4px 8px; min-height: 24px;
-            }
-            QComboBox:hover, QSpinBox:hover, QLineEdit:hover {
-                border-color: #89b4fa;
-            }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView {
-                background-color: #313244; color: #cdd6f4;
-                selection-background-color: #45475a;
-                border: 1px solid #45475a;
-            }
-            QSlider::groove:horizontal {
-                height: 6px; background: #313244; border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                width: 16px; height: 16px; margin: -5px 0;
-                background: #89b4fa; border-radius: 8px;
-            }
-            QPushButton {
-                background-color: #313244; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 6px;
-                padding: 6px 16px; min-height: 24px;
-            }
-            QPushButton:hover {
-                background-color: #45475a; border-color: #89b4fa;
-            }
-            QDialogButtonBox QPushButton { min-width: 80px; }
-        """
+        return stylesheet_for_theme(config.THEME)

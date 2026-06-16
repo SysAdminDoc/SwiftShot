@@ -26,6 +26,25 @@ EDITOR_COLORS = {
     "YELLOW": "#f9e2af",
     "CANVAS_BG": "#313244",
 }
+DARK_COLORS = EDITOR_COLORS
+LIGHT_COLORS = {
+    "BG0": "#e2e8f0",
+    "BG1": "#f8fafc",
+    "BG2": "#ffffff",
+    "BG3": "#dbeafe",
+    "BORDER": "#94a3b8",
+    "TEXT_PRI": "#0f172a",
+    "TEXT_SEC": "#334155",
+    "TEXT_MUT": "#475569",
+    "ACCENT": "#2563eb",
+    "ACCENT_D": "#bfdbfe",
+    "ACCENT_H": "#1d4ed8",
+    "RED": "#b91c1c",
+    "GREEN": "#166534",
+    "YELLOW": "#854d0e",
+    "CANVAS_BG": "#e2e8f0",
+}
+THEME_LABELS = {"dark": "Dark", "light": "Light"}
 
 
 DARK_STYLESHEET = """
@@ -313,25 +332,76 @@ QFileDialog {
 """
 
 
+_DARK_HEX_ROLES = (
+    ("#1e1e2e", "BG1"),
+    ("#181825", "BG0"),
+    ("#313244", "BG2"),
+    ("#45475a", "BG3"),
+    ("#585b70", "BORDER"),
+    ("#cdd6f4", "TEXT_PRI"),
+    ("#a6adc8", "TEXT_SEC"),
+    ("#6c7086", "TEXT_MUT"),
+    ("#89b4fa", "ACCENT"),
+    ("#f38ba8", "RED"),
+    ("#f9e2af", "YELLOW"),
+)
+
+
+def _build_stylesheet(colors):
+    stylesheet = DARK_STYLESHEET
+    for dark_hex, role in _DARK_HEX_ROLES:
+        stylesheet = stylesheet.replace(dark_hex, colors[role])
+    return stylesheet
+
+
+LIGHT_STYLESHEET = _build_stylesheet(LIGHT_COLORS)
+
+
+def normalize_theme(theme_name):
+    return theme_name if theme_name in THEME_LABELS else "dark"
+
+
+def colors_for_theme(theme_name):
+    return LIGHT_COLORS if normalize_theme(theme_name) == "light" else DARK_COLORS
+
+
+def stylesheet_for_theme(theme_name):
+    return LIGHT_STYLESHEET if normalize_theme(theme_name) == "light" else DARK_STYLESHEET
+
+
+def _apply_palette(app: QApplication, colors):
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(colors["BG1"]))
+    palette.setColor(QPalette.WindowText, QColor(colors["TEXT_PRI"]))
+    palette.setColor(QPalette.Base, QColor(colors["BG2"]))
+    palette.setColor(QPalette.AlternateBase, QColor(colors["BG3"]))
+    palette.setColor(QPalette.ToolTipBase, QColor(colors["BG2"]))
+    palette.setColor(QPalette.ToolTipText, QColor(colors["TEXT_PRI"]))
+    palette.setColor(QPalette.Text, QColor(colors["TEXT_PRI"]))
+    palette.setColor(QPalette.Button, QColor(colors["BG2"]))
+    palette.setColor(QPalette.ButtonText, QColor(colors["TEXT_PRI"]))
+    palette.setColor(QPalette.BrightText, QColor(colors["RED"]))
+    palette.setColor(QPalette.Link, QColor(colors["ACCENT"]))
+    palette.setColor(QPalette.Highlight, QColor(colors["ACCENT"]))
+    highlight_text = "#ffffff" if colors is LIGHT_COLORS else colors["BG1"]
+    palette.setColor(QPalette.HighlightedText, QColor(highlight_text))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(colors["TEXT_MUT"]))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(colors["TEXT_MUT"]))
+    app.setPalette(palette)
+
+
+def apply_theme(app: QApplication, theme_name="dark"):
+    """Apply the selected SwiftShot theme to the application."""
+    colors = colors_for_theme(theme_name)
+    _apply_palette(app, colors)
+    app.setStyleSheet(stylesheet_for_theme(theme_name))
+
+
 def apply_dark_theme(app: QApplication):
     """Apply the dark theme to the application."""
-    # Set palette
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(EDITOR_COLORS["BG1"]))
-    palette.setColor(QPalette.WindowText, QColor(EDITOR_COLORS["TEXT_PRI"]))
-    palette.setColor(QPalette.Base, QColor(EDITOR_COLORS["BG2"]))
-    palette.setColor(QPalette.AlternateBase, QColor(EDITOR_COLORS["BG3"]))
-    palette.setColor(QPalette.ToolTipBase, QColor(EDITOR_COLORS["BG2"]))
-    palette.setColor(QPalette.ToolTipText, QColor(EDITOR_COLORS["TEXT_PRI"]))
-    palette.setColor(QPalette.Text, QColor(EDITOR_COLORS["TEXT_PRI"]))
-    palette.setColor(QPalette.Button, QColor(EDITOR_COLORS["BG2"]))
-    palette.setColor(QPalette.ButtonText, QColor(EDITOR_COLORS["TEXT_PRI"]))
-    palette.setColor(QPalette.BrightText, QColor(EDITOR_COLORS["RED"]))
-    palette.setColor(QPalette.Link, QColor(EDITOR_COLORS["ACCENT"]))
-    palette.setColor(QPalette.Highlight, QColor(EDITOR_COLORS["ACCENT"]))
-    palette.setColor(QPalette.HighlightedText, QColor(EDITOR_COLORS["BG1"]))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(EDITOR_COLORS["TEXT_MUT"]))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(EDITOR_COLORS["TEXT_MUT"]))
-    
-    app.setPalette(palette)
-    app.setStyleSheet(DARK_STYLESHEET)
+    apply_theme(app, "dark")
+
+
+def apply_light_theme(app: QApplication):
+    """Apply the light theme to the application."""
+    apply_theme(app, "light")

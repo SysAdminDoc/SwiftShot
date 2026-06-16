@@ -12,6 +12,7 @@ from PyQt5.QtGui import QCursor, QFont
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import config
+from theme import colors_for_theme, stylesheet_for_theme
 
 
 class CaptureMenu(QMenu):
@@ -55,34 +56,7 @@ class CaptureMenu(QMenu):
         return self._timer_seconds
 
     def _apply_style(self):
-        self.setStyleSheet("""
-            QMenu {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                border: 2px solid #45475a;
-                border-radius: 8px;
-                padding: 6px 4px;
-                font-family: 'Segoe UI';
-                font-size: 10pt;
-            }
-            QMenu::item {
-                padding: 8px 40px 8px 24px;
-                border-radius: 4px;
-                margin: 1px 4px;
-            }
-            QMenu::item:selected {
-                background-color: #45475a;
-                color: #cdd6f4;
-            }
-            QMenu::item:disabled {
-                color: #585b70;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #313244;
-                margin: 5px 12px;
-            }
-        """)
+        self.setStyleSheet(stylesheet_for_theme(config.THEME))
 
     def _build_menu(self):
         screens = QApplication.screens()
@@ -208,41 +182,42 @@ class CaptureMenu(QMenu):
     def _add_timer_widget(self):
         """Embed a timer checkbox + spinner into the menu as a QWidgetAction."""
         timer_widget = QWidget()
+        colors = colors_for_theme(config.THEME)
         timer_widget.setAccessibleName("Timed capture controls")
         timer_widget.setAccessibleDescription(
             "Enable delayed capture and set the countdown duration."
         )
-        timer_widget.setStyleSheet("""
-            QWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
+        timer_widget.setStyleSheet(f"""
+            QWidget {{
+                background-color: {colors['BG1']};
+                color: {colors['TEXT_PRI']};
                 padding: 0px;
-            }
-            QCheckBox {
+            }}
+            QCheckBox {{
                 spacing: 6px;
                 font-size: 10pt;
-            }
-            QCheckBox::indicator {
+            }}
+            QCheckBox::indicator {{
                 width: 15px; height: 15px;
-                border: 1px solid #585b70;
+                border: 1px solid {colors['BORDER']};
                 border-radius: 3px;
-                background-color: #313244;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #89b4fa;
-                border-color: #89b4fa;
-            }
-            QSpinBox {
-                background-color: #313244; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 3px;
+                background-color: {colors['BG2']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {colors['ACCENT']};
+                border-color: {colors['ACCENT']};
+            }}
+            QSpinBox {{
+                background-color: {colors['BG2']}; color: {colors['TEXT_PRI']};
+                border: 1px solid {colors['BORDER']}; border-radius: 3px;
                 padding: 2px 4px; min-height: 20px;
                 font-size: 9pt;
-            }
-            QSpinBox:hover { border-color: #89b4fa; }
-            QLabel {
-                font-size: 9pt; color: #a6adc8;
+            }}
+            QSpinBox:hover {{ border-color: {colors['ACCENT']}; }}
+            QLabel {{
+                font-size: 9pt; color: {colors['TEXT_SEC']};
                 background: transparent;
-            }
+            }}
         """)
 
         layout = QHBoxLayout(timer_widget)
