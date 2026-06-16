@@ -218,6 +218,15 @@ That's it. OCR uses the Windows built-in WinRT OCR engine (no install needed on 
 
 ---
 
+## Testing
+
+```powershell
+pip install -r requirements-dev.txt
+pytest
+```
+
+---
+
 ## License
 
 [GPL-3.0](LICENSE)
