@@ -108,29 +108,50 @@ def pil_to_qpixmap(pil_image):
     qimg = QImage(data, img.width, img.height, 4 * img.width, QImage.Format_RGBA8888)
     return QPixmap.fromImage(qimg.copy())
 
-# ── Photoshop-inspired Color Variables ───────────────────────────────────────
+# ── Shared Color Variables ───────────────────────────────────────────────────
+try:
+    from theme import EDITOR_COLORS
+except ImportError:
+    EDITOR_COLORS = {
+        "BG0": "#181825",
+        "BG1": "#1e1e2e",
+        "BG2": "#313244",
+        "BG3": "#45475a",
+        "BORDER": "#45475a",
+        "TEXT_PRI": "#cdd6f4",
+        "TEXT_SEC": "#a6adc8",
+        "TEXT_MUT": "#6c7086",
+        "ACCENT": "#89b4fa",
+        "ACCENT_D": "#313244",
+        "ACCENT_H": "#b4befe",
+        "RED": "#f38ba8",
+        "GREEN": "#a6e3a1",
+        "YELLOW": "#f9e2af",
+        "CANVAS_BG": "#313244",
+    }
+
+
 class C:
-    """Photoshop-inspired dark palette."""
-    BG0      = "#1b1b1b"   # deepest background (panel floors)
-    BG1      = "#252525"   # panel backgrounds
-    BG2      = "#2d2d2d"   # raised surfaces
-    BG3      = "#383838"   # hover / selection backgrounds
-    BORDER   = "#424242"   # borders and separators
-    TEXT_PRI = "#e8e8e8"   # primary text
-    TEXT_SEC = "#a0a0a0"   # secondary text
-    TEXT_MUT = "#606060"   # muted / placeholder text
-    ACCENT   = "#4d9bff"   # Photoshop-like blue accent
-    ACCENT_D = "#1a3260"   # accent dim (selection bg)
-    ACCENT_H = "#6cb2ff"   # accent hover
-    RED      = "#ff6060"
-    GREEN    = "#60cc80"
-    YELLOW   = "#ffcc44"
-    # Canvas background (PS medium gray)
-    CANVAS_BG = "#3c3c3c"
+    """Shared Catppuccin Mocha palette used by the main app and editor."""
+    BG0 = EDITOR_COLORS["BG0"]
+    BG1 = EDITOR_COLORS["BG1"]
+    BG2 = EDITOR_COLORS["BG2"]
+    BG3 = EDITOR_COLORS["BG3"]
+    BORDER = EDITOR_COLORS["BORDER"]
+    TEXT_PRI = EDITOR_COLORS["TEXT_PRI"]
+    TEXT_SEC = EDITOR_COLORS["TEXT_SEC"]
+    TEXT_MUT = EDITOR_COLORS["TEXT_MUT"]
+    ACCENT = EDITOR_COLORS["ACCENT"]
+    ACCENT_D = EDITOR_COLORS["ACCENT_D"]
+    ACCENT_H = EDITOR_COLORS["ACCENT_H"]
+    RED = EDITOR_COLORS["RED"]
+    GREEN = EDITOR_COLORS["GREEN"]
+    YELLOW = EDITOR_COLORS["YELLOW"]
+    CANVAS_BG = EDITOR_COLORS["CANVAS_BG"]
 
 # ── QSS Stylesheet ────────────────────────────────────────────────────────────
 def build_ss():
-    """Photoshop-inspired dark QSS theme."""
+    """Build the shared dark QSS theme."""
     return f"""
 QMainWindow, QWidget {{
     background-color: {C.BG1};

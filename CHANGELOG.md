@@ -4,6 +4,7 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [v2.6.5] - 2026-06-16
 
+- Unified the image editor colors with the main Catppuccin Mocha application theme.
 - Fixed editor smudge undefined-coordinate handling and removed runtime package installation from optional background removal.
 - Added Windows CI for Ruff, pytest, and portable PyInstaller build verification.
 - Added a pytest suite covering config persistence, version metadata, utility helpers, capture cropping, and OCR fallback behavior.

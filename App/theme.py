@@ -8,6 +8,26 @@ from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtCore import Qt
 
 
+# Shared Catppuccin Mocha roles used by both the main app and editor.
+EDITOR_COLORS = {
+    "BG0": "#181825",
+    "BG1": "#1e1e2e",
+    "BG2": "#313244",
+    "BG3": "#45475a",
+    "BORDER": "#45475a",
+    "TEXT_PRI": "#cdd6f4",
+    "TEXT_SEC": "#a6adc8",
+    "TEXT_MUT": "#6c7086",
+    "ACCENT": "#89b4fa",
+    "ACCENT_D": "#313244",
+    "ACCENT_H": "#b4befe",
+    "RED": "#f38ba8",
+    "GREEN": "#a6e3a1",
+    "YELLOW": "#f9e2af",
+    "CANVAS_BG": "#313244",
+}
+
+
 DARK_STYLESHEET = """
 QWidget {
     background-color: #1e1e2e;
@@ -297,21 +317,21 @@ def apply_dark_theme(app: QApplication):
     """Apply the dark theme to the application."""
     # Set palette
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor("#1e1e2e"))
-    palette.setColor(QPalette.WindowText, QColor("#cdd6f4"))
-    palette.setColor(QPalette.Base, QColor("#313244"))
-    palette.setColor(QPalette.AlternateBase, QColor("#45475a"))
-    palette.setColor(QPalette.ToolTipBase, QColor("#313244"))
-    palette.setColor(QPalette.ToolTipText, QColor("#cdd6f4"))
-    palette.setColor(QPalette.Text, QColor("#cdd6f4"))
-    palette.setColor(QPalette.Button, QColor("#313244"))
-    palette.setColor(QPalette.ButtonText, QColor("#cdd6f4"))
-    palette.setColor(QPalette.BrightText, QColor("#f38ba8"))
-    palette.setColor(QPalette.Link, QColor("#89b4fa"))
-    palette.setColor(QPalette.Highlight, QColor("#89b4fa"))
-    palette.setColor(QPalette.HighlightedText, QColor("#1e1e2e"))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#6c7086"))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#6c7086"))
+    palette.setColor(QPalette.Window, QColor(EDITOR_COLORS["BG1"]))
+    palette.setColor(QPalette.WindowText, QColor(EDITOR_COLORS["TEXT_PRI"]))
+    palette.setColor(QPalette.Base, QColor(EDITOR_COLORS["BG2"]))
+    palette.setColor(QPalette.AlternateBase, QColor(EDITOR_COLORS["BG3"]))
+    palette.setColor(QPalette.ToolTipBase, QColor(EDITOR_COLORS["BG2"]))
+    palette.setColor(QPalette.ToolTipText, QColor(EDITOR_COLORS["TEXT_PRI"]))
+    palette.setColor(QPalette.Text, QColor(EDITOR_COLORS["TEXT_PRI"]))
+    palette.setColor(QPalette.Button, QColor(EDITOR_COLORS["BG2"]))
+    palette.setColor(QPalette.ButtonText, QColor(EDITOR_COLORS["TEXT_PRI"]))
+    palette.setColor(QPalette.BrightText, QColor(EDITOR_COLORS["RED"]))
+    palette.setColor(QPalette.Link, QColor(EDITOR_COLORS["ACCENT"]))
+    palette.setColor(QPalette.Highlight, QColor(EDITOR_COLORS["ACCENT"]))
+    palette.setColor(QPalette.HighlightedText, QColor(EDITOR_COLORS["BG1"]))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(EDITOR_COLORS["TEXT_MUT"]))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(EDITOR_COLORS["TEXT_MUT"]))
     
     app.setPalette(palette)
     app.setStyleSheet(DARK_STYLESHEET)
