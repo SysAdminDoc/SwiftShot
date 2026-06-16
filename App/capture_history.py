@@ -9,13 +9,24 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QApplication, QGridLayout, QFrame,
-    QMenu, QAction, QToolTip
+    QMenu, QAction, QToolTip, QMessageBox
 )
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QCursor, QIcon
 from PyQt5.QtCore import Qt, QSize, pyqtSignal, QPoint
 
 from config import config
 from logger import log
+
+
+IMAGE_EXTENSIONS = ['*.png', '*.jpg', '*.jpeg', '*.bmp']
+
+
+def _history_files(history_dir):
+    files = []
+    if os.path.isdir(history_dir):
+        for ext in IMAGE_EXTENSIONS:
+            files.extend(glob.glob(os.path.join(history_dir, ext)))
+    return files
 
 
 class HistoryThumbnail(QFrame):
@@ -211,10 +222,7 @@ class CaptureHistoryDialog(QDialog):
             return
 
         # Get image files sorted by modification time (newest first)
-        extensions = ['*.png', '*.jpg', '*.jpeg', '*.bmp']
-        files = []
-        for ext in extensions:
-            files.extend(glob.glob(os.path.join(history_dir, ext)))
+        files = _history_files(history_dir)
         files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
         files = files[:config.CAPTURE_HISTORY_MAX]
 
@@ -247,6 +255,17 @@ class CaptureHistoryDialog(QDialog):
         self.pin_to_desktop.emit(filepath)
 
     def _on_delete(self, filepath):
+        filename = os.path.basename(filepath)
+        response = QMessageBox.question(
+            self,
+            "Delete Capture",
+            f"Delete '{filename}' from capture history?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if response != QMessageBox.Yes:
+            return
+
         try:
             os.remove(filepath)
         except Exception:
@@ -257,12 +276,25 @@ class CaptureHistoryDialog(QDialog):
         history_dir = config.CAPTURE_HISTORY_DIR
         if not os.path.isdir(history_dir):
             return
-        for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp']:
-            for f in glob.glob(os.path.join(history_dir, ext)):
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
+        files = _history_files(history_dir)
+        if not files:
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Clear Capture History",
+            f"Delete all {len(files)} capture history image(s)?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if response != QMessageBox.Yes:
+            return
+
+        for f in files:
+            try:
+                os.remove(f)
+            except Exception:
+                pass
         self._load_history()
 
 
@@ -279,10 +311,7 @@ def save_to_history(pixmap):
         pixmap.save(filepath, "PNG")
 
         # Prune old entries
-        extensions = ['*.png', '*.jpg', '*.jpeg', '*.bmp']
-        files = []
-        for ext in extensions:
-            files.extend(glob.glob(os.path.join(history_dir, ext)))
+        files = _history_files(history_dir)
         files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
 
         for old_file in files[config.CAPTURE_HISTORY_MAX:]:
