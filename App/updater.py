@@ -10,10 +10,10 @@ import urllib.error
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from logger import log
+from config import config
 
 GITHUB_REPO = "SysAdminDoc/SwiftShot"
 RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-CURRENT_VERSION = "2.0.0"
 
 
 def _parse_version(v):
@@ -53,13 +53,13 @@ class UpdateChecker(QThread):
             html_url = data.get("html_url", "")
 
             remote = _parse_version(tag)
-            local = _parse_version(CURRENT_VERSION)
+            local = _parse_version(config.APP_VERSION)
 
             if remote > local:
-                log.info(f"Update available: {tag} (current: {CURRENT_VERSION})")
+                log.info(f"Update available: {tag} (current: {config.APP_VERSION})")
                 self.update_available.emit(tag, html_url)
             else:
-                log.info(f"Up to date (current: {CURRENT_VERSION}, latest: {tag})")
+                log.info(f"Up to date (current: {config.APP_VERSION}, latest: {tag})")
 
         except urllib.error.URLError as e:
             log.warning(f"Update check failed (network): {e}")

@@ -6,7 +6,7 @@
 .DESCRIPTION
     End-to-end build pipeline:
       1. Verifies Python 3.8+ and Inno Setup 6 (optional)
-      2. Creates an isolated build venv with PyInstaller + Pillow
+      2. Creates an isolated build venv with PyInstaller + app dependencies
       3. Generates swiftshot.ico (multi-size, from generate_icon.py)
       4. Builds SwiftShot-Portable.exe  (PyInstaller --onefile)
       5. Builds SwiftShot\ directory     (PyInstaller --onedir)
@@ -57,13 +57,35 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 # -------------------------------------------------------------------
+# Version helpers
+# -------------------------------------------------------------------
+function Get-AppVersionFromConfig([string]$ProjectPath) {
+    $configPath = Join-Path $ProjectPath "config.py"
+    $configText = Get-Content -LiteralPath $configPath -Raw
+    if ($configText -match 'APP_VERSION\s*=\s*"([^"]+)"') {
+        return $Matches[1]
+    }
+    throw "APP_VERSION not found in config.py"
+}
+
+function Get-VersionParts([string]$Version) {
+    $parts = $Version.Split('.') | ForEach-Object { [int]$_ }
+    while ($parts.Count -lt 4) { $parts += 0 }
+    return $parts[0..3]
+}
+
+# -------------------------------------------------------------------
 # Configuration
 # -------------------------------------------------------------------
 $AppName     = "SwiftShot"
-$AppVersion  = "2.0.0"
 $ProjectDir  = $PSScriptRoot
+$AppVersion  = Get-AppVersionFromConfig $ProjectDir
+$AppVersionParts = Get-VersionParts $AppVersion
+$AppVersion4 = $AppVersionParts -join '.'
+$AppVersionTuple = $AppVersionParts -join ', '
 $DistDir     = Join-Path $ProjectDir "dist"
 $BuildDir    = Join-Path $ProjectDir "build"
+$SpecDir     = Join-Path $BuildDir "spec"
 $VenvDir     = Join-Path $ProjectDir ".build-venv"
 $IconName    = "swiftshot.ico"
 $IconPath    = Join-Path $ProjectDir $IconName
@@ -76,7 +98,8 @@ $SourceFiles = @(
     "editor.py", "hotkeys.py", "monitor_picker.py", "ocr.py", "ocr_dialog.py",
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
-    "scrolling_capture.py", "utils.py"
+    "scrolling_capture.py", "utils.py", "logger.py", "updater.py",
+    "generate_icon.py"
 )
 
 # Hidden imports for PyInstaller (lazy imports it can't detect)
@@ -85,6 +108,7 @@ $HiddenImports = @(
     "overlay", "window_picker", "monitor_picker", "editor",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
     "capture_history", "countdown_overlay", "scrolling_capture", "utils",
+    "logger", "updater",
     "PyQt5.QtPrintSupport", "PyQt5.sip",
     "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets"
 )
@@ -136,8 +160,10 @@ if ($Clean) {
     }
     foreach ($f in @("*.spec")) {
         Get-ChildItem $ProjectDir -Filter $f | ForEach-Object {
-            Write-Step "Removing $($_.Name)"
-            Remove-Item $_.FullName -Force
+            if ($_.Name -ne "SwiftShot.spec") {
+                Write-Step "Removing $($_.Name)"
+                Remove-Item $_.FullName -Force
+            }
         }
     }
     Write-OK "Clean complete."
@@ -228,7 +254,8 @@ if (Test-Path $VenvPython) {
 Write-Step "Installing/upgrading build dependencies..."
 $ErrorActionPreference = 'Continue'
 & $VenvPython -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-& $VenvPython -m pip install --upgrade pyinstaller pillow pyqt5 --quiet 2>&1 | Out-Null
+$RequirementsFile = Join-Path $ProjectDir "requirements.txt"
+& $VenvPython -m pip install --upgrade "pyinstaller>=6.0.0" -r $RequirementsFile --quiet 2>&1 | Out-Null
 $pipExit = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($pipExit -ne 0) {
@@ -240,6 +267,16 @@ if ($pipExit -ne 0) {
 $ErrorActionPreference = 'Continue'
 $pyiVer = & $VenvPython -m PyInstaller --version 2>&1
 $ErrorActionPreference = 'Stop'
+if ($pyiVer -match '^(\d+)\.(\d+)') {
+    $pyiMajor = [int]$Matches[1]
+    if ($pyiMajor -lt 6) {
+        Write-Err "PyInstaller 6.0.0+ is required; found $pyiVer."
+        exit 1
+    }
+} else {
+    Write-Err "Could not parse PyInstaller version: $pyiVer"
+    exit 1
+}
 Write-OK "PyInstaller: $pyiVer"
 
 # ===================================================================
@@ -274,6 +311,7 @@ $commonArgs = @(
     "--noconfirm"
     "--clean"
     "--paths=$ProjectDir"
+    "--specpath=$SpecDir"
 )
 
 # Hidden imports
@@ -300,7 +338,7 @@ if (Test-Path $IconPath) {
 }
 
 # Exclude bloat modules
-foreach ($mod in @('tkinter','matplotlib','numpy','scipy','pandas',
+foreach ($mod in @('tkinter','matplotlib','scipy','pandas',
                    'test','unittest','pydoc','doctest','lib2to3','setuptools',
                    'PyQt5.Qt3D','PyQt5.QtWebEngine','PyQt5.QtWebEngineCore',
                    'PyQt5.QtWebEngineWidgets','PyQt5.QtMultimedia',
@@ -320,15 +358,16 @@ if ($DebugBuild) {
 }
 
 # Version info file -- gives the exe professional Properties tab info
-$VersionFile = Join-Path $ProjectDir "version_info.txt"
-if (-not (Test-Path $VersionFile)) {
-    Write-Step "Generating version info for exe properties..."
-    $versionContent = @"
+New-Item -Path $BuildDir -ItemType Directory -Force | Out-Null
+New-Item -Path $SpecDir -ItemType Directory -Force | Out-Null
+$VersionFile = Join-Path $BuildDir "version_info.txt"
+Write-Step "Generating version info for exe properties..."
+$versionContent = @"
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 0, 0),
-    prodvers=(2, 0, 0, 0),
+    filevers=($AppVersionTuple),
+    prodvers=($AppVersionTuple),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -341,23 +380,22 @@ VSVersionInfo(
       [
         StringTable(
           u'040904B0',
-          [StringStruct(u'CompanyName', u'SwiftShot Project'),
-           StringStruct(u'FileDescription', u'SwiftShot Screenshot Tool'),
-           StringStruct(u'FileVersion', u'2.0.0.0'),
-           StringStruct(u'InternalName', u'SwiftShot'),
-           StringStruct(u'LegalCopyright', u'Copyright (C) 2025 SwiftShot Project. GPL-3.0'),
-           StringStruct(u'OriginalFilename', u'SwiftShot.exe'),
-           StringStruct(u'ProductName', u'SwiftShot'),
-           StringStruct(u'ProductVersion', u'2.0.0.0')])
+           [StringStruct(u'CompanyName', u'SwiftShot Project'),
+            StringStruct(u'FileDescription', u'SwiftShot Screenshot Tool'),
+            StringStruct(u'FileVersion', u'$AppVersion4'),
+            StringStruct(u'InternalName', u'SwiftShot'),
+            StringStruct(u'LegalCopyright', u'Copyright (C) 2025 SwiftShot Project. GPL-3.0'),
+            StringStruct(u'OriginalFilename', u'SwiftShot.exe'),
+            StringStruct(u'ProductName', u'SwiftShot'),
+            StringStruct(u'ProductVersion', u'$AppVersion4')])
       ]
     ),
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
   ]
 )
 "@
-    Set-Content -Path $VersionFile -Value $versionContent -Encoding UTF8
-    Write-OK "version_info.txt generated (exe Properties tab metadata)."
-}
+Set-Content -Path $VersionFile -Value $versionContent -Encoding UTF8
+Write-OK "version_info.txt generated (exe Properties tab metadata)."
 $commonArgs += "--version-file=$VersionFile"
 
 $mainScript = Join-Path $ProjectDir "main.py"
@@ -396,6 +434,8 @@ if ($UnsafePath) {
     $mainScript      = Join-Path $SafeBuildRoot "main.py"
     $IconPathSafe    = Join-Path $SafeBuildRoot $IconName
     $VersionFileSafe = Join-Path $SafeBuildRoot "version_info.txt"
+    $SpecDirSafe = Join-Path $BuildDir "spec"
+    New-Item -Path $SpecDirSafe -ItemType Directory -Force | Out-Null
 
     # Rebuild commonArgs with safe paths
     $commonArgs = @(
@@ -404,6 +444,7 @@ if ($UnsafePath) {
         "--noconfirm"
         "--clean"
         "--paths=$BuildProjectDir"
+        "--specpath=$SpecDirSafe"
     )
     foreach ($mod in $HiddenImports) {
         $commonArgs += "--hidden-import=$mod"
@@ -421,7 +462,7 @@ if ($UnsafePath) {
             $commonArgs += "--add-data=$pngPathSafe;."
         }
     }
-    foreach ($mod in @('tkinter','matplotlib','numpy','scipy','pandas',
+    foreach ($mod in @('tkinter','matplotlib','scipy','pandas',
                        'test','unittest','pydoc','doctest','lib2to3','setuptools',
                        'PyQt5.Qt3D','PyQt5.QtWebEngine','PyQt5.QtWebEngineCore',
                        'PyQt5.QtWebEngineWidgets','PyQt5.QtMultimedia',
@@ -555,12 +596,18 @@ if (-not $PortableOnly -and $ISCC) {
         } else {
             Write-Step "Compiling installer with ISCC..."
             $ErrorActionPreference = 'Continue'
-            & $ISCC /Q $IssFile 2>&1 | ForEach-Object {
-                $line = $_.ToString()
-                if ($line -match "Error") { Write-Err $line }
-                else { Write-Info $line }
+            $oldSwiftShotVersion = $env:SWIFTSHOT_VERSION
+            $env:SWIFTSHOT_VERSION = $AppVersion
+            try {
+                & $ISCC /Q $IssFile 2>&1 | ForEach-Object {
+                    $line = $_.ToString()
+                    if ($line -match "Error") { Write-Err $line }
+                    else { Write-Info $line }
+                }
+                $isccExit = $LASTEXITCODE
+            } finally {
+                $env:SWIFTSHOT_VERSION = $oldSwiftShotVersion
             }
-            $isccExit = $LASTEXITCODE
             $ErrorActionPreference = 'Stop'
             if ($isccExit -ne 0) {
                 Write-Err "Inno Setup compilation failed."

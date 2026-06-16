@@ -7,11 +7,14 @@
 ;   2. Inno Setup 6+ (https://jrsoftware.org/isinfo.php)
 ;
 ; Build:
-;   iscc.exe SwiftShot.iss
+;   Build-SwiftShot.ps1 sets SWIFTSHOT_VERSION before invoking ISCC.
 ; ===================================================================
 
 #define AppName        "SwiftShot"
-#define AppVersion     "2.0.0"
+#define AppVersion     GetEnv("SWIFTSHOT_VERSION")
+#if AppVersion == ""
+  #error SWIFTSHOT_VERSION must be set before compiling SwiftShot.iss.
+#endif
 #define AppPublisher   "SwiftShot Project"
 #define AppURL         "https://github.com/SysAdminDoc/SwiftShot"
 #define AppExeName     "SwiftShot.exe"

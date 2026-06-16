@@ -212,6 +212,7 @@ generate_icon.py        Programmatic icon generation for builds
 |---|---|
 | [PyQt5](https://pypi.org/project/PyQt5/) | GUI framework |
 | [Pillow](https://pypi.org/project/Pillow/) | Image processing for scrolling capture stitching |
+| [NumPy](https://pypi.org/project/numpy/) | Pixel math for editor filters and selection tools |
 
 That's it. OCR uses the Windows built-in WinRT OCR engine (no install needed on Windows 10/11) with an optional Tesseract fallback.
 

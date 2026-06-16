@@ -1,8 +1,32 @@
-# UTF-8
+import ast
+from pathlib import Path
+
+
+def _app_version():
+    version_file = globals().get("__file__")
+    config_path = Path(version_file).with_name("config.py") if version_file else Path("config.py")
+    tree = ast.parse(config_path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "APP_VERSION":
+                    return ast.literal_eval(node.value)
+                if isinstance(target, ast.Attribute) and target.attr == "APP_VERSION":
+                    return ast.literal_eval(node.value)
+    raise RuntimeError("APP_VERSION not found in config.py")
+
+
+_VERSION = _app_version()
+_PARTS = [int(part) for part in _VERSION.split(".")]
+while len(_PARTS) < 4:
+    _PARTS.append(0)
+_PARTS = tuple(_PARTS[:4])
+_VERSION4 = ".".join(str(part) for part in _PARTS)
+
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 0, 0),
-    prodvers=(2, 0, 0, 0),
+    filevers=_PARTS,
+    prodvers=_PARTS,
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,14 +39,14 @@ VSVersionInfo(
       [
         StringTable(
           u'040904B0',
-          [StringStruct(u'CompanyName', u'SwiftShot Project'),
-           StringStruct(u'FileDescription', u'SwiftShot Screenshot Tool'),
-           StringStruct(u'FileVersion', u'2.0.0.0'),
+           [StringStruct(u'CompanyName', u'SwiftShot Project'),
+            StringStruct(u'FileDescription', u'SwiftShot Screenshot Tool'),
+            StringStruct(u'FileVersion', _VERSION4),
            StringStruct(u'InternalName', u'SwiftShot'),
            StringStruct(u'LegalCopyright', u'Copyright (C) 2025 SwiftShot Project. GPL-3.0'),
            StringStruct(u'OriginalFilename', u'SwiftShot.exe'),
            StringStruct(u'ProductName', u'SwiftShot'),
-           StringStruct(u'ProductVersion', u'2.0.0.0')])
+            StringStruct(u'ProductVersion', _VERSION4)])
       ]
     ),
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])

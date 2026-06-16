@@ -14,7 +14,7 @@ class Config:
     """Application configuration with sensible defaults."""
 
     APP_NAME = "SwiftShot"
-    APP_VERSION = "2.5.1"
+    APP_VERSION = "2.6.5"
 
     # --- Capture Settings ---
     CAPTURE_MOUSE_POINTER = False

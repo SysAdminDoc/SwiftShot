@@ -1,43 +1,10 @@
 #!/usr/bin/env python3
 """
-SwiftShot Image Editor v2.6.5
+SwiftShot Image Editor
 Photoshop-inspired PyQt5 / PIL layer-based editor.
-
-Tools: Select/Move, Brush, Pencil, Spray, Eraser, Clone Stamp, Healing Brush,
-       Dodge, Burn, Sponge, Smudge, Pen, Rectangle, Ellipse, Line, Arrow,
-       Triangle, Polygon, Star, Text, Gradient, Fill, Pattern, Eyedropper,
-       Magic Wand, Rect/Ellipse Select, Lasso, Crop, Measure, Pan, Zoom
-Adjustments: Brightness/Contrast, Hue/Saturation, Levels, Curves, Color Balance,
-             Vibrance, Threshold, Gamma, Invert, Grayscale, Auto Contrast,
-             Auto Levels, Sepia, Color Lookup
-Filters: Gaussian/Box/Motion Blur, Sharpen, Unsharp Mask, Edge Detect, Emboss,
-         Contour, Posterize, Solarize, Pixelate, Noise, Vignette, Oil Paint,
-         Halftone, Duotone, Tilt Shift, Chromatic Aberration, Noise Generator
-AI Tools: Background Removal (rembg), Smart Upscale 2x/4x, Depth Map, Object Detect
-Selection: Expand, Contract, Feather, Smooth, Color Range
-UI: Rulers, Grid, Navigator, Histogram, Command Palette
-Integrations: OCR, Imgur, Project Save/Load, Clipboard
 """
 
 import sys, os, math, random, threading, json
-import subprocess
-
-def _bootstrap():
-    pkgs = {"PyQt5": "PyQt5", "PIL": "Pillow", "numpy": "numpy"}
-    for mod, pkg in pkgs.items():
-        try:
-            __import__(mod)
-        except ImportError:
-            for flags in [[], ["--user"], ["--break-system-packages"]]:
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", pkg, "-q"] + flags,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    break
-                except subprocess.CalledProcessError:
-                    continue
-
-_bootstrap()
 
 import numpy as np
 from collections import deque
@@ -4954,7 +4921,9 @@ class ImageEditor(QMainWindow):
         super().__init__()
         scale = get_ui_scale()
         scale_str = f" [{scale*100:.0f}% UI]" if abs(scale - 1.0) > 0.01 else ""
-        self.setWindowTitle(f"SwiftShot Editor v2.6.5{scale_str}")
+        version = getattr(config, "APP_VERSION", "")
+        version_str = f" v{version}" if version else ""
+        self.setWindowTitle(f"SwiftShot Editor{version_str}{scale_str}")
         self.setMinimumSize(dp(900), dp(600))
         self.swiftshot_app = swiftshot_app
 
@@ -4974,7 +4943,6 @@ class ImageEditor(QMainWindow):
         self.saved_path = None
         self.selected_layer_indices = set()  # multi-select
         self.saved_paths = []               # list of path dicts for Paths panel
-        self._uploader = None
         self.retouch_exposure = 50
         self.shape_stroke_width = 2
         self.shape_filled = False
@@ -5569,8 +5537,6 @@ class ImageEditor(QMainWindow):
         self._act(fm, "Export &PNG...", "", self.export_png)
         fm.addSeparator()
         self._act(fm, "&Copy to Clipboard", "Ctrl+Shift+C", self.copy_to_clipboard)
-        self._act(fm, "Upload to &Imgur", "Ctrl+U", self.upload_imgur)
-        fm.addSeparator()
         self._act(fm, "Save &Project (.swiftshot)...", "", self.save_project)
         self._act(fm, "Open P&roject (.swiftshot)...", "", self.open_project)
         fm.addSeparator()
@@ -7553,22 +7519,6 @@ class ImageEditor(QMainWindow):
         px = self.get_final_pixmap()
         if px and not px.isNull():
             QApplication.clipboard().setPixmap(px); self._status("Copied to clipboard")
-
-    def upload_imgur(self):
-        try:
-            from uploader import Uploader
-            self._uploader = Uploader(self)
-            self._uploader.upload_complete.connect(self._on_upload_complete)
-            self._uploader.upload_to_imgur(self.get_final_pixmap())
-        except ImportError:
-            self._status("Uploader module not available")
-
-    def _on_upload_complete(self, url):
-        if url:
-            QApplication.clipboard().setText(url)
-            self._status(f"Uploaded: {url}  (copied to clipboard)")
-        else:
-            self._status("Upload failed")
 
     def save_project(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Project", self.saved_path or "",
