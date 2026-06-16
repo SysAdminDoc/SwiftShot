@@ -25,7 +25,7 @@ Greenshot is great, but it ships with a dozen cloud upload plugins, enterprise i
 | Office COM interop | No Office requirement |
 | Plugin discovery & loading system | No plugin overhead |
 | OAuth / API key infrastructure | Zero network calls (except optional update check) |
-| .NET Framework + 12 plugin DLLs | Python + PyQt5 — two packages |
+| .NET Framework + 12 plugin DLLs | Python + PyQt5 — three packages |
 
 ## Features
 
@@ -183,7 +183,7 @@ app.py                  System tray, hotkey management, capture orchestration
 capture.py              Screenshot engine (Win32 GDI + Qt fallback)
 overlay.py              Region selector with edge snapping
 window_picker.py        Window capture with animated highlight
-editor.py               Full annotation editor (1,920 lines)
+editor.py               Full annotation editor (7,172 lines)
 config.py               JSON settings with backup, import/export
 settings_dialog.py      Preferences UI with hotkey recorder
 hotkeys.py              WH_KEYBOARD_LL global keyboard hook
@@ -202,7 +202,7 @@ utils.py                Virtual geometry, color helpers, startup registry
 generate_icon.py        Programmatic icon generation for builds
 ```
 
-22 Python modules — **7,600+ lines of code** — zero external services.
+22 Python modules — **12,000+ lines of code** — zero external services.
 
 ---
 
