@@ -625,7 +625,7 @@ class SwiftShotApp:
         # Save to history
         try:
             from capture_history import save_to_history
-            save_to_history(pixmap)
+            save_to_history(pixmap, self._history_ocr_text(pixmap))
         except Exception as e:
             log.warning(f"Could not save to history: {e}")
 
@@ -646,6 +646,16 @@ class SwiftShotApp:
         except Exception as e:
             log.warning(f"Could not apply beautification preset: {e}")
             return pixmap
+
+    def _history_ocr_text(self, pixmap):
+        if not config.CAPTURE_HISTORY_AUTO_OCR:
+            return ""
+        try:
+            from ocr import ocr_pixmap
+            return ocr_pixmap(pixmap)
+        except Exception as e:
+            log.warning(f"History OCR skipped: {e}")
+            return ""
 
     def _open_editor(self, pixmap):
         try:

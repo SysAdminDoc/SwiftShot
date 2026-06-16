@@ -117,6 +117,7 @@ class Config:
     CAPTURE_HISTORY_ENABLED = True
     CAPTURE_HISTORY_MAX = 50
     CAPTURE_HISTORY_DIR = ""
+    CAPTURE_HISTORY_AUTO_OCR = False
 
     # --- Clipboard Watcher ---
     CLIPBOARD_WATCHER_ENABLED = False

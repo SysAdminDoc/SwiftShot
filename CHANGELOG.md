@@ -4,6 +4,7 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [v2.6.5] - 2026-06-16
 
+- Added optional auto-OCR indexing for searchable capture history.
 - Added SQLite-backed capture history with SHA-256 duplicate detection, thumbnail cache, and date/filename search.
 - Added screenshot beautification presets that apply padding, rounded corners, and drop shadow after capture.
 - Added ordered post-capture workflows so save, clipboard, and editor actions can run in sequence.

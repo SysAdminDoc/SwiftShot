@@ -595,6 +595,12 @@ class SettingsDialog(QDialog):
         self.history_enabled.setChecked(config.CAPTURE_HISTORY_ENABLED)
         layout.addRow(self.history_enabled)
 
+        self.history_auto_ocr = QCheckBox("Auto-OCR captures for searchable history")
+        self.history_auto_ocr.setChecked(config.CAPTURE_HISTORY_AUTO_OCR)
+        self.history_auto_ocr.setToolTip(
+            "Extract text from each capture and include it in history search")
+        layout.addRow(self.history_auto_ocr)
+
         self.history_max = QSpinBox()
         self.history_max.setRange(5, 500)
         self.history_max.setValue(config.CAPTURE_HISTORY_MAX)
@@ -808,6 +814,7 @@ class SettingsDialog(QDialog):
 
         # Advanced
         config.CAPTURE_HISTORY_ENABLED = self.history_enabled.isChecked()
+        config.CAPTURE_HISTORY_AUTO_OCR = self.history_auto_ocr.isChecked()
         config.CAPTURE_HISTORY_MAX = self.history_max.value()
         config.PIN_OPACITY = self.pin_opacity.value()
 
@@ -876,6 +883,7 @@ class SettingsDialog(QDialog):
             self.shadow_opacity: "Shadow opacity",
             self.rounded_radius: "Rounded corner radius",
             self.history_enabled: "Enable capture history",
+            self.history_auto_ocr: "Auto-OCR captures for searchable history",
             self.history_max: "Maximum history items",
             self.pin_opacity: "Pin window opacity",
         }

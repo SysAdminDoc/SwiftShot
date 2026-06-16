@@ -22,6 +22,7 @@ def test_save_to_history_indexes_sqlite_and_dedupes(fresh_config, qapp, tmp_path
 
     first = capture_history.save_to_history(pixmap)
     second = capture_history.save_to_history(pixmap)
+    capture_history.save_to_history(pixmap, ocr_text="invoice total due")
     entries = capture_history._history_entries(str(tmp_path))
 
     assert first == second
@@ -34,6 +35,7 @@ def test_save_to_history_indexes_sqlite_and_dedupes(fresh_config, qapp, tmp_path
 
     date_prefix = entries[0]["created_at"][:10]
     assert capture_history._history_entries(str(tmp_path), date_prefix)
+    assert capture_history._history_entries(str(tmp_path), "invoice")
     assert capture_history._history_entries(str(tmp_path), "2999-01-01") == []
 
 

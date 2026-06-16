@@ -52,9 +52,15 @@ def _connect_db(history_dir):
             width INTEGER NOT NULL,
             height INTEGER NOT NULL,
             sha256 TEXT NOT NULL UNIQUE,
+            ocr_text TEXT NOT NULL DEFAULT '',
             thumbnail_blob BLOB NOT NULL
         )
     """)
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(captures)")
+    }
+    if "ocr_text" not in columns:
+        conn.execute("ALTER TABLE captures ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at)"
     )
@@ -87,8 +93,8 @@ def _index_file(conn, filepath):
     conn.execute(
         """
         INSERT OR IGNORE INTO captures
-            (path, created_at, width, height, sha256, thumbnail_blob)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (path, created_at, width, height, sha256, ocr_text, thumbnail_blob)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             filepath,
@@ -96,6 +102,7 @@ def _index_file(conn, filepath):
             pixmap.width(),
             pixmap.height(),
             digest,
+            "",
             _thumbnail_blob(pixmap),
         ),
     )
@@ -120,12 +127,12 @@ def _history_entries(history_dir, search_text=""):
         params = []
         where = "WHERE 1=1"
         if search_text:
-            where += " AND (created_at LIKE ? OR path LIKE ?)"
+            where += " AND (created_at LIKE ? OR path LIKE ? OR ocr_text LIKE ?)"
             like = f"%{search_text}%"
-            params.extend([like, like])
+            params.extend([like, like, like])
         rows = conn.execute(
             f"""
-            SELECT path, created_at, width, height, sha256, thumbnail_blob
+            SELECT path, created_at, width, height, sha256, ocr_text, thumbnail_blob
             FROM captures
             {where}
             ORDER BY created_at DESC, id DESC
@@ -322,8 +329,8 @@ class CaptureHistoryDialog(QDialog):
         layout.addLayout(title_bar)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search date or filename...")
-        self.search_box.setToolTip("Search capture history by date, time, or filename")
+        self.search_box.setPlaceholderText("Search date, filename, or OCR text...")
+        self.search_box.setToolTip("Search capture history by date, time, filename, or OCR text")
         self.search_box.textChanged.connect(self._load_history)
         layout.addWidget(self.search_box)
 
@@ -423,7 +430,7 @@ class CaptureHistoryDialog(QDialog):
         self._load_history()
 
 
-def save_to_history(pixmap):
+def save_to_history(pixmap, ocr_text=""):
     """Save a QPixmap to the capture history directory."""
     if not config.CAPTURE_HISTORY_ENABLED:
         return None
@@ -440,6 +447,11 @@ def save_to_history(pixmap):
             ).fetchone()
             if existing:
                 if os.path.exists(existing["path"]):
+                    if ocr_text:
+                        conn.execute(
+                            "UPDATE captures SET ocr_text = ? WHERE sha256 = ?",
+                            (ocr_text, digest),
+                        )
                     log.info(f"Duplicate capture skipped: {existing['path']}")
                     return existing["path"]
                 conn.execute("DELETE FROM captures WHERE sha256 = ?", (digest,))
@@ -460,8 +472,8 @@ def save_to_history(pixmap):
             conn.execute(
                 """
                 INSERT INTO captures
-                    (path, created_at, width, height, sha256, thumbnail_blob)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (path, created_at, width, height, sha256, ocr_text, thumbnail_blob)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     filepath,
@@ -469,6 +481,7 @@ def save_to_history(pixmap):
                     pixmap.width(),
                     pixmap.height(),
                     digest,
+                    ocr_text or "",
                     _thumbnail_blob(pixmap),
                 ),
             )

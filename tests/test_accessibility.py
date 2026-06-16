@@ -60,6 +60,7 @@ def test_settings_controls_have_accessible_names(qapp):
     assert dialog.theme.findData("light") >= 0
     assert dialog.after_capture_list.accessibleName() == "Post-capture workflow actions"
     assert dialog.beautify_preset.findData("presentation") >= 0
+    assert dialog.history_auto_ocr.accessibleName() == "Auto-OCR captures for searchable history"
     assert unnamed == []
 
 
