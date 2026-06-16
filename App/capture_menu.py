@@ -36,6 +36,11 @@ class CaptureMenu(QMenu):
         super().__init__(parent)
         self._clipboard_watching = clipboard_watching
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("SwiftShot capture menu")
+        self.setAccessibleDescription(
+            "Choose a screenshot capture mode. Use the arrow keys to move and Enter to start."
+        )
         self._timer_enabled = config.CAPTURE_TIMER_ENABLED
         self._timer_seconds = config.CAPTURE_TIMER_SECONDS
         self._apply_style()
@@ -87,63 +92,98 @@ class CaptureMenu(QMenu):
             geo = screen.geometry()
             primary = "  (Primary)" if screen == QApplication.primaryScreen() else ""
             label = f"Screen {i + 1}  -  {geo.width()} x {geo.height()}{primary}"
-            action = self.addAction(label)
+            action = self._add_menu_action(
+                label,
+                f"Capture screen {i + 1} at {geo.width()} by {geo.height()} pixels{primary}.",
+            )
             idx = i
             action.triggered.connect(
                 lambda checked, n=idx: self.capture_monitor.emit(n))
 
         if len(screens) > 1:
-            action = self.addAction(
-                f"All Screens  ({len(screens)} monitors)")
+            action = self._add_menu_action(
+                f"All Screens  ({len(screens)} monitors)",
+                f"Capture all {len(screens)} monitors.",
+            )
             action.triggered.connect(lambda: self.capture_monitor.emit(-1))
 
         self.addSeparator()
 
         # Capture modes
-        a = self.addAction("Window Mode                       Alt+PrtSc")
+        a = self._add_menu_action(
+            "Window Mode                       Alt+PrtSc",
+            "Capture the selected window.",
+        )
         a.triggered.connect(lambda: self.capture_window.emit())
 
-        a = self.addAction("Region                                    PrtSc*")
+        a = self._add_menu_action(
+            "Region                                    PrtSc*",
+            "Select a rectangular region to capture.",
+        )
         a.triggered.connect(lambda: self.capture_region.emit())
 
-        a = self.addAction("Region (Freehand)")
+        a = self._add_menu_action(
+            "Region (Freehand)",
+            "Draw a freehand region to capture.",
+        )
         a.triggered.connect(lambda: self.capture_freehand.emit())
 
-        a = self.addAction("Last Region                       Shift+PrtSc")
+        a = self._add_menu_action(
+            "Last Region                       Shift+PrtSc",
+            "Capture the previous region again.",
+        )
         a.triggered.connect(lambda: self.capture_last_region.emit())
 
         self.addSeparator()
 
         # Scrolling capture
-        a = self.addAction("Scrolling Capture...")
+        a = self._add_menu_action(
+            "Scrolling Capture...",
+            "Capture a scrollable page or window.",
+        )
         a.triggered.connect(lambda: self.capture_scrolling.emit())
 
         self.addSeparator()
 
         # OCR
-        a = self.addAction("OCR Region  (Extract Text)")
+        a = self._add_menu_action(
+            "OCR Region  (Extract Text)",
+            "Capture a region and extract text from it.",
+        )
         a.triggered.connect(lambda: self.capture_ocr.emit())
 
         self.addSeparator()
 
         # Open
-        a = self.addAction("Open from File...")
+        a = self._add_menu_action(
+            "Open from File...",
+            "Open an existing image file in the editor.",
+        )
         a.triggered.connect(lambda: self.open_file.emit())
 
-        a = self.addAction("Open from Clipboard")
+        a = self._add_menu_action(
+            "Open from Clipboard",
+            "Open the current clipboard image in the editor.",
+        )
         a.triggered.connect(lambda: self.open_clipboard.emit())
 
         self.addSeparator()
 
         # History
-        a = self.addAction("Capture History...")
+        a = self._add_menu_action(
+            "Capture History...",
+            "Open saved capture history.",
+        )
         a.triggered.connect(lambda: self.show_history.emit())
 
         # Clipboard watcher
         watcher_label = ("Clipboard Watcher  [ON]"
                          if self._clipboard_watching
                          else "Clipboard Watcher  [OFF]")
-        a = self.addAction(watcher_label)
+        a = self._add_menu_action(
+            watcher_label,
+            "Toggle automatic opening of copied clipboard images.",
+        )
         a.triggered.connect(lambda: self.toggle_clipboard_watcher.emit())
 
         self.addSeparator()
@@ -151,9 +191,27 @@ class CaptureMenu(QMenu):
         # --- Timer Controls (embedded widget) ---
         self._add_timer_widget()
 
+    def _add_menu_action(self, label, description):
+        action = self.addAction(label)
+        action.setToolTip(description)
+        action.setStatusTip(description)
+        return action
+
+    def _selectable_actions(self):
+        return [
+            action for action in self.actions()
+            if action.isEnabled()
+            and not action.isSeparator()
+            and action.text().strip()
+        ]
+
     def _add_timer_widget(self):
         """Embed a timer checkbox + spinner into the menu as a QWidgetAction."""
         timer_widget = QWidget()
+        timer_widget.setAccessibleName("Timed capture controls")
+        timer_widget.setAccessibleDescription(
+            "Enable delayed capture and set the countdown duration."
+        )
         timer_widget.setStyleSheet("""
             QWidget {
                 background-color: #1e1e2e;
@@ -192,6 +250,10 @@ class CaptureMenu(QMenu):
         layout.setSpacing(6)
 
         self._timer_cb = QCheckBox("Timer")
+        self._timer_cb.setAccessibleName("Enable timed capture")
+        self._timer_cb.setAccessibleDescription(
+            "When enabled, capture starts after the selected area is chosen and the countdown ends."
+        )
         self._timer_cb.setChecked(self._timer_enabled)
         self._timer_cb.setToolTip(
             "Select region first, then countdown gives you\n"
@@ -201,6 +263,10 @@ class CaptureMenu(QMenu):
         layout.addWidget(self._timer_cb)
 
         self._timer_spin = QSpinBox()
+        self._timer_spin.setAccessibleName("Timed capture countdown seconds")
+        self._timer_spin.setAccessibleDescription(
+            "Number of seconds to wait after region selection before taking the capture."
+        )
         self._timer_spin.setRange(1, 30)
         self._timer_spin.setValue(self._timer_seconds)
         self._timer_spin.setSuffix("s")
@@ -239,3 +305,37 @@ class CaptureMenu(QMenu):
 
     def popup_at_cursor(self):
         self.popup(QCursor.pos())
+
+    def keyPressEvent(self, event):
+        selectable = self._selectable_actions()
+        if not selectable:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        active = self.activeAction()
+
+        if key in (Qt.Key_Down, Qt.Key_Tab):
+            if active not in selectable:
+                self.setActiveAction(selectable[0])
+            else:
+                self.setActiveAction(selectable[(selectable.index(active) + 1) % len(selectable)])
+            event.accept()
+            return
+
+        if key in (Qt.Key_Up, Qt.Key_Backtab):
+            if active not in selectable:
+                self.setActiveAction(selectable[-1])
+            else:
+                self.setActiveAction(selectable[(selectable.index(active) - 1) % len(selectable)])
+            event.accept()
+            return
+
+        if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            if active in selectable:
+                active.trigger()
+                self.close()
+                event.accept()
+                return
+
+        super().keyPressEvent(event)

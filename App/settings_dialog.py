@@ -5,11 +5,12 @@ Includes custom hotkey recorder widget for remapping keyboard shortcuts.
 """
 
 import os
+import re
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QComboBox, QCheckBox, QSpinBox, QLineEdit,
     QSlider, QColorDialog, QPushButton, QLabel, QGroupBox,
-    QFileDialog, QMessageBox, QDialogButtonBox
+    QFileDialog, QMessageBox, QDialogButtonBox, QAbstractButton
 )
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -54,16 +55,31 @@ class HotkeyRecorderWidget(QLineEdit):
         self.setPlaceholderText("Click to record shortcut...")
         self.setText(current_combo if current_combo else "(none)")
         self.setAlignment(Qt.AlignCenter)
+        self.setAccessibleDescription(
+            "Shortcut field. Press Enter or click to start recording a key combination."
+        )
         self._update_style(False)
+
+    def _begin_recording(self):
+        self._recording = True
+        self.setText("Press keys...")
+        self._update_style(True)
+        self.setFocus()
 
     def _update_style(self, recording):
         if recording:
+            self.setAccessibleDescription(
+                "Recording shortcut. Press a key combination, Escape to cancel, or Backspace to clear."
+            )
             self.setStyleSheet(
                 "QLineEdit { background-color: #45475a; color: #f9e2af; "
                 "border: 2px solid #f9e2af; border-radius: 4px; "
                 "padding: 4px 8px; min-height: 24px; font-weight: bold; }"
             )
         else:
+            self.setAccessibleDescription(
+                "Shortcut field. Press Enter or click to start recording a key combination."
+            )
             self.setStyleSheet(
                 "QLineEdit { background-color: #313244; color: #cdd6f4; "
                 "border: 1px solid #45475a; border-radius: 4px; "
@@ -73,10 +89,7 @@ class HotkeyRecorderWidget(QLineEdit):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._recording = True
-            self.setText("Press keys...")
-            self._update_style(True)
-            self.setFocus()
+            self._begin_recording()
         super().mousePressEvent(event)
 
     def focusOutEvent(self, event):
@@ -90,6 +103,8 @@ class HotkeyRecorderWidget(QLineEdit):
         if not self._recording:
             if event.key() == Qt.Key_Escape:
                 self.clearFocus()
+            elif event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+                self._begin_recording()
             return
 
         key = event.key()
@@ -156,6 +171,7 @@ class HotkeyRecorderWidget(QLineEdit):
     def set_combo(self, combo):
         self._combo = combo
         self.setText(combo if combo else "(none)")
+        self._update_style(False)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +226,7 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(buttons)
 
         layout.addLayout(btn_row)
+        self._apply_accessibility()
 
     # --- Tab: General ---
 
@@ -699,6 +716,84 @@ class SettingsDialog(QDialog):
         config.save()
         log.info("Settings saved")
         self.accept()
+
+    def _apply_accessibility(self):
+        self.setAccessibleName("SwiftShot preferences")
+        self.setAccessibleDescription("Tabbed dialog for configuring SwiftShot preferences.")
+
+        self.tabs.setAccessibleName("Preferences sections")
+        for i in range(self.tabs.count()):
+            tab_name = self.tabs.tabText(i)
+            widget = self.tabs.widget(i)
+            widget.setAccessibleName(f"{tab_name} settings")
+            widget.setAccessibleDescription(f"Settings in the {tab_name} section.")
+
+        named_controls = {
+            self.launch_startup: "Launch SwiftShot on Windows startup",
+            self.minimize_tray: "Minimize to system tray",
+            self.check_updates: "Check for updates on startup",
+            self.show_notifications: "Show tray notifications",
+            self.play_sound: "Play capture sound",
+            self.after_capture: "After capture action",
+            self.copy_path: "Copy file path to clipboard after saving",
+            self.capture_mouse: "Include mouse pointer in captures",
+            self.capture_delay: "Pre-capture delay in milliseconds",
+            self.clipboard_watcher: "Enable clipboard watcher",
+            self.timer_enabled: "Enable timed capture by default",
+            self.timer_seconds: "Timed capture duration in seconds",
+            self.hk_region: "Capture menu hotkey",
+            self.hk_window: "Window capture hotkey",
+            self.hk_fullscreen: "Fullscreen or monitor capture hotkey",
+            self.hk_last_region: "Last region capture hotkey",
+            self.hk_ocr: "OCR region hotkey",
+            self.hk_freehand: "Freehand region hotkey",
+            self.hk_scrolling: "Scrolling capture hotkey",
+            self.file_format: "Output file format",
+            self.jpeg_quality: "JPEG quality percentage",
+            self.filename_pattern: "Output filename pattern",
+            self.output_dir: "Save directory",
+            self.auto_increment: "Auto-increment filename if it already exists",
+            self.default_line_width: "Default editor line width",
+            self.default_font_size: "Default editor font size",
+            self.obfuscate_factor: "Obfuscate factor",
+            self.obfuscate_mode: "Obfuscate mode",
+            self.reuse_editor: "Reuse existing editor window",
+            self.highlight_btn: "Highlight color picker",
+            self.border_width: "Border width",
+            self.border_color_btn: "Border color picker",
+            self.shadow_radius: "Shadow radius",
+            self.shadow_opacity: "Shadow opacity",
+            self.rounded_radius: "Rounded corner radius",
+            self.history_enabled: "Enable capture history",
+            self.history_max: "Maximum history items",
+            self.pin_opacity: "Pin window opacity",
+        }
+        for widget, name in named_controls.items():
+            self._set_accessible(widget, name)
+
+        for widget in self.findChildren((QAbstractButton, QComboBox, QSpinBox, QLineEdit, QSlider)):
+            if not widget.accessibleName():
+                self._set_accessible(widget, self._fallback_accessible_name(widget))
+            elif not widget.accessibleDescription() and widget.toolTip():
+                widget.setAccessibleDescription(self._clean_accessible_text(widget.toolTip()))
+
+    def _set_accessible(self, widget, name, description=None):
+        widget.setAccessibleName(name)
+        widget.setAccessibleDescription(description or name)
+
+    def _fallback_accessible_name(self, widget):
+        if isinstance(widget, QAbstractButton) and widget.text():
+            return self._clean_accessible_text(widget.text())
+        if isinstance(widget, QLineEdit) and widget.placeholderText():
+            return self._clean_accessible_text(widget.placeholderText())
+        if widget.toolTip():
+            return self._clean_accessible_text(widget.toolTip())
+        return widget.__class__.__name__
+
+    @staticmethod
+    def _clean_accessible_text(text):
+        text = re.sub(r"<[^>]+>", " ", text)
+        return " ".join(text.replace("&", "").split())
 
     def _stylesheet(self):
         return """
