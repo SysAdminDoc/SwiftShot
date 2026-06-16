@@ -50,6 +50,48 @@ def test_get_filename_increments_existing_file(fresh_config, tmp_path):
     assert Path(cfg.get_filename()).name == "SwiftShot_test_1.png"
 
 
+def test_get_filename_renders_rich_variables_and_counter(fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    cfg.OUTPUT_FILE_PATH = str(tmp_path)
+    cfg.OUTPUT_FILE_FORMAT = "webp"
+    cfg.OUTPUT_FILENAME_PATTERN = "{app}_{title}_{w}x{h}_{user}_{counter}"
+    cfg.OUTPUT_FILE_INCREMENT = True
+
+    first = Path(cfg.get_filename(
+        app_name="Code",
+        window_title="Bug:one/two",
+        user_name="matt",
+        width=1280,
+        height=720,
+    )).name
+    assert first == "Code_Bug_one_two_1280x720_matt_001.webp"
+
+    (tmp_path / first).write_text("existing", encoding="utf-8")
+    second = Path(cfg.get_filename(
+        app_name="Code",
+        window_title="Bug:one/two",
+        user_name="matt",
+        width=1280,
+        height=720,
+    )).name
+    assert second == "Code_Bug_one_two_1280x720_matt_002.webp"
+
+
+def test_preview_filename_uses_template_help_variables(fresh_config):
+    cfg = fresh_config.Config()
+
+    preview = cfg.preview_filename(
+        pattern="{app}_{title}_{w}x{h}_{counter}",
+        file_format="webp",
+        app_name="notepad",
+        window_title="Release notes",
+        width=1920,
+        height=1080,
+    )
+
+    assert preview == "notepad_Release notes_1920x1080_001.webp"
+
+
 def test_version_info_uses_config_version(fresh_config, monkeypatch):
     app_dir = Path(__file__).resolve().parents[1] / "App"
     monkeypatch.chdir(app_dir)

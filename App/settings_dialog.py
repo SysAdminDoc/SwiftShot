@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
 
-from config import OUTPUT_FILE_FORMAT_CHOICES, config
+from config import FILENAME_TEMPLATE_HELP, OUTPUT_FILE_FORMAT_CHOICES, config
 from logger import log
 
 
@@ -416,9 +416,15 @@ class SettingsDialog(QDialog):
         layout.addRow("JPEG quality:", self.jpeg_quality)
 
         self.filename_pattern = QLineEdit(config.OUTPUT_FILENAME_PATTERN)
-        self.filename_pattern.setToolTip(
-            "Variables: {YYYY}, {MM}, {DD}, {hh}, {mm}, {ss}")
+        self.filename_pattern.setToolTip(FILENAME_TEMPLATE_HELP)
+        self.filename_pattern.textChanged.connect(self._update_filename_preview)
         layout.addRow("Filename pattern:", self.filename_pattern)
+
+        self.filename_preview = QLabel()
+        self.filename_preview.setToolTip(FILENAME_TEMPLATE_HELP)
+        self.file_format.currentTextChanged.connect(self._update_filename_preview)
+        layout.addRow("Preview:", self.filename_preview)
+        self._update_filename_preview()
 
         dir_row = QHBoxLayout()
         self.output_dir = QLineEdit(config.OUTPUT_FILE_PATH or "(Desktop)")
@@ -568,6 +574,19 @@ class SettingsDialog(QDialog):
         return w
 
     # --- Helpers ---
+
+    def _update_filename_preview(self):
+        if not hasattr(self, "filename_preview"):
+            return
+        preview = config.preview_filename(
+            pattern=self.filename_pattern.text(),
+            file_format=self.file_format.currentText(),
+            width=1920,
+            height=1080,
+            app_name="notepad",
+            window_title="Release notes",
+        )
+        self.filename_preview.setText(preview)
 
     def _update_color_btn(self, btn, color):
         btn.setStyleSheet(
@@ -771,7 +790,13 @@ class SettingsDialog(QDialog):
         for widget, name in named_controls.items():
             self._set_accessible(widget, name)
 
-        for widget in self.findChildren((QAbstractButton, QComboBox, QSpinBox, QLineEdit, QSlider)):
+        self.filename_pattern.setAccessibleDescription(FILENAME_TEMPLATE_HELP)
+        self.filename_preview.setAccessibleName("Filename preview")
+        self.filename_preview.setAccessibleDescription(FILENAME_TEMPLATE_HELP)
+
+        for widget in self.findChildren((
+            QAbstractButton, QComboBox, QSpinBox, QLineEdit, QSlider,
+        )):
             if not widget.accessibleName():
                 self._set_accessible(widget, self._fallback_accessible_name(widget))
             elif not widget.accessibleDescription() and widget.toolTip():

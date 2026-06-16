@@ -60,6 +60,18 @@ def test_settings_controls_have_accessible_names(qapp):
     assert unnamed == []
 
 
+def test_settings_filename_preview_updates(qapp):
+    from settings_dialog import SettingsDialog
+
+    dialog = SettingsDialog()
+    dialog.filename_pattern.setText("{app}_{w}x{h}_{counter}")
+
+    assert dialog.filename_preview.text() == "notepad_1920x1080_001.png"
+
+    dialog.file_format.setCurrentText("webp")
+    assert dialog.filename_preview.text() == "notepad_1920x1080_001.webp"
+
+
 def test_hotkey_recorder_keyboard_start_updates_accessible_state(qapp):
     from settings_dialog import HotkeyRecorderWidget
 

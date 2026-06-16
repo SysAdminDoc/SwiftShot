@@ -6,11 +6,18 @@ Includes config backup, reset-to-defaults, import/export, and recent color track
 
 import os
 import json
+import getpass
+import re
 import shutil
 from pathlib import Path
 
 
 OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
+FILENAME_TEMPLATE_HELP = (
+    "Variables: {YYYY}, {MM}, {DD}, {hh}, {mm}, {ss}, "
+    "{app}, {title}, {user}, {counter}, {w}, {h}"
+)
+_FILENAME_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
 class Config:
@@ -213,28 +220,112 @@ class Config:
                 pass
         return os.path.expanduser("~/Desktop")
 
-    def get_filename(self):
+    def _sanitize_filename(self, name):
+        name = _FILENAME_UNSAFE_RE.sub("_", str(name))
+        name = " ".join(name.split())
+        name = name.strip(" ._")
+        return name or "SwiftShot"
+
+    def _render_filename_pattern(
+        self,
+        pattern=None,
+        now=None,
+        app_name="",
+        window_title="",
+        user_name=None,
+        width=None,
+        height=None,
+        counter=1,
+    ):
         from datetime import datetime
-        now = datetime.now()
-        name = self.OUTPUT_FILENAME_PATTERN
-        name = name.replace("{YYYY}", now.strftime("%Y"))
-        name = name.replace("{MM}", now.strftime("%m"))
-        name = name.replace("{DD}", now.strftime("%d"))
-        name = name.replace("{hh}", now.strftime("%H"))
-        name = name.replace("{mm}", now.strftime("%M"))
-        name = name.replace("{ss}", now.strftime("%S"))
+
+        now = now or datetime.now()
+        variables = {
+            "YYYY": now.strftime("%Y"),
+            "MM": now.strftime("%m"),
+            "DD": now.strftime("%d"),
+            "hh": now.strftime("%H"),
+            "mm": now.strftime("%M"),
+            "ss": now.strftime("%S"),
+            "app": app_name or "app",
+            "title": window_title or "window",
+            "user": user_name or getpass.getuser(),
+            "counter": f"{int(counter):03d}",
+            "w": str(width or 0),
+            "h": str(height or 0),
+        }
+
+        name = pattern if pattern is not None else self.OUTPUT_FILENAME_PATTERN
+        for key, value in variables.items():
+            name = name.replace(f"{{{key}}}", str(value))
+        return self._sanitize_filename(name)
+
+    def preview_filename(
+        self,
+        pattern=None,
+        file_format=None,
+        width=1920,
+        height=1080,
+        app_name="notepad",
+        window_title="Release notes",
+        user_name=None,
+    ):
+        name = self._render_filename_pattern(
+            pattern=pattern,
+            app_name=app_name,
+            window_title=window_title,
+            user_name=user_name,
+            width=width,
+            height=height,
+            counter=1,
+        )
+        ext = (file_format or self.OUTPUT_FILE_FORMAT).lower()
+        return f"{name}.{ext}"
+
+    def get_filename(
+        self,
+        app_name="",
+        window_title="",
+        user_name=None,
+        width=None,
+        height=None,
+    ):
+        pattern = self.OUTPUT_FILENAME_PATTERN
 
         ext = self.OUTPUT_FILE_FORMAT.lower()
-        full_path = os.path.join(self.get_output_directory(), f"{name}.{ext}")
+        output_dir = self.get_output_directory()
+        uses_counter = "{counter}" in pattern
+        counter = 1
+        name = self._render_filename_pattern(
+            pattern=pattern,
+            app_name=app_name,
+            window_title=window_title,
+            user_name=user_name,
+            width=width,
+            height=height,
+            counter=counter,
+        )
+        full_path = os.path.join(output_dir, f"{name}.{ext}")
 
         if self.OUTPUT_FILE_INCREMENT and os.path.exists(full_path):
-            counter = 1
             while os.path.exists(full_path):
-                full_path = os.path.join(
-                    self.get_output_directory(),
-                    f"{name}_{counter}.{ext}"
-                )
                 counter += 1
+                if uses_counter:
+                    name = self._render_filename_pattern(
+                        pattern=pattern,
+                        app_name=app_name,
+                        window_title=window_title,
+                        user_name=user_name,
+                        width=width,
+                        height=height,
+                        counter=counter,
+                    )
+                    full_path = os.path.join(output_dir, f"{name}.{ext}")
+                else:
+                    full_path = os.path.join(
+                        output_dir,
+                        f"{name}_{counter - 1}.{ext}"
+                    )
 
         return full_path
 

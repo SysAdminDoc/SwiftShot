@@ -672,9 +672,13 @@ class SwiftShotApp:
 
     def _save_directly(self, pixmap):
         try:
-            from utils import save_pixmap
+            from utils import get_foreground_window_metadata, save_pixmap
 
-            filepath = config.get_filename()
+            filepath = config.get_filename(
+                width=pixmap.width(),
+                height=pixmap.height(),
+                **get_foreground_window_metadata(),
+            )
             os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
             success = save_pixmap(
                 pixmap,

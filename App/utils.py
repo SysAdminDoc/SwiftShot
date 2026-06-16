@@ -5,6 +5,7 @@ Common helpers used across multiple modules.
 
 import sys
 import math
+import os
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QRect, QPoint
 
@@ -85,6 +86,53 @@ def save_pixmap(pixmap, filepath, file_format, jpeg_quality=90):
 def color_to_hex(r, g, b):
     """Convert RGB tuple to hex string."""
     return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def get_foreground_window_metadata():
+    """Return best-effort foreground app and title metadata for filenames."""
+    metadata = {"app_name": "", "window_title": ""}
+    if sys.platform != 'win32':
+        return metadata
+
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return metadata
+
+        title_len = user32.GetWindowTextLengthW(hwnd)
+        if title_len:
+            title_buf = ctypes.create_unicode_buffer(title_len + 1)
+            user32.GetWindowTextW(hwnd, title_buf, title_len + 1)
+            metadata["window_title"] = title_buf.value
+
+        pid = ctypes.wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return metadata
+
+        kernel32 = ctypes.windll.kernel32
+        process = kernel32.OpenProcess(0x1000, False, pid.value)
+        if not process:
+            return metadata
+
+        try:
+            size = ctypes.wintypes.DWORD(32768)
+            path_buf = ctypes.create_unicode_buffer(size.value)
+            if kernel32.QueryFullProcessImageNameW(
+                process, 0, path_buf, ctypes.byref(size)
+            ):
+                app = os.path.splitext(os.path.basename(path_buf.value))[0]
+                metadata["app_name"] = app
+        finally:
+            kernel32.CloseHandle(process)
+    except Exception:
+        pass
+
+    return metadata
 
 
 def play_camera_sound():
