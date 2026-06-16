@@ -1786,8 +1786,8 @@ class CanvasWidget(QWidget):
                     # Smear toward drag direction
                     b = min(0.9, strength * 0.7)
                     if self.last_pos is not None:
-                        ddx = int(img_pos.x() - self.last_pos.x()) if hasattr(self, '_smudge_dir') else 0
-                        ddy = int(img_pos.y() - self.last_pos.y()) if hasattr(self, '_smudge_dir') else 0
+                        ddx = int(x - self.last_pos.x())
+                        ddy = int(y - self.last_pos.y())
                     else:
                         ddx, ddy = 0, 0
                     spx = max(0, min(region.shape[1] - 1, px - ddx))
@@ -7192,27 +7192,21 @@ class ImageEditor(QMainWindow):
 
     # ── AI Tools ──────────────────────────────────────────────────────────────
     def ai_remove_background(self):
-        """Remove background using rembg (auto-installs, uses u2net ONNX model)."""
+        """Remove background using optional rembg/u2net ONNX support."""
         layer = self.active_layer()
         if not layer:
             QMessageBox.information(self, "AI Remove BG", "No active layer."); return
 
-        # Try importing rembg
         try:
             import rembg
         except ImportError:
-            progress = AIProgressDialog("Installing rembg...", self)
-            progress.show(); QApplication.processEvents()
-            try:
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", "rembg", "-q", "--break-system-packages"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                progress.close()
-                import rembg
-            except Exception as ex:
-                progress.close()
-                QMessageBox.critical(self, "Install Failed",
-                    f"Could not install rembg:\n{ex}\n\nRun: pip install rembg"); return
+            QMessageBox.information(
+                self,
+                "AI Remove BG",
+                "Background removal requires the optional rembg package.\n\n"
+                "Install it with: pip install rembg"
+            )
+            return
 
         progress = AIProgressDialog("Removing Background", self)
         progress.set_message("Running AI background removal (first run downloads model ~170MB)...")

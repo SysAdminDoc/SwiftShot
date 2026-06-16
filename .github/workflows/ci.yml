@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Ruff sanity check
+        run: python -m ruff check App tests --select=E9,F63,F7,F82
+
+      - name: Pytest
+        shell: powershell
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python -m pytest -q
+
+      - name: Portable PyInstaller build
+        shell: powershell
+        working-directory: App
+        run: .\Build-SwiftShot.ps1 -PortableOnly -SkipIcon

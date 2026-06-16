@@ -7,9 +7,10 @@
 
 <p align="center">
   <a href="#installation"><img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white"></a>
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/SysAdminDoc/SwiftShot/ci.yml?branch=main&label=CI">
   <a href="#license"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg"></a>
   <img alt="Python 3.8+" src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white">
-  <img alt="Lines of code" src="https://img.shields.io/badge/Lines_of_Code-7.6k-green">
+  <img alt="Lines of code" src="https://img.shields.io/badge/Lines_of_Code-12k-green">
 </p>
 
 ---
