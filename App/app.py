@@ -618,6 +618,7 @@ class SwiftShotApp:
     # -------------------------------------------------------------------
 
     def _handle_capture(self, pixmap):
+        pixmap = self._apply_beautification(pixmap)
         actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
                  f"actions={actions}")
@@ -635,6 +636,16 @@ class SwiftShotApp:
                 self._save_directly(pixmap)
             elif action == "clipboard":
                 self._copy_to_clipboard(pixmap)
+
+    def _apply_beautification(self, pixmap):
+        if config.BEAUTIFY_PRESET == "none":
+            return pixmap
+        try:
+            from utils import apply_beautification_preset
+            return apply_beautification_preset(pixmap, config.BEAUTIFY_PRESET)
+        except Exception as e:
+            log.warning(f"Could not apply beautification preset: {e}")
+            return pixmap
 
     def _open_editor(self, pixmap):
         try:

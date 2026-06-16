@@ -67,6 +67,72 @@ def qpixmap_to_pil(pixmap):
     ).copy()
 
 
+def pil_to_qpixmap(pil_image):
+    """Convert a Pillow image to a QPixmap."""
+    from PyQt5.QtGui import QImage, QPixmap
+
+    image = pil_image.convert("RGBA")
+    data = image.tobytes("raw", "RGBA")
+    qimage = QImage(
+        data, image.width, image.height, 4 * image.width, QImage.Format_RGBA8888
+    )
+    return QPixmap.fromImage(qimage.copy())
+
+
+def apply_beautification_preset(pixmap, preset_name):
+    """Apply a one-click beautification preset to a QPixmap."""
+    from PIL import Image, ImageColor, ImageDraw, ImageFilter
+    from config import BEAUTIFICATION_PRESETS
+
+    preset = BEAUTIFICATION_PRESETS.get(preset_name) or BEAUTIFICATION_PRESETS["none"]
+    if preset_name == "none" or preset["padding"] <= 0:
+        return pixmap
+
+    image = qpixmap_to_pil(pixmap)
+    width, height = image.size
+    padding = int(preset["padding"])
+    corner_radius = int(preset["corner_radius"])
+    shadow_radius = int(preset["shadow_radius"])
+    offset_x, offset_y = preset["shadow_offset"]
+    shadow_opacity = int(preset["shadow_opacity"])
+
+    mask = Image.new("L", image.size, 255)
+    if corner_radius > 0:
+        mask = Image.new("L", image.size, 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rounded_rectangle(
+            (0, 0, width - 1, height - 1),
+            radius=corner_radius,
+            fill=255,
+        )
+        rounded = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        rounded.paste(image, (0, 0), mask)
+        image = rounded
+
+    extra = shadow_radius * 2
+    canvas_width = width + padding * 2 + extra
+    canvas_height = height + padding * 2 + extra + max(0, offset_y)
+    background = preset["background"] or "#ffffff"
+    canvas = Image.new(
+        "RGBA",
+        (canvas_width, canvas_height),
+        ImageColor.getrgb(background) + (255,),
+    )
+
+    x = padding + shadow_radius
+    y = padding + shadow_radius
+    if shadow_radius > 0 and shadow_opacity > 0:
+        shadow_alpha = Image.new("L", image.size, 0)
+        shadow_alpha.paste(mask, (0, 0))
+        shadow_alpha = shadow_alpha.filter(ImageFilter.GaussianBlur(shadow_radius))
+        shadow = Image.new("RGBA", image.size, (0, 0, 0, shadow_opacity))
+        shadow.putalpha(shadow_alpha)
+        canvas.alpha_composite(shadow, (x + int(offset_x), y + int(offset_y)))
+
+    canvas.alpha_composite(image, (x, y))
+    return pil_to_qpixmap(canvas)
+
+
 def save_pixmap(pixmap, filepath, file_format, jpeg_quality=90):
     """Save a QPixmap with SwiftShot output-format semantics."""
     fmt = file_format.lower()

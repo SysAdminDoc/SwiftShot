@@ -14,6 +14,35 @@ from pathlib import Path
 
 OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
 AFTER_CAPTURE_ACTION_CHOICES = ("editor", "save", "clipboard")
+BEAUTIFICATION_PRESETS = {
+    "none": {
+        "label": "None",
+        "padding": 0,
+        "background": None,
+        "corner_radius": 0,
+        "shadow_radius": 0,
+        "shadow_offset": (0, 0),
+        "shadow_opacity": 0,
+    },
+    "presentation": {
+        "label": "Presentation",
+        "padding": 36,
+        "background": "#f8fafc",
+        "corner_radius": 14,
+        "shadow_radius": 24,
+        "shadow_offset": (0, 12),
+        "shadow_opacity": 96,
+    },
+    "social": {
+        "label": "Social Media",
+        "padding": 52,
+        "background": "#e0f2fe",
+        "corner_radius": 18,
+        "shadow_radius": 28,
+        "shadow_offset": (0, 16),
+        "shadow_opacity": 88,
+    },
+}
 FILENAME_TEMPLATE_HELP = (
     "Variables: {YYYY}, {MM}, {DD}, {hh}, {mm}, {ss}, "
     "{app}, {title}, {user}, {counter}, {w}, {h}"
@@ -78,6 +107,7 @@ class Config:
     SHADOW_OPACITY = 80
     ROUNDED_CORNERS_ENABLED = False
     ROUNDED_CORNERS_RADIUS = 12
+    BEAUTIFY_PRESET = "none"
 
     # --- Pin Window ---
     PIN_OPACITY = 95

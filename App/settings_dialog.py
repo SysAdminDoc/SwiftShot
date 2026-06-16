@@ -18,6 +18,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import (
     AFTER_CAPTURE_ACTION_CHOICES,
+    BEAUTIFICATION_PRESETS,
     FILENAME_TEMPLATE_HELP,
     OUTPUT_FILE_FORMAT_CHOICES,
     config,
@@ -535,6 +536,14 @@ class SettingsDialog(QDialog):
         layout = QFormLayout(w)
         layout.setSpacing(10)
 
+        self.beautify_preset = QComboBox()
+        for value, preset in BEAUTIFICATION_PRESETS.items():
+            self.beautify_preset.addItem(preset["label"], value)
+        idx = self.beautify_preset.findData(config.BEAUTIFY_PRESET)
+        self.beautify_preset.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addRow("Beautification preset:", self.beautify_preset)
+
+        layout.addRow(QLabel(""))
         layout.addRow(QLabel("Border"))
 
         self.border_width = QSpinBox()
@@ -790,6 +799,7 @@ class SettingsDialog(QDialog):
         config.EDITOR_HIGHLIGHT_COLOR = self._highlight_color.name()
 
         # Frame
+        config.BEAUTIFY_PRESET = self.beautify_preset.currentData() or "none"
         config.BORDER_WIDTH = self.border_width.value()
         config.BORDER_COLOR = self._border_color.name()
         config.SHADOW_RADIUS = self.shadow_radius.value()
@@ -859,6 +869,7 @@ class SettingsDialog(QDialog):
             self.obfuscate_mode: "Obfuscate mode",
             self.reuse_editor: "Reuse existing editor window",
             self.highlight_btn: "Highlight color picker",
+            self.beautify_preset: "Beautification preset",
             self.border_width: "Border width",
             self.border_color_btn: "Border color picker",
             self.shadow_radius: "Shadow radius",

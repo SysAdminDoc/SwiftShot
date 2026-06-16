@@ -7,6 +7,7 @@ def test_config_save_and_reload_round_trip(fresh_config):
     cfg.OUTPUT_FILE_FORMAT = "jpg"
     cfg.OUTPUT_JPEG_QUALITY = 72
     cfg.THEME = "light"
+    cfg.BEAUTIFY_PRESET = "presentation"
     cfg.save()
 
     reloaded = fresh_config.Config()
@@ -14,6 +15,7 @@ def test_config_save_and_reload_round_trip(fresh_config):
     assert reloaded.OUTPUT_FILE_FORMAT == "jpg"
     assert reloaded.OUTPUT_JPEG_QUALITY == 72
     assert reloaded.THEME == "light"
+    assert reloaded.BEAUTIFY_PRESET == "presentation"
 
 
 def test_after_capture_actions_normalize_and_sync_legacy_value(fresh_config):

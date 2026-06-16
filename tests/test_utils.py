@@ -21,3 +21,13 @@ def test_color_helpers(qapp):
     assert utils.pixel_color_at(pixmap, 1, 1) == (12, 34, 56)
     assert utils.pixel_color_at(pixmap, -1, 1) == (0, 0, 0)
     assert utils.color_to_hex(12, 34, 56) == "#0C2238"
+
+
+def test_beautification_preset_expands_pixmap(qapp):
+    pixmap = QPixmap(20, 10)
+    pixmap.fill(QColor(200, 40, 80))
+
+    beautified = utils.apply_beautification_preset(pixmap, "presentation")
+
+    assert beautified.width() > pixmap.width()
+    assert beautified.height() > pixmap.height()
