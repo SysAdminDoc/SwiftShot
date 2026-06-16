@@ -5,14 +5,18 @@ Panel showing thumbnails of recent captures with quick actions.
 
 import os
 import glob
+import hashlib
+import sqlite3
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QApplication, QGridLayout, QFrame,
-    QMenu, QAction, QToolTip, QMessageBox
+    QMenu, QAction, QToolTip, QMessageBox, QLineEdit
 )
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QCursor, QIcon
-from PyQt5.QtCore import Qt, QSize, pyqtSignal, QPoint
+from PyQt5.QtCore import (
+    Qt, QSize, pyqtSignal, QPoint, QByteArray, QBuffer, QIODevice
+)
 
 from config import config
 from logger import log
@@ -32,6 +36,111 @@ def _history_files(history_dir):
     return files
 
 
+def _db_path(history_dir):
+    return os.path.join(history_dir, "history.sqlite3")
+
+
+def _connect_db(history_dir):
+    os.makedirs(history_dir, exist_ok=True)
+    conn = sqlite3.connect(_db_path(history_dir))
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS captures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            width INTEGER NOT NULL,
+            height INTEGER NOT NULL,
+            sha256 TEXT NOT NULL UNIQUE,
+            thumbnail_blob BLOB NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at)"
+    )
+    return conn
+
+
+def _pixmap_png_bytes(pixmap):
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.WriteOnly)
+    pixmap.save(buffer, "PNG")
+    buffer.close()
+    return bytes(data)
+
+
+def _thumbnail_blob(pixmap):
+    thumb = pixmap.scaled(164, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return _pixmap_png_bytes(thumb)
+
+
+def _index_file(conn, filepath):
+    pixmap = QPixmap(filepath)
+    if pixmap.isNull():
+        return
+    with open(filepath, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    created_at = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(
+        timespec="seconds"
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO captures
+            (path, created_at, width, height, sha256, thumbnail_blob)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            filepath,
+            created_at,
+            pixmap.width(),
+            pixmap.height(),
+            digest,
+            _thumbnail_blob(pixmap),
+        ),
+    )
+
+
+def _ensure_history_index(history_dir):
+    conn = _connect_db(history_dir)
+    indexed = {
+        row["path"] for row in conn.execute("SELECT path FROM captures")
+    }
+    for filepath in _history_files(history_dir):
+        if filepath not in indexed:
+            _index_file(conn, filepath)
+    conn.commit()
+    return conn
+
+
+def _history_entries(history_dir, search_text=""):
+    if not os.path.isdir(history_dir):
+        return []
+    with _ensure_history_index(history_dir) as conn:
+        params = []
+        where = "WHERE 1=1"
+        if search_text:
+            where += " AND (created_at LIKE ? OR path LIKE ?)"
+            like = f"%{search_text}%"
+            params.extend([like, like])
+        rows = conn.execute(
+            f"""
+            SELECT path, created_at, width, height, sha256, thumbnail_blob
+            FROM captures
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, config.CAPTURE_HISTORY_MAX),
+        ).fetchall()
+    return [dict(row) for row in rows if os.path.exists(row["path"])]
+
+
+def _delete_history_entry(history_dir, filepath):
+    with _connect_db(history_dir) as conn:
+        conn.execute("DELETE FROM captures WHERE path = ?", (filepath,))
+
+
 class HistoryThumbnail(QFrame):
     """Clickable thumbnail card for a captured image."""
 
@@ -40,19 +149,26 @@ class HistoryThumbnail(QFrame):
     pin_image = pyqtSignal(str)         # filepath
     delete_entry = pyqtSignal(str)      # filepath
 
-    def __init__(self, filepath, parent=None):
+    def __init__(self, entry, parent=None):
         super().__init__(parent)
-        self.filepath = filepath
+        self.filepath = entry["path"] if isinstance(entry, dict) else entry
         self._hovered = False
-        self._pixmap = QPixmap(filepath)
-        self._filename = os.path.basename(filepath)
+        self._pixmap = QPixmap()
+        if isinstance(entry, dict) and entry.get("thumbnail_blob"):
+            self._pixmap.loadFromData(entry["thumbnail_blob"])
+        if self._pixmap.isNull():
+            self._pixmap = QPixmap(self.filepath)
+        self._filename = os.path.basename(self.filepath)
 
         # Parse timestamp from filename or file mod time
-        try:
-            mtime = os.path.getmtime(filepath)
-            self._timestamp = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            self._timestamp = ""
+        if isinstance(entry, dict):
+            self._timestamp = entry.get("created_at", "").replace("T", " ")
+        else:
+            try:
+                mtime = os.path.getmtime(self.filepath)
+                self._timestamp = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                self._timestamp = ""
 
         self.setFixedSize(180, 150)
         self.setCursor(Qt.PointingHandCursor)
@@ -205,6 +321,12 @@ class CaptureHistoryDialog(QDialog):
 
         layout.addLayout(title_bar)
 
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search date or filename...")
+        self.search_box.setToolTip("Search capture history by date, time, or filename")
+        self.search_box.textChanged.connect(self._load_history)
+        layout.addWidget(self.search_box)
+
         # Scroll area with grid of thumbnails
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -224,20 +346,17 @@ class CaptureHistoryDialog(QDialog):
             self.scroll.setWidget(container)
             return
 
-        # Get image files sorted by modification time (newest first)
-        files = _history_files(history_dir)
-        files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
-        files = files[:config.CAPTURE_HISTORY_MAX]
+        entries = _history_entries(history_dir, self.search_box.text().strip())
 
-        if not files:
+        if not entries:
             lbl = QLabel("No captures yet")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet("color: #6c7086; font-size: 12pt;")
             self.grid.addWidget(lbl, 0, 0)
         else:
             cols = 3
-            for i, filepath in enumerate(files):
-                thumb = HistoryThumbnail(filepath)
+            for i, entry in enumerate(entries):
+                thumb = HistoryThumbnail(entry)
                 thumb.open_editor.connect(self._on_open)
                 thumb.copy_clipboard.connect(self._on_copy)
                 thumb.pin_image.connect(self._on_pin)
@@ -273,6 +392,7 @@ class CaptureHistoryDialog(QDialog):
             os.remove(filepath)
         except Exception:
             pass
+        _delete_history_entry(config.CAPTURE_HISTORY_DIR, filepath)
         self._load_history()
 
     def _clear_history(self):
@@ -298,6 +418,8 @@ class CaptureHistoryDialog(QDialog):
                 os.remove(f)
             except Exception:
                 pass
+        with _connect_db(history_dir) as conn:
+            conn.execute("DELETE FROM captures")
         self._load_history()
 
 
@@ -309,19 +431,61 @@ def save_to_history(pixmap):
         history_dir = config.CAPTURE_HISTORY_DIR
         os.makedirs(history_dir, exist_ok=True)
 
+        png_bytes = _pixmap_png_bytes(pixmap)
+        digest = hashlib.sha256(png_bytes).hexdigest()
+        with _connect_db(history_dir) as conn:
+            existing = conn.execute(
+                "SELECT path FROM captures WHERE sha256 = ?",
+                (digest,),
+            ).fetchone()
+            if existing:
+                if os.path.exists(existing["path"]):
+                    log.info(f"Duplicate capture skipped: {existing['path']}")
+                    return existing["path"]
+                conn.execute("DELETE FROM captures WHERE sha256 = ?", (digest,))
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filepath = os.path.join(history_dir, f"capture_{timestamp}.png")
-        pixmap.save(filepath, "PNG")
+        counter = 1
+        while os.path.exists(filepath):
+            filepath = os.path.join(
+                history_dir, f"capture_{timestamp}_{counter}.png"
+            )
+            counter += 1
+        with open(filepath, "wb") as f:
+            f.write(png_bytes)
 
-        # Prune old entries
-        files = _history_files(history_dir)
-        files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
-
-        for old_file in files[config.CAPTURE_HISTORY_MAX:]:
-            try:
-                os.remove(old_file)
-            except Exception:
-                pass
+        created_at = datetime.now().isoformat(timespec="seconds")
+        with _connect_db(history_dir) as conn:
+            conn.execute(
+                """
+                INSERT INTO captures
+                    (path, created_at, width, height, sha256, thumbnail_blob)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    filepath,
+                    created_at,
+                    pixmap.width(),
+                    pixmap.height(),
+                    digest,
+                    _thumbnail_blob(pixmap),
+                ),
+            )
+            old_entries = conn.execute(
+                """
+                SELECT path FROM captures
+                ORDER BY created_at DESC, id DESC
+                LIMIT -1 OFFSET ?
+                """,
+                (config.CAPTURE_HISTORY_MAX,),
+            ).fetchall()
+            for row in old_entries:
+                try:
+                    os.remove(row["path"])
+                except Exception:
+                    pass
+                conn.execute("DELETE FROM captures WHERE path = ?", (row["path"],))
 
         log.info(f"Saved to history: {filepath}")
         return filepath

@@ -70,7 +70,7 @@ Pin any screenshot as an always-on-top borderless floating window. Drag to repos
 
 ### Capture History
 
-A thumbnail panel of recent captures with quick actions: re-open in editor, copy to clipboard, pin to desktop, or delete.
+A SQLite-backed thumbnail panel of recent captures with duplicate detection, thumbnail caching, date/filename search, and quick actions: re-open in editor, copy to clipboard, pin to desktop, or delete.
 
 ### Clipboard Watcher
 
