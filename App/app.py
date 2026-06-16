@@ -618,8 +618,9 @@ class SwiftShotApp:
     # -------------------------------------------------------------------
 
     def _handle_capture(self, pixmap):
+        actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
-                 f"action={config.AFTER_CAPTURE_ACTION}")
+                 f"actions={actions}")
         # Save to history
         try:
             from capture_history import save_to_history
@@ -627,15 +628,13 @@ class SwiftShotApp:
         except Exception as e:
             log.warning(f"Could not save to history: {e}")
 
-        action = config.AFTER_CAPTURE_ACTION
-        if action == "editor":
-            self._open_editor(pixmap)
-        elif action == "save":
-            self._save_directly(pixmap)
-        elif action == "clipboard":
-            self._copy_to_clipboard(pixmap)
-        else:
-            self._open_editor(pixmap)
+        for action in actions:
+            if action == "editor":
+                self._open_editor(pixmap)
+            elif action == "save":
+                self._save_directly(pixmap)
+            elif action == "clipboard":
+                self._copy_to_clipboard(pixmap)
 
     def _open_editor(self, pixmap):
         try:

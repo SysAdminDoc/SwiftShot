@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
+AFTER_CAPTURE_ACTION_CHOICES = ("editor", "save", "clipboard")
 FILENAME_TEMPLATE_HELP = (
     "Variables: {YYYY}, {MM}, {DD}, {hh}, {mm}, {ss}, "
     "{app}, {title}, {user}, {counter}, {w}, {h}"
@@ -50,6 +51,7 @@ class Config:
 
     # --- After Capture ---
     AFTER_CAPTURE_ACTION = "editor"   # "editor", "save", "clipboard"
+    AFTER_CAPTURE_ACTIONS = ["editor"]
     COPY_PATH_TO_CLIPBOARD = False
     PLAY_CAMERA_SOUND = True
 
@@ -137,6 +139,9 @@ class Config:
             for key, value in data.items():
                 if hasattr(self, key) and key.isupper():
                     setattr(self, key, value)
+            if "AFTER_CAPTURE_ACTIONS" not in data:
+                self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
+            self._normalize_after_capture_actions()
         except json.JSONDecodeError:
             backup = self._config_file + ".corrupt"
             try:
@@ -169,6 +174,7 @@ class Config:
                         else list(cls_val))
         for k, v in saved_state.items():
             setattr(self, k, v)
+        self._normalize_after_capture_actions()
         self.save()
 
     def export_settings(self, filepath):
@@ -192,6 +198,9 @@ class Config:
             for key, value in data.items():
                 if hasattr(self, key) and key.isupper() and key not in self._STATE_KEYS:
                     setattr(self, key, value)
+            if "AFTER_CAPTURE_ACTIONS" not in data:
+                self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
+            self._normalize_after_capture_actions()
             self.save()
             return True
         except Exception:
@@ -205,6 +214,31 @@ class Config:
         self.EDITOR_RECENT_COLORS.insert(0, hex_color)
         if len(self.EDITOR_RECENT_COLORS) > 12:
             self.EDITOR_RECENT_COLORS = self.EDITOR_RECENT_COLORS[:12]
+
+    def _normalize_after_capture_actions(self):
+        configured = getattr(self, "AFTER_CAPTURE_ACTIONS", None)
+        if isinstance(configured, str):
+            configured = [configured]
+        if not isinstance(configured, list):
+            configured = []
+
+        actions = []
+        for action in configured:
+            if action in AFTER_CAPTURE_ACTION_CHOICES and action not in actions:
+                actions.append(action)
+
+        legacy_action = getattr(self, "AFTER_CAPTURE_ACTION", "editor")
+        if not actions and legacy_action in AFTER_CAPTURE_ACTION_CHOICES:
+            actions = [legacy_action]
+        if not actions:
+            actions = ["editor"]
+
+        self.AFTER_CAPTURE_ACTIONS = actions
+        self.AFTER_CAPTURE_ACTION = actions[0]
+
+    def get_after_capture_actions(self):
+        self._normalize_after_capture_actions()
+        return list(self.AFTER_CAPTURE_ACTIONS)
 
     def get_output_directory(self):
         if self.OUTPUT_FILE_PATH and os.path.isdir(self.OUTPUT_FILE_PATH):

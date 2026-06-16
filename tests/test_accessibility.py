@@ -58,7 +58,24 @@ def test_settings_controls_have_accessible_names(qapp):
     assert dialog.accessibleName() == "SwiftShot preferences"
     assert dialog.tabs.accessibleName() == "Preferences sections"
     assert dialog.theme.findData("light") >= 0
+    assert dialog.after_capture_list.accessibleName() == "Post-capture workflow actions"
     assert unnamed == []
+
+
+def test_settings_after_capture_workflow_ordering(qapp):
+    from PyQt5.QtCore import Qt
+    from settings_dialog import SettingsDialog
+
+    dialog = SettingsDialog()
+    save_items = dialog.after_capture_list.findItems("Save to file", Qt.MatchExactly)
+    assert save_items
+
+    save_item = save_items[0]
+    save_item.setCheckState(Qt.Checked)
+    dialog.after_capture_list.setCurrentItem(save_item)
+    dialog._move_workflow_item(-1)
+
+    assert dialog._selected_after_capture_actions()[:2] == ["save", "editor"]
 
 
 def test_settings_filename_preview_updates(qapp):

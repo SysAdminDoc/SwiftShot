@@ -11,14 +11,26 @@ from PyQt5.QtWidgets import (
     QFormLayout, QComboBox, QCheckBox, QSpinBox, QLineEdit,
     QSlider, QColorDialog, QPushButton, QLabel, QGroupBox,
     QFileDialog, QMessageBox, QDialogButtonBox, QAbstractButton,
-    QApplication
+    QApplication, QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
 
-from config import FILENAME_TEMPLATE_HELP, OUTPUT_FILE_FORMAT_CHOICES, config
+from config import (
+    AFTER_CAPTURE_ACTION_CHOICES,
+    FILENAME_TEMPLATE_HELP,
+    OUTPUT_FILE_FORMAT_CHOICES,
+    config,
+)
 from logger import log
 from theme import THEME_LABELS, apply_theme, colors_for_theme, stylesheet_for_theme
+
+
+WORKFLOW_ACTION_LABELS = {
+    "editor": "Open in editor",
+    "save": "Save to file",
+    "clipboard": "Copy image to clipboard",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -267,11 +279,26 @@ class SettingsDialog(QDialog):
         self.play_sound.setChecked(config.PLAY_CAMERA_SOUND)
         layout.addRow(self.play_sound)
 
-        self.after_capture = QComboBox()
-        self.after_capture.addItems(["Open in Editor", "Save to File", "Copy to Clipboard"])
-        idx_map = {"editor": 0, "save": 1, "clipboard": 2}
-        self.after_capture.setCurrentIndex(idx_map.get(config.AFTER_CAPTURE_ACTION, 0))
-        layout.addRow("After capture:", self.after_capture)
+        workflow_group = QGroupBox("Post-capture workflow")
+        workflow_layout = QVBoxLayout(workflow_group)
+        self.after_capture_list = QListWidget()
+        self.after_capture_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.after_capture_list.setDefaultDropAction(Qt.MoveAction)
+        self.after_capture_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.after_capture_list.setFixedHeight(96)
+        self._populate_after_capture_list()
+        workflow_layout.addWidget(self.after_capture_list)
+
+        workflow_buttons = QHBoxLayout()
+        up_btn = QPushButton("Move Up")
+        up_btn.clicked.connect(lambda: self._move_workflow_item(-1))
+        workflow_buttons.addWidget(up_btn)
+        down_btn = QPushButton("Move Down")
+        down_btn.clicked.connect(lambda: self._move_workflow_item(1))
+        workflow_buttons.addWidget(down_btn)
+        workflow_buttons.addStretch()
+        workflow_layout.addLayout(workflow_buttons)
+        layout.addRow(workflow_group)
 
         self.copy_path = QCheckBox("Copy file path to clipboard after saving")
         self.copy_path.setChecked(config.COPY_PATH_TO_CLIPBOARD)
@@ -590,6 +617,39 @@ class SettingsDialog(QDialog):
 
     # --- Helpers ---
 
+    def _populate_after_capture_list(self):
+        configured = config.get_after_capture_actions()
+        ordered = configured + [
+            action for action in AFTER_CAPTURE_ACTION_CHOICES
+            if action not in configured
+        ]
+        for action in ordered:
+            item = QListWidgetItem(WORKFLOW_ACTION_LABELS[action])
+            item.setData(Qt.UserRole, action)
+            item.setFlags(
+                item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled
+            )
+            item.setCheckState(Qt.Checked if action in configured else Qt.Unchecked)
+            self.after_capture_list.addItem(item)
+        self.after_capture_list.setCurrentRow(0)
+
+    def _move_workflow_item(self, direction):
+        row = self.after_capture_list.currentRow()
+        new_row = row + direction
+        if row < 0 or new_row < 0 or new_row >= self.after_capture_list.count():
+            return
+        item = self.after_capture_list.takeItem(row)
+        self.after_capture_list.insertItem(new_row, item)
+        self.after_capture_list.setCurrentRow(new_row)
+
+    def _selected_after_capture_actions(self):
+        actions = []
+        for row in range(self.after_capture_list.count()):
+            item = self.after_capture_list.item(row)
+            if item.checkState() == Qt.Checked:
+                actions.append(item.data(Qt.UserRole))
+        return actions or ["editor"]
+
     def _update_filename_preview(self):
         if not hasattr(self, "filename_preview"):
             return
@@ -693,9 +753,8 @@ class SettingsDialog(QDialog):
         config.SHOW_NOTIFICATIONS = self.show_notifications.isChecked()
         config.PLAY_CAMERA_SOUND = self.play_sound.isChecked()
         config.THEME = self.theme.currentData() or "dark"
-        actions = ["editor", "save", "clipboard"]
-        config.AFTER_CAPTURE_ACTION = actions[
-            self.after_capture.currentIndex()]
+        config.AFTER_CAPTURE_ACTIONS = self._selected_after_capture_actions()
+        config.AFTER_CAPTURE_ACTION = config.AFTER_CAPTURE_ACTIONS[0]
         config.COPY_PATH_TO_CLIPBOARD = self.copy_path.isChecked()
 
         # Capture
@@ -775,7 +834,7 @@ class SettingsDialog(QDialog):
             self.show_notifications: "Show tray notifications",
             self.theme: "Application theme",
             self.play_sound: "Play capture sound",
-            self.after_capture: "After capture action",
+            self.after_capture_list: "Post-capture workflow actions",
             self.copy_path: "Copy file path to clipboard after saving",
             self.capture_mouse: "Include mouse pointer in captures",
             self.capture_delay: "Pre-capture delay in milliseconds",

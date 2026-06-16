@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -13,6 +14,32 @@ def test_config_save_and_reload_round_trip(fresh_config):
     assert reloaded.OUTPUT_FILE_FORMAT == "jpg"
     assert reloaded.OUTPUT_JPEG_QUALITY == 72
     assert reloaded.THEME == "light"
+
+
+def test_after_capture_actions_normalize_and_sync_legacy_value(fresh_config):
+    cfg = fresh_config.Config()
+    cfg.AFTER_CAPTURE_ACTION = "clipboard"
+    cfg.AFTER_CAPTURE_ACTIONS = ["save", "save", "invalid", "editor"]
+
+    assert cfg.get_after_capture_actions() == ["save", "editor"]
+    assert cfg.AFTER_CAPTURE_ACTION == "save"
+
+    cfg.AFTER_CAPTURE_ACTIONS = []
+    cfg.AFTER_CAPTURE_ACTION = "clipboard"
+    assert cfg.get_after_capture_actions() == ["clipboard"]
+
+
+def test_import_legacy_after_capture_action_populates_workflow(fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    cfg.AFTER_CAPTURE_ACTIONS = ["editor"]
+    legacy_path = tmp_path / "legacy-settings.json"
+    legacy_path.write_text(
+        json.dumps({"AFTER_CAPTURE_ACTION": "clipboard"}),
+        encoding="utf-8",
+    )
+
+    assert cfg.import_settings(str(legacy_path))
+    assert cfg.get_after_capture_actions() == ["clipboard"]
 
 
 def test_config_reset_preserves_state_and_restores_defaults(fresh_config):

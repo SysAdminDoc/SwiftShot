@@ -4,6 +4,7 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [v2.6.5] - 2026-06-16
 
+- Added ordered post-capture workflows so save, clipboard, and editor actions can run in sequence.
 - Added a persisted dark/light theme option with WCAG contrast coverage.
 - Added rich filename templates with app, window title, user, dimensions, and counter variables.
 - Added lossless WebP as an output format for direct capture saves and editor exports.
