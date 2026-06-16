@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
 
-from config import config
+from config import OUTPUT_FILE_FORMAT_CHOICES, config
 from logger import log
 
 
@@ -403,7 +403,7 @@ class SettingsDialog(QDialog):
         layout.setSpacing(10)
 
         self.file_format = QComboBox()
-        self.file_format.addItems(["png", "jpg", "bmp", "gif", "tiff"])
+        self.file_format.addItems(list(OUTPUT_FILE_FORMAT_CHOICES))
         idx = self.file_format.findText(config.OUTPUT_FILE_FORMAT)
         if idx >= 0:
             self.file_format.setCurrentIndex(idx)

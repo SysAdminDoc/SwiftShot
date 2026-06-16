@@ -4,6 +4,7 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [v2.6.5] - 2026-06-16
 
+- Added lossless WebP as an output format for direct capture saves and editor exports.
 - Added accessibility names/descriptions to capture and settings controls, plus keyboard activation for capture menu actions.
 - Unified the image editor colors with the main Catppuccin Mocha application theme.
 - Fixed editor smudge undefined-coordinate handling and removed runtime package installation from optional background removal.

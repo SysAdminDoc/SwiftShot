@@ -5556,6 +5556,7 @@ class ImageEditor(QMainWindow):
         self._act(fm, "&Save", "Ctrl+S", self.save_image)
         self._act(fm, "Save &As...", "Ctrl+Shift+S", self.save_image_as)
         self._act(fm, "Export &PNG...", "", self.export_png)
+        self._act(fm, "Export &WebP...", "", self.export_webp)
         fm.addSeparator()
         self._act(fm, "&Copy to Clipboard", "Ctrl+Shift+C", self.copy_to_clipboard)
         self._act(fm, "Save &Project (.swiftshot)...", "", self.save_project)
@@ -6243,7 +6244,9 @@ class ImageEditor(QMainWindow):
 
     def save_image_as(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Image", "",
-            "PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp);;All Files (*)")
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;"
+            "WebP Lossless (*.webp);;BMP (*.bmp);;"
+            "TIFF (*.tiff *.tif);;All Files (*)")
         if path:
             self.file_path = path; self._save_to(path)
             self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
@@ -6258,6 +6261,8 @@ class ImageEditor(QMainWindow):
                     if not ok: return
                     c = c.convert("RGB")
                     c.save(path, quality=quality)
+                elif path.lower().endswith(".webp"):
+                    c.save(path, "WEBP", lossless=True, quality=100, method=6)
                 else:
                     c.save(path)
                 self._add_recent(path)
@@ -6270,6 +6275,15 @@ class ImageEditor(QMainWindow):
         if path:
             c = self.get_composite()
             if c: c.save(path, "PNG"); self._status(f"Exported: {path}")
+
+    def export_webp(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export WebP", "", "WebP Lossless (*.webp)")
+        if path:
+            c = self.get_composite()
+            if c:
+                c.save(path, "WEBP", lossless=True, quality=100, method=6)
+                self._status(f"Exported: {path}")
 
     # ── Edit Ops ──────────────────────────────────────────────────────────────
     def undo(self):
@@ -7424,6 +7438,7 @@ class ImageEditor(QMainWindow):
             ("Save", "File", self.save_image),
             ("Save As", "File", self.save_image_as),
             ("Export PNG", "File", self.export_png),
+            ("Export WebP", "File", self.export_webp),
             ("Copy to Clipboard", "File", self.copy_to_clipboard),
             ("Open from Clipboard", "File", self.open_from_clipboard),
             # Edit

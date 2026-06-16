@@ -46,6 +46,42 @@ def pixel_color_at(pixmap, x, y):
     return (0, 0, 0)
 
 
+def qpixmap_to_pil(pixmap):
+    """Convert a QPixmap to a Pillow RGBA image."""
+    from PIL import Image
+    from PyQt5.QtGui import QImage
+
+    qimg = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+    width, height = qimg.width(), qimg.height()
+    ptr = qimg.bits()
+    ptr.setsize(height * qimg.bytesPerLine())
+    return Image.frombuffer(
+        "RGBA",
+        (width, height),
+        bytes(ptr),
+        "raw",
+        "RGBA",
+        qimg.bytesPerLine(),
+        1,
+    ).copy()
+
+
+def save_pixmap(pixmap, filepath, file_format, jpeg_quality=90):
+    """Save a QPixmap with SwiftShot output-format semantics."""
+    fmt = file_format.lower()
+    if fmt == "jpg":
+        fmt = "jpeg"
+
+    if fmt == "webp":
+        image = qpixmap_to_pil(pixmap)
+        image.save(filepath, "WEBP", lossless=True, quality=100, method=6)
+        return True
+
+    qt_format = "JPEG" if fmt == "jpeg" else fmt.upper()
+    quality = int(jpeg_quality) if qt_format == "JPEG" else -1
+    return pixmap.save(filepath, qt_format, quality)
+
+
 def color_to_hex(r, g, b):
     """Convert RGB tuple to hex string."""
     return f"#{r:02X}{g:02X}{b:02X}"

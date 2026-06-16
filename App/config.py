@@ -10,6 +10,9 @@ import shutil
 from pathlib import Path
 
 
+OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
+
+
 class Config:
     """Application configuration with sensible defaults."""
 

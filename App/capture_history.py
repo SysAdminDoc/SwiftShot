@@ -18,7 +18,10 @@ from config import config
 from logger import log
 
 
-IMAGE_EXTENSIONS = ['*.png', '*.jpg', '*.jpeg', '*.bmp']
+IMAGE_EXTENSIONS = [
+    '*.png', '*.jpg', '*.jpeg', '*.bmp',
+    '*.gif', '*.tiff', '*.tif', '*.webp',
+]
 
 
 def _history_files(history_dir):

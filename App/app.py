@@ -672,13 +672,16 @@ class SwiftShotApp:
 
     def _save_directly(self, pixmap):
         try:
+            from utils import save_pixmap
+
             filepath = config.get_filename()
-            fmt = config.OUTPUT_FILE_FORMAT.upper()
-            if fmt == "JPG":
-                fmt = "JPEG"
-            quality = config.OUTPUT_JPEG_QUALITY if fmt == "JPEG" else -1
             os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
-            success = pixmap.save(filepath, fmt, quality)
+            success = save_pixmap(
+                pixmap,
+                filepath,
+                config.OUTPUT_FILE_FORMAT,
+                config.OUTPUT_JPEG_QUALITY,
+            )
             if success:
                 self.tray_icon.showMessage(
                     "SwiftShot", f"Screenshot saved to {filepath}",
@@ -799,7 +802,7 @@ class SwiftShotApp:
         from PyQt5.QtWidgets import QFileDialog
         filepath, _ = QFileDialog.getOpenFileName(
             None, "Open Image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif);;All Files (*)"
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp);;All Files (*)"
         )
         if filepath:
             pixmap = QPixmap(filepath)

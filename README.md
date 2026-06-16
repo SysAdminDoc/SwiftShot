@@ -159,7 +159,7 @@ Settings are stored in `%APPDATA%\SwiftShot\swiftshot.json`. Access them from th
 
 Available tabs: **General**, **Capture**, **Hotkeys**, **Output**, **Editor**, **Frame**, **Advanced**.
 
-Notable settings include after-capture action (editor / save / clipboard), output format and filename pattern, timed capture duration, clipboard watcher, and launch-at-startup.
+Notable settings include after-capture action (editor / save / clipboard), output format (PNG, JPEG, BMP, GIF, TIFF, or lossless WebP), filename pattern, timed capture duration, clipboard watcher, and launch-at-startup.
 
 Settings can be exported/imported as JSON and reset to defaults at any time.
 
