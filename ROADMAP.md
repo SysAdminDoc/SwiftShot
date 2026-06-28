@@ -33,7 +33,7 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 - OCR-region capture returns both image and recognized text in clipboard
 
 ### Performance & robustness
-- Migrate PyQt5 -> PyQt6 (per CLAUDE.md preference)
+- Migrate PyQt5 -> PyQt6
 - Static-link build to trim .exe size and cold-start time
 - Instrumented crash-handler with GUI crash dialog that writes to `%APPDATA%\SwiftShot\crashlog.txt`
 - Per-version auto-update via GitHub Releases (signed)
@@ -84,6 +84,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 ### Patterns & Architectures Worth Studying
 - Annotation as immediate-mode canvas layer using PyQt6 QGraphicsScene (Flameshot's scene-graph approach translates cleanly)
 - Plugin SDK ethos — Greenshot's failure mode was loading enterprise plugins nobody needed; SwiftShot should keep plugins optional and drop-in-folder style (`%APPDATA%\SwiftShot\Plugins\*.py`) with `Tool(ABC)` contract
-- DPI-aware capture path (CLAUDE.md memory already mandates this); on multi-monitor with mixed DPI, enumerate via Win32 `EnumDisplayMonitors` + per-monitor-v2 context
+- DPI-aware capture path; on multi-monitor with mixed DPI, enumerate via Win32 `EnumDisplayMonitors` + per-monitor-v2 context
 - File-naming template system (`{app}_{yyyy-MM-dd_HH-mm-ss}`) with variable registry — ShareX's template engine is a good reference
 - Clipboard-history integration for "paste as markdown image link" (Obsidian/Notion workflow)
