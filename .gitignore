@@ -23,3 +23,9 @@ build/
 dist/
 *.spec.bak
 *.zip
+
+# AI config
+.codex/
+.ai/
+PROJECT_CONTEXT.md
+CONTINUATION_PROMPT.md
