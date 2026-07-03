@@ -5110,6 +5110,7 @@ class ImageEditor(QMainWindow):
         self.history.on_change = self._mark_dirty
         self.file_path = None
         self.saved_path = None
+        self._jpeg_quality = None            # remembered per document (ask once)
         self.selected_layer_indices = set()  # multi-select
         self.saved_paths = []               # list of path dicts for Paths panel
         self.retouch_exposure = 50
@@ -6431,7 +6432,9 @@ class ImageEditor(QMainWindow):
             "WebP Lossless (*.webp);;BMP (*.bmp);;"
             "TIFF (*.tiff *.tif);;All Files (*)")
         if path:
-            self.file_path = path; self._save_to(path)
+            self.file_path = path
+            self._jpeg_quality = None   # fresh Save As re-prompts for quality
+            self._save_to(path)
             self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
 
     def _save_to(self, path):
@@ -6439,11 +6442,22 @@ class ImageEditor(QMainWindow):
             c = self.get_composite()
             if c:
                 if path.lower().endswith((".jpg", ".jpeg")):
-                    quality, ok = QInputDialog.getInt(self, "JPEG Quality",
-                        "Quality (1–100):", 90, 1, 100)
-                    if not ok: return
-                    c = c.convert("RGB")
-                    c.save(path, quality=quality)
+                    # Ask for quality once per document; plain Ctrl+S re-saves
+                    # reuse it silently.
+                    if self._jpeg_quality is None:
+                        quality, ok = QInputDialog.getInt(self, "JPEG Quality",
+                            "Quality (1–100):", 90, 1, 100)
+                        if not ok: return
+                        self._jpeg_quality = quality
+                    # JPEG has no alpha — matte transparency onto white (black
+                    # via a bare convert('RGB') is a surprising dark fringe).
+                    if c.mode == "RGBA":
+                        matte = Image.new("RGB", c.size, (255, 255, 255))
+                        matte.paste(c, mask=c.split()[3])
+                        c = matte
+                    else:
+                        c = c.convert("RGB")
+                    c.save(path, quality=self._jpeg_quality)
                 elif path.lower().endswith(".webp"):
                     c.save(path, "WEBP", lossless=True, quality=100, method=6)
                 else:

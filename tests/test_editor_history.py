@@ -231,6 +231,25 @@ def test_expand_canvas_grows_groups_and_selection_mask(qapp):
     assert canvas.selection_mask.size == (new_w, new_h)  # selection resized
 
 
+def test_jpeg_save_uses_white_matte(qapp, tmp_path):
+    """JPEG has no alpha; transparent pixels must matte onto white, not the
+    dark fringe a bare convert('RGB') produces (regression)."""
+    from editor import ImageEditor
+    from PyQt5.QtGui import QPixmap, QColor
+    from PIL import Image
+
+    pm = QPixmap(10, 10)
+    pm.fill(QColor(0, 0, 0, 0))          # fully transparent
+    editor = ImageEditor(pm)
+    editor._jpeg_quality = 90            # preset so no dialog is raised
+    try:
+        out = tmp_path / "shot.jpg"
+        editor._save_to(str(out))
+        assert Image.open(out).convert("RGB").getpixel((5, 5)) == (255, 255, 255)
+    finally:
+        editor.close()
+
+
 def test_soft_brush_stamp_has_radial_falloff(qapp):
     """Vectorized soft-brush stamp must keep the radial alpha falloff:
     opaque at the centre, transparent at the corner."""
