@@ -13,12 +13,10 @@ Strategy:
 """
 
 import sys
-import time
 from PyQt5.QtWidgets import QApplication, QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QProgressBar
-from PyQt5.QtGui import QPixmap, QPainter, QImage, QColor, QFont
+from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont
 from PyQt5.QtCore import Qt, QTimer, QRect
 
-from config import config
 from logger import log
 
 
@@ -40,24 +38,7 @@ class ScrollingCaptureDialog(QDialog):
         self._scroll_count = 0
         self._result_pixmap = None
 
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e2e; }
-            QLabel { color: #cdd6f4; background: transparent; }
-            QPushButton {
-                background-color: #313244; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 6px;
-                padding: 8px 20px; font-size: 10pt;
-            }
-            QPushButton:hover { background-color: #45475a; border-color: #89b4fa; }
-            QProgressBar {
-                background-color: #313244; border: 1px solid #45475a;
-                border-radius: 4px; text-align: center; color: #cdd6f4;
-            }
-            QProgressBar::chunk {
-                background-color: #89b4fa; border-radius: 3px;
-            }
-        """)
-
+        # Styling comes from the app-wide theme stylesheet.
         layout = QVBoxLayout(self)
 
         self.status_label = QLabel("Click 'Start' then click the window you want to capture.\n"

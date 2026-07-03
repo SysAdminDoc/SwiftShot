@@ -16,32 +16,23 @@ class OcrResultDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("OCR Result - SwiftShot")
         self.setMinimumSize(500, 350)
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e2e; }
-            QLabel { color: #cdd6f4; background: transparent; }
-            QTextEdit {
-                background-color: #313244; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 6px;
-                padding: 8px; font-family: 'Consolas'; font-size: 10pt;
-            }
-            QPushButton {
-                background-color: #45475a; color: #cdd6f4;
-                border: 1px solid #585b70; border-radius: 6px;
-                padding: 8px 20px; font-size: 10pt;
-            }
-            QPushButton:hover { background-color: #585b70; border-color: #89b4fa; }
-        """)
+        # Styling comes from the app-wide theme stylesheet.
+
+        # Make the promise in the label true for every caller.
+        QApplication.clipboard().setText(text)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        lbl = QLabel("Extracted Text:")
+        lbl = QLabel("Extracted text (already copied to your clipboard):")
         lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
         layout.addWidget(lbl)
 
         self.text_edit = QTextEdit()
         self.text_edit.setPlainText(text)
         self.text_edit.setReadOnly(False)
+        self.text_edit.setFont(QFont("Consolas", 10))
+        self.text_edit.setAccessibleName("Extracted text")
         layout.addWidget(self.text_edit)
 
         btn_layout = QHBoxLayout()

@@ -5,15 +5,14 @@ Drag to move, scroll to resize, right-click context menu.
 """
 
 from PyQt5.QtWidgets import (
-    QWidget, QApplication, QMenu, QAction, QLabel, QVBoxLayout, QHBoxLayout
+    QWidget, QApplication, QMenu
 )
 from PyQt5.QtGui import (
-    QPixmap, QPainter, QColor, QPen, QCursor, QFont, QIcon
+    QPixmap, QPainter, QColor, QPen, QCursor, QFont
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QRect, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, pyqtSignal
 
 from config import config
-from logger import log
 
 
 class PinWindow(QWidget):
@@ -155,14 +154,7 @@ class PinWindow(QWidget):
             self._update_size()
 
     def _show_context_menu(self, pos):
-        menu = QMenu()
-        menu.setStyleSheet("""
-            QMenu { background-color: #1e1e2e; color: #cdd6f4;
-                    border: 1px solid #45475a; border-radius: 6px; padding: 4px; }
-            QMenu::item { padding: 6px 20px; border-radius: 4px; }
-            QMenu::item:selected { background-color: #45475a; }
-            QMenu::separator { height: 1px; background-color: #313244; margin: 4px 8px; }
-        """)
+        menu = QMenu(self)
 
         copy_act = menu.addAction("Copy to Clipboard")
         copy_act.triggered.connect(self._copy_to_clipboard)

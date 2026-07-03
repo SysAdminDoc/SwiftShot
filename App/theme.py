@@ -5,7 +5,6 @@ Professional dark theme matching Matt's preferred aesthetic.
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtCore import Qt
 
 
 # Shared Catppuccin Mocha roles used by both the main app and editor.
@@ -95,7 +94,7 @@ QMenu::item:selected {
 
 QMenu::separator {
     height: 1px;
-    background-color: #313244;
+    background-color: #585b70;
     margin: 4px 8px;
 }
 
@@ -314,6 +313,36 @@ QDialog {
     background-color: #1e1e2e;
 }
 
+QProgressBar {
+    background-color: #313244;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    text-align: center;
+    color: #cdd6f4;
+}
+
+QProgressBar::chunk {
+    background-color: #89b4fa;
+    border-radius: 3px;
+}
+
+QListWidget {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+}
+
+QListWidget::item {
+    padding: 4px 6px;
+    border-radius: 3px;
+}
+
+QListWidget::item:selected {
+    background-color: #45475a;
+    color: #cdd6f4;
+}
+
 QToolTip {
     background-color: #313244;
     color: #cdd6f4;
@@ -349,6 +378,10 @@ _DARK_HEX_ROLES = (
 
 def _build_stylesheet(colors):
     stylesheet = DARK_STYLESHEET
+    # The dark theme uses #45475a for both hover backgrounds and borders.
+    # Border usages must map to the BORDER token, or light-theme controls
+    # get near-invisible pale borders (BG3 on white).
+    stylesheet = stylesheet.replace("solid #45475a", f"solid {colors['BORDER']}")
     for dark_hex, role in _DARK_HEX_ROLES:
         stylesheet = stylesheet.replace(dark_hex, colors[role])
     return stylesheet
@@ -397,11 +430,3 @@ def apply_theme(app: QApplication, theme_name="dark"):
     app.setStyleSheet(stylesheet_for_theme(theme_name))
 
 
-def apply_dark_theme(app: QApplication):
-    """Apply the dark theme to the application."""
-    apply_theme(app, "dark")
-
-
-def apply_light_theme(app: QApplication):
-    """Apply the light theme to the application."""
-    apply_theme(app, "light")

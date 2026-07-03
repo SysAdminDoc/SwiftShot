@@ -6,10 +6,13 @@ which one to capture for fullscreen mode.
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QApplication, QFrame, QSizePolicy
+    QApplication, QFrame
 )
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QCursor
-from PyQt5.QtCore import Qt, QRect, QSize, pyqtSignal
+from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor
+from PyQt5.QtCore import Qt, pyqtSignal
+
+from config import config
+from theme import colors_for_theme
 
 
 class MonitorCard(QFrame):
@@ -27,14 +30,12 @@ class MonitorCard(QFrame):
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setMouseTracking(True)
         self.setFixedSize(280, 200)
-
-        self.setStyleSheet("""
-            MonitorCard {
-                background-color: #1e1e2e;
-                border: 2px solid #45475a;
-                border-radius: 8px;
-            }
-        """)
+        self.setFocusPolicy(Qt.StrongFocus)
+        geo = screen.geometry()
+        self.setAccessibleName(f"Monitor {index + 1}")
+        self.setAccessibleDescription(
+            f"Capture monitor {index + 1}, {geo.width()} by {geo.height()} pixels. "
+            "Press Enter to capture.")
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -43,11 +44,13 @@ class MonitorCard(QFrame):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
         w, h = self.width(), self.height()
+        colors = colors_for_theme(config.THEME)
 
         # Background
-        bg = QColor("#313244") if self._hovered else QColor("#1e1e2e")
+        active = self._hovered or self.hasFocus()
+        bg = QColor(colors["BG2"]) if active else QColor(colors["BG1"])
         painter.setBrush(bg)
-        border = QColor("#89b4fa") if self._hovered else QColor("#45475a")
+        border = QColor(colors["ACCENT"]) if active else QColor(colors["BORDER"])
         painter.setPen(QPen(border, 2))
         painter.drawRoundedRect(1, 1, w - 2, h - 2, 8, 8)
 
@@ -70,7 +73,7 @@ class MonitorCard(QFrame):
             painter.fillRect(tx + 3, ty + 3, scaled.width(), scaled.height(),
                              QColor(0, 0, 0, 60))
             # Border around thumbnail
-            painter.setPen(QPen(QColor("#585b70"), 1))
+            painter.setPen(QPen(QColor(colors["BORDER"]), 1))
             painter.drawRect(tx - 1, ty - 1, scaled.width() + 1, scaled.height() + 1)
             # Actual thumbnail
             painter.drawPixmap(tx, ty, scaled)
@@ -80,13 +83,13 @@ class MonitorCard(QFrame):
         label = f"Monitor {self.index + 1}"
         sub_label = f"{geo.width()} x {geo.height()}"
 
-        painter.setPen(QColor("#cdd6f4"))
+        painter.setPen(QColor(colors["TEXT_PRI"]))
         font = QFont("Segoe UI", 11, QFont.Bold)
         painter.setFont(font)
         label_y = h - 44
         painter.drawText(thumb_margin, label_y, label)
 
-        painter.setPen(QColor("#a6adc8"))
+        painter.setPen(QColor(colors["TEXT_SEC"]))
         font = QFont("Segoe UI", 9)
         painter.setFont(font)
         painter.drawText(thumb_margin, label_y + 20, sub_label)
@@ -102,11 +105,11 @@ class MonitorCard(QFrame):
             bx = w - bw - thumb_margin
             by = label_y - 6
 
-            painter.setBrush(QColor("#89b4fa"))
+            painter.setBrush(QColor(colors["ACCENT"]))
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(bx, by, bw, bh, 3, 3)
 
-            painter.setPen(QColor("#1e1e2e"))
+            painter.setPen(QColor(colors["BG1"]))
             painter.drawText(bx + 6, by + fm.ascent() + 3, badge_text)
 
         painter.end()
@@ -119,9 +122,23 @@ class MonitorCard(QFrame):
         self._hovered = False
         self.update()
 
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.update()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.index)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit(self.index)
+        else:
+            super().keyPressEvent(event)
 
 
 class MonitorPicker(QDialog):
@@ -148,28 +165,15 @@ class MonitorPicker(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        self.setStyleSheet("""
-            MonitorPicker {
-                background-color: #1e1e2e;
-                border: 2px solid #45475a;
+        # Frameless dialog: draw its own border with theme tokens; buttons
+        # and labels inherit the app-wide stylesheet.
+        colors = colors_for_theme(config.THEME)
+        self.setStyleSheet(f"""
+            MonitorPicker {{
+                background-color: {colors['BG1']};
+                border: 2px solid {colors['BORDER']};
                 border-radius: 12px;
-            }
-            QLabel {
-                color: #cdd6f4;
-                background: transparent;
-            }
-            QPushButton {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                padding: 8px 20px;
-                font-size: 10pt;
-            }
-            QPushButton:hover {
-                background-color: #45475a;
-                border-color: #89b4fa;
-            }
+            }}
         """)
 
         # Title
@@ -178,9 +182,9 @@ class MonitorPicker(QDialog):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        subtitle = QLabel("Click a monitor to capture it")
+        subtitle = QLabel("Click a monitor to capture it, or press 1-9")
         subtitle.setFont(QFont("Segoe UI", 9))
-        subtitle.setStyleSheet("color: #a6adc8;")
+        subtitle.setStyleSheet(f"color: {colors['TEXT_SEC']};")
         subtitle.setAlignment(Qt.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -212,15 +216,12 @@ class MonitorPicker(QDialog):
         layout.addLayout(btn_layout)
 
     def _capture_monitor_thumbnail(self, screen):
-        """Capture a quick thumbnail of a monitor."""
-        geo = screen.geometry()
-        primary = QApplication.primaryScreen()
-        if primary:
-            pixmap = primary.grabWindow(
-                0, geo.x(), geo.y(), geo.width(), geo.height()
-            )
-            return pixmap
-        return QPixmap()
+        """Capture a quick thumbnail of a monitor.
+
+        Uses the monitor's own QScreen -- grabbing through the primary
+        screen with logical coordinates is wrong under mixed/high DPI.
+        """
+        return screen.grabWindow(0)
 
     def _center_on_cursor(self):
         """Center the dialog near the cursor."""
@@ -249,5 +250,11 @@ class MonitorPicker(QDialog):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.reject()
+        elif Qt.Key_1 <= event.key() <= Qt.Key_9:
+            index = event.key() - Qt.Key_1
+            if index < len(QApplication.screens()):
+                self._on_card_clicked(index)
+        elif event.key() == Qt.Key_A:
+            self._on_card_clicked(-1)
         else:
             super().keyPressEvent(event)

@@ -11,15 +11,16 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QApplication, QGridLayout, QFrame,
-    QMenu, QAction, QToolTip, QMessageBox, QLineEdit
+    QMenu, QMessageBox, QLineEdit
 )
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QCursor, QIcon
+from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen
 from PyQt5.QtCore import (
-    Qt, QSize, pyqtSignal, QPoint, QByteArray, QBuffer, QIODevice
+    Qt, pyqtSignal, QByteArray, QBuffer, QIODevice, QTimer
 )
 
 from config import config
 from logger import log
+from theme import colors_for_theme
 
 
 IMAGE_EXTENSIONS = [
@@ -120,6 +121,11 @@ def _ensure_history_index(history_dir):
     return conn
 
 
+def _escape_like(text):
+    """Escape SQL LIKE wildcards so searching '100%' matches literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _history_entries(history_dir, search_text=""):
     if not os.path.isdir(history_dir):
         return []
@@ -127,8 +133,10 @@ def _history_entries(history_dir, search_text=""):
         params = []
         where = "WHERE 1=1"
         if search_text:
-            where += " AND (created_at LIKE ? OR path LIKE ? OR ocr_text LIKE ?)"
-            like = f"%{search_text}%"
+            where += (" AND (created_at LIKE ? ESCAPE '\\'"
+                      " OR path LIKE ? ESCAPE '\\'"
+                      " OR ocr_text LIKE ? ESCAPE '\\')")
+            like = f"%{_escape_like(search_text)}%"
             params.extend([like, like, like])
         rows = conn.execute(
             f"""
@@ -181,6 +189,10 @@ class HistoryThumbnail(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
         self.setToolTip(f"{self._filename}\n{self._timestamp}")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName(f"Capture {self._filename}")
+        self.setAccessibleDescription(
+            "Press Enter to open in the editor, or the menu key for more actions.")
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -188,12 +200,14 @@ class HistoryThumbnail(QFrame):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
         w, h = self.width(), self.height()
+        colors = colors_for_theme(config.THEME)
 
         # Background
-        bg = QColor("#313244") if self._hovered else QColor("#1e1e2e")
-        border = QColor("#89b4fa") if self._hovered else QColor("#45475a")
+        active = self._hovered or self.hasFocus()
+        bg = QColor(colors["BG2"]) if active else QColor(colors["BG1"])
+        border = QColor(colors["ACCENT"]) if active else QColor(colors["BORDER"])
         painter.setBrush(bg)
-        painter.setPen(QPen(border, 2 if self._hovered else 1))
+        painter.setPen(QPen(border, 2 if active else 1))
         painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
 
         # Thumbnail
@@ -210,7 +224,7 @@ class HistoryThumbnail(QFrame):
             painter.drawPixmap(tx, ty, scaled)
 
         # Filename label
-        painter.setPen(QColor("#cdd6f4"))
+        painter.setPen(QColor(colors["TEXT_PRI"]))
         font = QFont("Segoe UI", 8)
         painter.setFont(font)
         fm = painter.fontMetrics()
@@ -218,7 +232,7 @@ class HistoryThumbnail(QFrame):
         painter.drawText(8, h - 22, label)
 
         # Timestamp
-        painter.setPen(QColor("#6c7086"))
+        painter.setPen(QColor(colors["TEXT_MUT"]))
         font.setPointSize(7)
         painter.setFont(font)
         if self._timestamp:
@@ -235,21 +249,32 @@ class HistoryThumbnail(QFrame):
         self._hovered = False
         self.update()
 
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.update()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.open_editor.emit(self.filepath)
-        elif event.button() == Qt.RightButton:
-            self._show_context_menu(event.globalPos())
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.open_editor.emit(self.filepath)
+        elif event.key() == Qt.Key_Delete:
+            self.delete_entry.emit(self.filepath)
+        else:
+            super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event):
+        # Handles both right-click and the keyboard context-menu key.
+        self._show_context_menu(event.globalPos())
 
     def _show_context_menu(self, pos):
-        menu = QMenu()
-        menu.setStyleSheet("""
-            QMenu { background-color: #1e1e2e; color: #cdd6f4;
-                    border: 1px solid #45475a; border-radius: 6px; padding: 4px; }
-            QMenu::item { padding: 6px 20px; border-radius: 4px; }
-            QMenu::item:selected { background-color: #45475a; }
-            QMenu::separator { height: 1px; background-color: #313244; margin: 4px 8px; }
-        """)
+        menu = QMenu(self)
 
         open_act = menu.addAction("Open in Editor")
         open_act.triggered.connect(lambda: self.open_editor.emit(self.filepath))
@@ -294,17 +319,7 @@ class CaptureHistoryDialog(QDialog):
         self.setWindowTitle("Capture History - SwiftShot")
         self.setMinimumSize(620, 450)
         self.setModal(False)
-
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e2e; }
-            QLabel { color: #cdd6f4; background: transparent; }
-            QPushButton {
-                background-color: #313244; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 6px;
-                padding: 6px 16px;
-            }
-            QPushButton:hover { background-color: #45475a; border-color: #89b4fa; }
-        """)
+        # Styling comes from the app-wide theme stylesheet.
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -331,13 +346,22 @@ class CaptureHistoryDialog(QDialog):
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search date, filename, or OCR text...")
         self.search_box.setToolTip("Search capture history by date, time, filename, or OCR text")
-        self.search_box.textChanged.connect(self._load_history)
+        self.search_box.setAccessibleName("Search capture history")
+        # Debounce so each keystroke doesn't rescan the directory and DB
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._load_history)
+        self.search_box.textChanged.connect(
+            lambda _: self._search_timer.start())
         layout.addWidget(self.search_box)
 
         # Scroll area with grid of thumbnails
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background-color: #181825; }")
+        colors = colors_for_theme(config.THEME)
+        self.scroll.setStyleSheet(
+            f"QScrollArea {{ border: none; background-color: {colors['BG0']}; }}")
         layout.addWidget(self.scroll)
 
         self._load_history()
@@ -353,12 +377,18 @@ class CaptureHistoryDialog(QDialog):
             self.scroll.setWidget(container)
             return
 
-        entries = _history_entries(history_dir, self.search_box.text().strip())
+        search = self.search_box.text().strip()
+        entries = _history_entries(history_dir, search)
 
         if not entries:
-            lbl = QLabel("No captures yet")
+            if search:
+                lbl = QLabel(f'No captures match "{search}"')
+            else:
+                lbl = QLabel("No captures yet.\n"
+                             "Screenshots you take will show up here.")
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet("color: #6c7086; font-size: 12pt;")
+            colors = colors_for_theme(config.THEME)
+            lbl.setStyleSheet(f"color: {colors['TEXT_MUT']}; font-size: 12pt;")
             self.grid.addWidget(lbl, 0, 0)
         else:
             cols = 3

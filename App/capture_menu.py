@@ -5,10 +5,10 @@ Includes embedded timer controls for delayed capture after region selection.
 """
 
 from PyQt5.QtWidgets import (
-    QMenu, QAction, QApplication, QWidgetAction,
+    QMenu, QApplication, QWidgetAction,
     QWidget, QHBoxLayout, QCheckBox, QSpinBox, QLabel
 )
-from PyQt5.QtGui import QCursor, QFont
+from PyQt5.QtGui import QCursor
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import config
@@ -83,15 +83,16 @@ class CaptureMenu(QMenu):
 
         self.addSeparator()
 
-        # Capture modes
+        # Capture modes (\t right-aligns the shortcut column properly;
+        # space-padding misaligns with proportional fonts)
         a = self._add_menu_action(
-            "Window Mode                       Alt+PrtSc",
+            "Window Mode\tAlt+PrtSc",
             "Capture the selected window.",
         )
         a.triggered.connect(lambda: self.capture_window.emit())
 
         a = self._add_menu_action(
-            "Region                                    PrtSc*",
+            "Region",
             "Select a rectangular region to capture.",
         )
         a.triggered.connect(lambda: self.capture_region.emit())
@@ -103,7 +104,7 @@ class CaptureMenu(QMenu):
         a.triggered.connect(lambda: self.capture_freehand.emit())
 
         a = self._add_menu_action(
-            "Last Region                       Shift+PrtSc",
+            "Last Region\tShift+PrtSc",
             "Capture the previous region again.",
         )
         a.triggered.connect(lambda: self.capture_last_region.emit())
