@@ -132,6 +132,61 @@ def apply_beautification_preset(pixmap, preset_name):
     return pil_to_qpixmap(canvas)
 
 
+def apply_frame(pixmap):
+    """Apply the configured post-capture frame — rounded corners, border,
+    and/or drop shadow — from Settings > Frame. No-op unless at least one is
+    enabled, so it is safe to call unconditionally in the capture funnel."""
+    from PIL import Image, ImageColor, ImageDraw, ImageFilter
+    import config as _cfg
+    cfg = _cfg.config if hasattr(_cfg, "config") else _cfg
+
+    rounded = getattr(cfg, "ROUNDED_CORNERS_ENABLED", False)
+    border = getattr(cfg, "BORDER_ENABLED", False)
+    shadow = getattr(cfg, "SHADOW_ENABLED", False)
+    if not (rounded or border or shadow):
+        return pixmap
+
+    image = qpixmap_to_pil(pixmap)
+    width, height = image.size
+    radius = int(getattr(cfg, "ROUNDED_CORNERS_RADIUS", 12)) if rounded else 0
+
+    if radius > 0:
+        mask = Image.new("L", image.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, width - 1, height - 1), radius=radius, fill=255)
+        clipped = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        clipped.paste(image, (0, 0), mask)
+        image = clipped
+    else:
+        mask = Image.new("L", image.size, 255)
+
+    if border:
+        bw = max(1, int(getattr(cfg, "BORDER_WIDTH", 3)))
+        bcol = ImageColor.getrgb(getattr(cfg, "BORDER_COLOR", "#45475a")) + (255,)
+        draw = ImageDraw.Draw(image)
+        box = (0, 0, width - 1, height - 1)  # stroke grows inward from the edge
+        if radius > 0:
+            draw.rounded_rectangle(box, radius=radius, outline=bcol, width=bw)
+        else:
+            draw.rectangle(box, outline=bcol, width=bw)
+
+    if shadow:
+        sr = max(1, int(getattr(cfg, "SHADOW_RADIUS", 15)))
+        sop = int(getattr(cfg, "SHADOW_OPACITY", 80))
+        scol = ImageColor.getrgb(getattr(cfg, "SHADOW_COLOR", "#000000"))
+        pad = sr * 2 + 4
+        canvas = Image.new("RGBA", (width + pad * 2, height + pad * 2), (0, 0, 0, 0))
+        shadow_alpha = mask.filter(ImageFilter.GaussianBlur(sr)).point(
+            lambda v: int(v * sop / 255))
+        sh = Image.new("RGBA", image.size, scol + (0,))
+        sh.putalpha(shadow_alpha)
+        canvas.alpha_composite(sh, (pad, pad + sr // 2))
+        canvas.alpha_composite(image, (pad, pad))
+        image = canvas
+
+    return pil_to_qpixmap(image)
+
+
 def apply_freehand_mask(pixmap, points, bounding_rect):
     """Mask a cropped pixmap to a freehand polygon (transparent outside).
 

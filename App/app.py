@@ -692,6 +692,7 @@ class SwiftShotApp:
             except Exception:
                 pass
         pixmap = self._apply_beautification(pixmap)
+        pixmap = self._apply_frame(pixmap)
         actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
                  f"actions={actions}")
@@ -718,6 +719,14 @@ class SwiftShotApp:
             return apply_beautification_preset(pixmap, config.BEAUTIFY_PRESET)
         except Exception as e:
             log.warning(f"Could not apply beautification preset: {e}")
+            return pixmap
+
+    def _apply_frame(self, pixmap):
+        try:
+            from utils import apply_frame
+            return apply_frame(pixmap)
+        except Exception as e:
+            log.warning(f"Could not apply frame: {e}")
             return pixmap
 
     def _history_ocr_text(self, pixmap):

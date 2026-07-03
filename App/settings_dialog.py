@@ -505,18 +505,6 @@ class SettingsDialog(QDialog):
         self.reuse_editor.setChecked(config.EDITOR_REUSE_EDITOR)
         layout.addRow(self.reuse_editor)
 
-        # Highlight color picker
-        hl_row = QHBoxLayout()
-        self._highlight_color = QColor(config.EDITOR_HIGHLIGHT_COLOR)
-        self.highlight_btn = QPushButton()
-        self.highlight_btn.setFixedSize(28, 28)
-        self._update_color_btn(self.highlight_btn, self._highlight_color)
-        self.highlight_btn.clicked.connect(self._pick_highlight_color)
-        hl_row.addWidget(self.highlight_btn)
-        hl_row.addWidget(QLabel(config.EDITOR_HIGHLIGHT_COLOR))
-        hl_row.addStretch()
-        layout.addRow("Highlight color:", hl_row)
-
         return w
 
     # --- Tab: Frame ---
@@ -536,6 +524,10 @@ class SettingsDialog(QDialog):
         layout.addRow(QLabel(""))
         layout.addRow(QLabel("Border"))
 
+        self.border_enabled = QCheckBox("Add a border to captures")
+        self.border_enabled.setChecked(config.BORDER_ENABLED)
+        layout.addRow(self.border_enabled)
+
         self.border_width = QSpinBox()
         self.border_width.setRange(0, 50)
         self.border_width.setValue(config.BORDER_WIDTH)
@@ -554,6 +546,10 @@ class SettingsDialog(QDialog):
         layout.addRow(QLabel(""))
         layout.addRow(QLabel("Shadow"))
 
+        self.shadow_enabled = QCheckBox("Add a drop shadow to captures")
+        self.shadow_enabled.setChecked(config.SHADOW_ENABLED)
+        layout.addRow(self.shadow_enabled)
+
         self.shadow_radius = QSpinBox()
         self.shadow_radius.setRange(0, 50)
         self.shadow_radius.setValue(config.SHADOW_RADIUS)
@@ -566,6 +562,10 @@ class SettingsDialog(QDialog):
 
         layout.addRow(QLabel(""))
         layout.addRow(QLabel("Rounded Corners"))
+
+        self.rounded_enabled = QCheckBox("Round capture corners")
+        self.rounded_enabled.setChecked(config.ROUNDED_CORNERS_ENABLED)
+        layout.addRow(self.rounded_enabled)
 
         self.rounded_radius = QSpinBox()
         self.rounded_radius.setRange(0, 100)
@@ -675,13 +675,6 @@ class SettingsDialog(QDialog):
             f"border: 2px solid {colors['BORDER']}; border-radius: 4px; }}"
             f"QPushButton:hover {{ border-color: {colors['ACCENT']}; }}"
         )
-
-    def _pick_highlight_color(self):
-        color = QColorDialog.getColor(
-            self._highlight_color, self, "Highlight Color")
-        if color.isValid():
-            self._highlight_color = color
-            self._update_color_btn(self.highlight_btn, color)
 
     def _pick_border_color(self):
         color = QColorDialog.getColor(
@@ -812,14 +805,16 @@ class SettingsDialog(QDialog):
         config.EDITOR_OBFUSCATE_FACTOR = self.obfuscate_factor.value()
         config.EDITOR_OBFUSCATE_MODE = self.obfuscate_mode.currentText()
         config.EDITOR_REUSE_EDITOR = self.reuse_editor.isChecked()
-        config.EDITOR_HIGHLIGHT_COLOR = self._highlight_color.name()
 
         # Frame
         config.BEAUTIFY_PRESET = self.beautify_preset.currentData() or "none"
+        config.BORDER_ENABLED = self.border_enabled.isChecked()
         config.BORDER_WIDTH = self.border_width.value()
         config.BORDER_COLOR = self._border_color.name()
+        config.SHADOW_ENABLED = self.shadow_enabled.isChecked()
         config.SHADOW_RADIUS = self.shadow_radius.value()
         config.SHADOW_OPACITY = self.shadow_opacity.value()
+        config.ROUNDED_CORNERS_ENABLED = self.rounded_enabled.isChecked()
         config.ROUNDED_CORNERS_RADIUS = self.rounded_radius.value()
 
         # Advanced
@@ -884,12 +879,14 @@ class SettingsDialog(QDialog):
             self.obfuscate_factor: "Obfuscate factor",
             self.obfuscate_mode: "Obfuscate mode",
             self.reuse_editor: "Reuse existing editor window",
-            self.highlight_btn: "Highlight color picker",
             self.beautify_preset: "Beautification preset",
+            self.border_enabled: "Add a border to captures",
             self.border_width: "Border width",
             self.border_color_btn: "Border color picker",
+            self.shadow_enabled: "Add a drop shadow to captures",
             self.shadow_radius: "Shadow radius",
             self.shadow_opacity: "Shadow opacity",
+            self.rounded_enabled: "Round capture corners",
             self.rounded_radius: "Rounded corner radius",
             self.history_enabled: "Enable capture history",
             self.history_auto_ocr: "Auto-OCR captures for searchable history",

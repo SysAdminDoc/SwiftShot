@@ -5844,7 +5844,7 @@ class ImageEditor(QMainWindow):
         flm.addSeparator()
         self._act(flm, "Posterize...", "", self.posterize)
         self._act(flm, "Solarize...", "", self.solarize)
-        self._act(flm, "Pixelate...", "", self.pixelate)
+        self._act(flm, "Obfuscate...", "", self.pixelate)
         flm.addSeparator()
         self._act(flm, "Add &Noise...", "", self.add_noise)
         self._act(flm, "&Vignette...", "", self.vignette)
@@ -7151,12 +7151,23 @@ class ImageEditor(QMainWindow):
             self._apply_to_active(ap, "Solarize")
 
     def pixelate(self):
-        v, ok = QInputDialog.getInt(self, "Pixelate", "Block size:", 8, 2, 100)
+        # Seed the strength and method from Settings > Editor (Obfuscate).
+        factor, mode = 8, "pixelate"
+        if config is not None:
+            factor = int(getattr(config, "EDITOR_OBFUSCATE_FACTOR", 8))
+            mode = getattr(config, "EDITOR_OBFUSCATE_MODE", "pixelate")
+        label = "Blur radius:" if mode == "blur" else "Block size:"
+        v, ok = QInputDialog.getInt(self, "Obfuscate", label, factor, 2, 100)
         if ok:
-            def ap(img):
-                w, h = img.size
-                return img.resize((w // v, h // v), Image.NEAREST).resize((w, h), Image.NEAREST)
-            self._apply_to_active(ap, "Pixelate")
+            if mode == "blur":
+                def ap(img):
+                    return img.filter(ImageFilter.GaussianBlur(v))
+            else:
+                def ap(img):
+                    w, h = img.size
+                    return img.resize((max(1, w // v), max(1, h // v)),
+                                      Image.NEAREST).resize((w, h), Image.NEAREST)
+            self._apply_to_active(ap, "Obfuscate")
 
     def add_noise(self):
         v, ok = QInputDialog.getInt(self, "Add Noise", "Amount (0–200):", 25, 0, 200)

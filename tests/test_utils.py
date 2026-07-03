@@ -56,6 +56,52 @@ def test_save_pixmap_failure_returns_false(qapp, tmp_path):
     assert utils.save_pixmap(pixmap, str(missing_dir), "png") is False
 
 
+def test_apply_frame_noop_when_all_disabled(qapp):
+    """apply_frame must be a no-op (identity) unless a frame effect is enabled,
+    so it is safe to call unconditionally in the capture funnel."""
+    import config
+    cfg = config.config
+    cfg.BORDER_ENABLED = cfg.SHADOW_ENABLED = cfg.ROUNDED_CORNERS_ENABLED = False
+
+    pixmap = QPixmap(10, 10)
+    pixmap.fill(QColor(255, 0, 0))
+    assert utils.apply_frame(pixmap) is pixmap
+
+
+def test_apply_frame_border_preserves_size(qapp):
+    """A border is stroked inside the capture, so dimensions are unchanged."""
+    import config
+    cfg = config.config
+    cfg.ROUNDED_CORNERS_ENABLED = cfg.SHADOW_ENABLED = False
+    cfg.BORDER_ENABLED = True
+    cfg.BORDER_WIDTH = 3
+    try:
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(QColor(255, 255, 255))
+        out = utils.apply_frame(pixmap)
+        assert (out.width(), out.height()) == (20, 20)
+        # A border must have changed the edge pixels.
+        assert utils.pixel_color_at(out, 0, 0) != (255, 255, 255)
+    finally:
+        cfg.BORDER_ENABLED = False
+
+
+def test_apply_frame_shadow_pads_canvas(qapp):
+    """A drop shadow expands the canvas to make room for the blur."""
+    import config
+    cfg = config.config
+    cfg.ROUNDED_CORNERS_ENABLED = cfg.BORDER_ENABLED = False
+    cfg.SHADOW_ENABLED = True
+    cfg.SHADOW_RADIUS = 10
+    try:
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(QColor(255, 255, 255))
+        out = utils.apply_frame(pixmap)
+        assert out.width() > 20 and out.height() > 20
+    finally:
+        cfg.SHADOW_ENABLED = False
+
+
 def test_apply_freehand_mask_masks_outside_polygon(qapp):
     """Freehand capture must be masked to the drawn shape (regression:
     it silently degraded to the bounding rectangle)."""
