@@ -138,6 +138,63 @@ def test_stamp_over_composites_translucent_paint(qapp):
     assert g < 20
 
 
+class _AlignEditor:
+    """Minimal editor stand-in for exercising AlignPanel._align."""
+
+    def __init__(self, layer):
+        from editor import HistoryManager
+
+        self.layers = [layer]
+        self.active_layer_index = 0
+        self.history = HistoryManager()
+        self.saves = []
+        self.history.save_state = lambda *a, **k: self.saves.append(a)
+
+        class _Canvas:
+            def update(self_inner): pass
+        self.canvas = _Canvas()
+
+    def active_layer(self):
+        return self.layers[0]
+
+
+def _content_bbox_after_align(action):
+    from editor import AlignPanel, Layer
+    from PIL import ImageDraw
+
+    layer = Layer("L", 100, 100)
+    # Put a 10x10 opaque red blob in the top-left quadrant.
+    ImageDraw.Draw(layer.image).rectangle((10, 10, 19, 19), fill=(255, 0, 0, 255))
+    editor = _AlignEditor(layer)
+    panel = AlignPanel(editor)
+    panel._align(action)
+    return editor, editor.layers[0].image.getbbox()
+
+
+def test_align_moves_content_not_the_canvas_bitmap(qapp):
+    """Align used to be a no-op (layers are canvas-sized) that still pushed
+    an undo entry. It must move the content bbox to the canvas edge/center."""
+    editor, bbox = _content_bbox_after_align("right")
+    assert bbox is not None
+    assert bbox[2] == 100          # content right edge now at canvas right
+    assert bbox[0] == 90           # 10px-wide blob flush right
+    assert len(editor.saves) == 1  # a real move recorded one undo entry
+
+    editor2, bbox2 = _content_bbox_after_align("bottom")
+    assert bbox2[3] == 100
+    assert bbox2[1] == 90
+
+
+def test_align_already_aligned_pushes_no_undo(qapp):
+    editor, _ = _content_bbox_after_align("left")
+    # Blob already starts at x=10; align-left moves it to x=0 (a real move),
+    # so aligning left AGAIN must be a no-op with no new undo entry.
+    before = len(editor.saves)
+    from editor import AlignPanel
+    AlignPanel(editor)._align("left")
+    assert len(editor.saves) == before
+
+
 def test_stamp_over_out_of_bounds_is_noop(qapp):
     from editor import CanvasWidget
     from PIL import Image

@@ -4358,18 +4358,31 @@ class AlignPanel(QWidget):
         layer = self.editor.active_layer()
         if not layer or not self.editor.layers: return
         w, h = self.editor.layers[0].image.size
-        lw, lh = layer.image.size
+        img = layer.image if layer.image.mode == "RGBA" else layer.image.convert("RGBA")
+        # Layers are canvas-sized, so aligning the bitmap is a no-op. Align the
+        # layer's actual content (its non-transparent bounding box) instead.
+        bbox = img.getbbox()
+        if bbox is None: return  # empty layer — nothing to align
+        bx0, by0, bx1, by1 = bbox
+        cw, ch = bx1 - bx0, by1 - by0
+        tx, ty = bx0, by0
+        if action == "left":      tx = 0
+        elif action == "centerH": tx = (w - cw) // 2
+        elif action == "right":   tx = w - cw
+        elif action == "top":     ty = 0
+        elif action == "centerV": ty = (h - ch) // 2
+        elif action == "bottom":  ty = h - ch
+        else: return
+        if tx == bx0 and ty == by0: return  # already aligned — no undo churn
         self.editor.history.save_state(self.editor.layers, self.editor.active_layer_index, f"Align {action}")
         ni = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        if action == "left":     ox = 0;            oy = 0
-        elif action == "centerH": ox = (w - lw) // 2; oy = 0
-        elif action == "right":   ox = w - lw;      oy = 0
-        elif action == "top":     ox = 0;            oy = 0
-        elif action == "centerV": ox = 0;            oy = (h - lh) // 2
-        elif action == "bottom":  ox = 0;            oy = h - lh
-        else: return
-        ni.paste(layer.image, (ox, oy))
-        layer.image = ni; self.editor.canvas.update()
+        ni.paste(img.crop(bbox), (tx, ty))
+        layer.image = ni
+        if getattr(layer, "mask", None) is not None:
+            nm = Image.new("L", (w, h), 0)
+            nm.paste(layer.mask.crop(bbox), (tx, ty))
+            layer.mask = nm
+        self.editor.canvas.update()
 
 # ── ColorPanel ────────────────────────────────────────────────────────────────
 class ColorPanel(QWidget):
