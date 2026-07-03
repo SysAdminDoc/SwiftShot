@@ -195,6 +195,42 @@ def test_align_already_aligned_pushes_no_undo(qapp):
     assert len(editor.saves) == before
 
 
+def test_expand_canvas_grows_groups_and_selection_mask(qapp):
+    """Off-canvas stroke expansion skipped LayerGroups (image setter is a
+    no-op) and left the selection mask at the old size, so later composite/
+    paste ops misaligned or raised (regression)."""
+    from editor import CanvasWidget, Layer, LayerGroup
+    from PIL import Image
+
+    base = Layer("Base", 100, 100)
+    group = LayerGroup("G", 100, 100)
+    group.children.append(Layer("Child", 100, 100))
+
+    class Ed:
+        current_tool = "brush"
+        off_canvas_paint = True
+        brush_size = 10
+
+        def active_layer(self_inner):
+            return base
+
+    ed = Ed()
+    ed.layers = [base, group]
+    ed.active_layer_index = 0
+
+    canvas = CanvasWidget(ed)
+    canvas.set_selection_mask(Image.new("L", (100, 100), 255))
+
+    canvas._expand_canvas_for_stroke(130, 40)   # paint well past the right edge
+
+    new_w, new_h = base.image.size
+    assert new_w > 100                                   # base grew
+    assert (group._w, group._h) == (new_w, new_h)        # group dims grew
+    assert group.children[0].image.size == (new_w, new_h)  # child grew
+    assert group.image.size == (new_w, new_h)            # composites cleanly
+    assert canvas.selection_mask.size == (new_w, new_h)  # selection resized
+
+
 def test_stamp_over_out_of_bounds_is_noop(qapp):
     from editor import CanvasWidget
     from PIL import Image

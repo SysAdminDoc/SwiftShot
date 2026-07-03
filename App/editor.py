@@ -2850,14 +2850,33 @@ class CanvasWidget(QWidget):
             new_w = new_x1 - new_x0
             new_h = new_y1 - new_y0
             ox, oy = -new_x0, -new_y0  # offset for existing content
-            for i, lyr in enumerate(self.editor.layers):
-                expanded = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
-                expanded.paste(lyr.image, (ox, oy))
-                lyr.image = expanded
+
+            def _expand_mask(mask, fill):
+                exp = Image.new("L", (new_w, new_h), fill)
+                exp.paste(mask, (ox, oy))
+                return exp
+
+            for lyr in self.editor.layers:
+                if isinstance(lyr, LayerGroup):
+                    # image setter is a no-op — expand each child and grow the
+                    # group's own dimensions, or group content misaligns.
+                    for child in lyr.children:
+                        exp_child = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+                        exp_child.paste(child.image, (ox, oy))
+                        child.image = exp_child
+                        if child.mask is not None:
+                            child.mask = _expand_mask(child.mask, 255)  # reveal new area
+                    lyr._w, lyr._h = new_w, new_h
+                else:
+                    expanded = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+                    expanded.paste(lyr.image, (ox, oy))
+                    lyr.image = expanded
                 if lyr.mask is not None:
-                    exp_mask = Image.new("L", (new_w, new_h), 255)
-                    exp_mask.paste(lyr.mask, (ox, oy))
-                    lyr.mask = exp_mask
+                    lyr.mask = _expand_mask(lyr.mask, 255)  # reveal new area
+            # Resize a stale selection mask, or later composite/paste ops raise
+            # on the size mismatch (pad with 0 = unselected outside old bounds).
+            if self.selection_mask is not None:
+                self.set_selection_mask(_expand_mask(self.selection_mask, 0))
             # Adjust pan offset to keep visible content in same position
             self.pan_offset = QPointF(
                 self.pan_offset.x() - ox * self.zoom,
