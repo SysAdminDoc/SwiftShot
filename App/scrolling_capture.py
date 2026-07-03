@@ -178,6 +178,7 @@ class ScrollingCaptureDialog(QDialog):
         if sys.platform != 'win32':
             return
         import ctypes
+        from ctypes import wintypes
         user32 = ctypes.windll.user32
 
         WM_MOUSEWHEEL = 0x020A
@@ -187,11 +188,15 @@ class ScrollingCaptureDialog(QDialog):
         cx = self._target_rect.x() + self._target_rect.width() // 2
         cy = self._target_rect.y() + self._target_rect.height() // 2
 
-        # Scroll down = negative delta
-        wparam = (-3 * WHEEL_DELTA) << 16  # 3 notches down
-        lparam = (cy << 16) | (cx & 0xFFFF)
+        # MAKELPARAM/HIWORD must pack each coordinate as a signed 16-bit word.
+        # On a multi-monitor desktop cx/cy can be negative (monitor left of or
+        # above the primary); masking each to 0xFFFF keeps the sign bits from
+        # bleeding across the word boundary and corrupting the target point.
+        wparam = ((-3 * WHEEL_DELTA) & 0xFFFF) << 16   # HIWORD = wheel delta
+        lparam = ((cy & 0xFFFF) << 16) | (cx & 0xFFFF)  # MAKELPARAM(x, y)
 
-        user32.PostMessageW(self._target_hwnd, WM_MOUSEWHEEL, wparam, lparam)
+        user32.PostMessageW(wintypes.HWND(self._target_hwnd), WM_MOUSEWHEEL,
+                            wintypes.WPARAM(wparam), wintypes.LPARAM(lparam))
 
     def _frames_are_identical(self, f1, f2):
         """Quick check if two frames are identical (sample pixel comparison)."""
@@ -295,7 +300,13 @@ class ScrollingCaptureDialog(QDialog):
         # Compare bottom rows of top_frame with top rows of bottom_frame
         max_check = min(h // 2, 300)  # Don't check more than half the frame
 
+        # Keep the SMALLEST strongly-matching overlap, not the largest. On
+        # pages with repeating or uniform rows many overlap values score well;
+        # picking the largest over-trims real (non-duplicated) content. We
+        # update only on a strictly better score, so ties keep the earlier
+        # (smaller) overlap.
         best_overlap = 0
+        best_score = 0.0
         for overlap in range(20, max_check, 2):
             matches = 0
             samples = 0
@@ -310,8 +321,11 @@ class ScrollingCaptureDialog(QDialog):
                     if top_img.pixel(sx, h - overlap + mid_y) == bottom_img.pixel(sx, mid_y):
                         matches += 1
 
-            if samples > 0 and (matches / samples) > 0.85:
-                best_overlap = overlap
+            if samples > 0:
+                score = matches / samples
+                if score > 0.85 and score > best_score:
+                    best_score = score
+                    best_overlap = overlap
 
         return best_overlap
 
