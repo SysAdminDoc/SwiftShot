@@ -1403,6 +1403,14 @@ class CanvasWidget(QWidget):
             self.update()
             return
         tool = self.editor.current_tool
+        # Magnetic lasso places anchors by clicking, so the live edge preview
+        # must follow the free-moving cursor between clicks (no button held),
+        # not only while a button is dragged.
+        if tool == "magnetic-lasso" and self._mag_anchors and not (
+                event.buttons() & Qt.LeftButton):
+            self._mag_preview = self._mag_snap_to_edge(img_pos, search_radius=14)
+            self.update()
+            return
         if self.drawing and event.buttons() & Qt.LeftButton:
             if (tool in ("brush", "pencil", "spray", "eraser")
                     and self.editor.quick_mask_active):
