@@ -120,33 +120,106 @@ class CaptureManager:
                 if ii.hbmColor:
                     ctypes.windll.gdi32.DeleteObject(ii.hbmColor)
 
-            # Draw using DrawIconEx via a temporary DC
-            # Simpler: use Qt cursor pixmap
-            cursor = QCursor()
-            c_pixmap = cursor.pixmap()
-            if not c_pixmap.isNull():
-                painter.drawPixmap(cursor_x, cursor_y, c_pixmap)
+            # Render the ACTUAL cursor shape (I-beam / hand / resize / arrow)
+            # via DrawIconEx, not the app's QCursor (which is usually null and
+            # forced the generic arrow fallback).
+            cursor_img = CaptureManager._cursor_to_qimage(ci.hCursor)
+            if cursor_img is not None and not cursor_img.isNull():
+                painter.drawImage(cursor_x, cursor_y, cursor_img)
             else:
-                # Fallback: draw a simple arrow
-                from PyQt5.QtGui import QPen, QColor, QPolygon
-                painter.setPen(QPen(QColor("white"), 1))
-                painter.setBrush(QColor("black"))
-                arrow = QPolygon([
-                    QPoint(cursor_x, cursor_y),
-                    QPoint(cursor_x, cursor_y + 18),
-                    QPoint(cursor_x + 5, cursor_y + 14),
-                    QPoint(cursor_x + 10, cursor_y + 20),
-                    QPoint(cursor_x + 13, cursor_y + 18),
-                    QPoint(cursor_x + 8, cursor_y + 12),
-                    QPoint(cursor_x + 14, cursor_y + 10),
-                ])
-                painter.drawPolygon(arrow)
+                c_pixmap = QCursor().pixmap()
+                if not c_pixmap.isNull():
+                    painter.drawPixmap(cursor_x, cursor_y, c_pixmap)
+                else:
+                    # Last-resort generic arrow
+                    from PyQt5.QtGui import QPen, QColor, QPolygon
+                    painter.setPen(QPen(QColor("white"), 1))
+                    painter.setBrush(QColor("black"))
+                    arrow = QPolygon([
+                        QPoint(cursor_x, cursor_y),
+                        QPoint(cursor_x, cursor_y + 18),
+                        QPoint(cursor_x + 5, cursor_y + 14),
+                        QPoint(cursor_x + 10, cursor_y + 20),
+                        QPoint(cursor_x + 13, cursor_y + 18),
+                        QPoint(cursor_x + 8, cursor_y + 12),
+                        QPoint(cursor_x + 14, cursor_y + 10),
+                    ])
+                    painter.drawPolygon(arrow)
 
             painter.end()
             return result
 
         except Exception:
             return pixmap
+
+    @staticmethod
+    def _cursor_to_qimage(hcursor):
+        """Rasterize a Win32 HCURSOR to an ARGB32 QImage via DrawIconEx.
+
+        Draws the cursor over both a black and a white background and
+        reconstructs straight alpha from the difference. This renders legacy
+        AND/XOR-mask cursors (I-beam, resize) correctly — a single DrawIconEx
+        leaves their alpha channel zero, so they'd otherwise vanish.
+        Returns None on failure or a fully-transparent result.
+        """
+        if sys.platform != 'win32' or not hcursor:
+            return None
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+
+            cx = user32.GetSystemMetrics(13) or 32   # SM_CXCURSOR
+            cy = user32.GetSystemMetrics(14) or 32   # SM_CYCURSOR
+            DI_NORMAL = 0x0003
+
+            def render(fill_byte):
+                bmi = BITMAPINFOHEADER()
+                bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                bmi.biWidth = cx
+                bmi.biHeight = -cy          # top-down
+                bmi.biPlanes = 1
+                bmi.biBitCount = 32
+                bmi.biCompression = 0       # BI_RGB
+                hdc_screen = user32.GetDC(0)
+                hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+                bits = ctypes.c_void_p()
+                hbmp = gdi32.CreateDIBSection(
+                    hdc_screen, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+                try:
+                    old = gdi32.SelectObject(hdc_mem, hbmp)
+                    ctypes.memset(bits, fill_byte, cx * cy * 4)
+                    user32.DrawIconEx(hdc_mem, 0, 0, hcursor, cx, cy, 0, None, DI_NORMAL)
+                    gdi32.GdiFlush()
+                    data = bytes((ctypes.c_ubyte * (cx * cy * 4)).from_address(bits.value))
+                    gdi32.SelectObject(hdc_mem, old)
+                    return data
+                finally:
+                    gdi32.DeleteObject(hbmp)
+                    gdi32.DeleteDC(hdc_mem)
+                    user32.ReleaseDC(0, hdc_screen)
+
+            on_black = render(0x00)
+            on_white = render(0xFF)
+            out = bytearray(cx * cy * 4)
+            visible = False
+            for i in range(0, cx * cy * 4, 4):
+                # bg is neutral grey, so any channel gives the coverage; use blue.
+                a = 255 - (on_white[i] - on_black[i])
+                a = 0 if a < 0 else 255 if a > 255 else a
+                if a == 0:
+                    continue
+                visible = True
+                # on_black holds premultiplied colour; un-premultiply to straight.
+                out[i] = min(255, on_black[i] * 255 // a)
+                out[i + 1] = min(255, on_black[i + 1] * 255 // a)
+                out[i + 2] = min(255, on_black[i + 2] * 255 // a)
+                out[i + 3] = a
+            if not visible:
+                return None
+            return QImage(bytes(out), cx, cy, QImage.Format_ARGB32).copy()
+        except Exception:
+            return None
 
     @staticmethod
     def _capture_fullscreen_win32():
