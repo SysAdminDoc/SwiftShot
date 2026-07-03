@@ -2,44 +2,6 @@
 
 Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Python + PyQt5 + Win32 GDI + WinRT OCR). Focus: adding the handful of features users actually miss from Greenshot + CleanShot X without bringing the bloat back.
 
-## Audit Backlog (2026-07-03 deep audit — found, verified, not yet fixed)
-
-- [ ] P1 — Rotate View breaks mouse-to-image mapping
-  Why: canvas_to_image/image_to_canvas invert only pan+zoom; with any view rotation active every click/stroke lands at the wrong image position and screen-space overlays (rubylith, quick mask, handles, guides) draw unrotated.
-  Where: App/editor.py canvas_to_image / paintEvent rotation block
-- [ ] P2 — Editor ignores the light theme
-  Why: class C binds EDITOR_COLORS (dark set) at import; the rest of the app is colors_for_theme-aware. Light-theme users get a permanently dark editor plus a few non-token hexes (checker tile, slider handle border).
-  Where: App/editor.py:~113-150, build_ss(), theme.py LIGHT_COLORS
-- [ ] P2 — Semi-transparent brush/shape/pen strokes replace pixels instead of compositing
-  Why: ImageDraw on RGBA writes raw RGBA values; opacity < 255 punches translucency into the layer instead of blending paint over it (soft-brush path composites correctly, hard path doesn't).
-  Where: App/editor.py _draw_brush hard path, line/pen/shape draws
-- [ ] P2 — Align panel aligns the layer bitmap, not its content
-  Why: all layers are canvas-sized so every align button is a no-op that still pushes an undo entry; needs content-bbox alignment.
-  Where: App/editor.py align handlers (~line 4300)
-- [ ] P2 — Off-canvas stroke expansion skips LayerGroups and doesn't resize the selection mask
-  Why: LayerGroup.image setter is a no-op so group content misaligns after expansion; a stale smaller selection_mask later raises in composite/paste ops.
-  Where: App/editor.py _expand_canvas_for_stroke
-- [ ] P2 — Frame tab and obfuscate/highlight settings have no consumers
-  Why: BORDER_*/SHADOW_*/ROUNDED_* values persist but nothing applies them (enable flags have no UI); EDITOR_OBFUSCATE_FACTOR/MODE and EDITOR_HIGHLIGHT_COLOR have no corresponding editor tool. Wire to a post-capture frame step + editor tools, or drop the settings.
-  Where: App/settings_dialog.py Frame/Editor tabs, App/config.py
-- [ ] P2 — Brush hot paths are per-pixel Python loops
-  Why: soft-brush stamps rebuilt per step point, healing/retouch double loops — visible stroke lag at moderate brush sizes; content-aware fill runs a multi-second loop on the GUI thread with no busy cursor.
-  Where: App/editor.py _make_brush_stamp/_draw_healing/_draw_retouch/_content_aware_fill
-- [ ] P3 — Clone stamp near image borders paints transparent black (crop() padding)
-  Where: App/editor.py _draw_clone_stamp
-- [ ] P3 — Magnetic lasso shows no live edge preview between anchor clicks (preview only updates while a button is held)
-  Where: App/editor.py mouseMoveEvent magnetic-lasso branch
-- [ ] P3 — Panel refresh storm: every canvas paint queues a 600 ms refresh and the 2 s poll never clears _panels_dirty; march timer composites at 10 Hz per editor whenever a selection exists
-  Where: App/editor.py paintEvent/_refresh_panels_lazy/march_timer
-- [ ] P3 — JPEG save asks for quality on every Ctrl+S and composites transparency onto black (white matte is conventional)
-  Where: App/editor.py _save_to
-- [ ] P3 — Scrolling capture: WM_MOUSEWHEEL lparam mangles negative multi-monitor coordinates; overlap detection keeps the largest match (over-trims repeating content)
-  Where: App/scrolling_capture.py _scroll_window/_find_overlap
-- [ ] P3 — Quick Mask "restore previous selection on cancel" was never implemented (_quick_mask_prev saved, never read)
-  Where: App/editor.py quick_mask_enter/exit
-- [ ] P3 — CAPTURE_MOUSE_POINTER draws a generic arrow, not the actual cursor shape (I-beam/hand); use DrawIconEx into the GDI DC during capture
-  Where: App/capture.py _draw_cursor
-
 ## Planned Features
 
 ### Capture

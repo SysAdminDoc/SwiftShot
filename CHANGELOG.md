@@ -2,6 +2,54 @@
 
 All notable changes to SwiftShot will be documented in this file.
 
+## [v2.8.0] - 2026-07-03
+
+Audit-backlog drain: the verified-but-deferred findings from the v2.7.0 deep
+audit, fixed end-to-end with regression tests (54 → 75 tests).
+
+### Editor — correctness
+- Rotate View no longer breaks mouse-to-image mapping. A single view
+  transform (rotate-about-centre → pan → zoom) is shared by painting and
+  coordinate mapping, and the rubylith/quick-mask overlays follow it.
+- Semi-transparent brush, pen and shape strokes now composite over the layer
+  instead of punching a translucency hole (proper source-over blending).
+- Align panel aligns a layer's actual content bounding box (layers are
+  canvas-sized, so it was a no-op that still cost an undo step); already-aligned
+  content records no undo entry.
+- Off-canvas stroke expansion now grows LayerGroups (their children and
+  dimensions) and resizes the selection mask, fixing group misalignment and
+  later composite/paste size-mismatch errors.
+- Clone stamp near an image edge clips its source to the image, so it no
+  longer paints transparent-black holes from crop() padding.
+- Quick Mask can be cancelled with Esc, restoring the prior selection (the
+  saved state was never read before).
+- JPEG save asks for quality once per document and mattes transparency onto
+  white instead of black.
+
+### Editor — theming & performance
+- The editor honours the light theme (its palette was bound to the dark set
+  at import); transparency checker and slider border are theme-aware.
+- Soft-brush stamp, healing and dodge/burn/sponge/smudge retouch are
+  vectorized (were per-pixel Python loops); content-aware fill shows a busy
+  cursor.
+- Panel refreshes are coalesced into one debounced update instead of a
+  per-paint singleShot flood; the marching-ants timer idles when hidden.
+- Magnetic lasso previews the snapped edge as the cursor moves between clicks.
+
+### Capture
+- Mouse-pointer capture renders the real cursor shape (I-beam, hand, resize)
+  via DrawIconEx, reconstructing alpha for legacy cursors, instead of a
+  generic drawn arrow.
+- Scrolling capture packs WM_MOUSEWHEEL coordinates as signed words (fixes
+  negative multi-monitor positions) and keeps the smallest matching overlap
+  so repeating content isn't over-trimmed.
+
+### Settings
+- The Frame tab (border / drop shadow / rounded corners) is wired to a
+  post-capture frame step with enable toggles; the editor Obfuscate action
+  honours the configured strength and pixelate/blur mode. The orphan
+  editor highlight-colour setting (no consumer) was removed.
+
 ## [v2.7.0] - 2026-07-03
 
 Deep audit release: ~50 verified fixes across correctness, data safety, UX,
