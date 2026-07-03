@@ -894,6 +894,9 @@ class CanvasWidget(QWidget):
         self._nav_update_cb = None
 
     def _march_tick(self):
+        # No point animating marching ants when the editor isn't on screen.
+        if not self.isVisible():
+            return
         if self.marching_ants_path is not None or self.selection_rect is not None:
             self.marching_offset = (self.marching_offset + 1) % 12
             self.update()
@@ -5247,8 +5250,15 @@ class ImageEditor(QMainWindow):
         self._setup_rulers()
         # Connect canvas to histogram refresh on update
         self.canvas.installEventFilter(self)
-        # Fallback polling timer: refresh navigator/histogram every 2s if dirty
+        # Panel refresh is coalesced: a single debounce timer throttles the
+        # histogram/navigator refresh to ~one per 400 ms during a burst of
+        # canvas paints, instead of queuing a fresh singleShot per paint.
         self._panels_dirty = False
+        self._panel_refresh_timer = QTimer(self)
+        self._panel_refresh_timer.setSingleShot(True)
+        self._panel_refresh_timer.setInterval(400)
+        self._panel_refresh_timer.timeout.connect(self._refresh_panels_lazy)
+        # Fallback polling timer: catch any missed paint every 2s if dirty
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(2000)
         self._poll_timer.timeout.connect(self._poll_refresh_panels)
@@ -5260,16 +5270,19 @@ class ImageEditor(QMainWindow):
         from PyQt5.QtCore import QEvent
         if obj is self.canvas and event.type() == QEvent.Paint:
             self._panels_dirty = True
-            QTimer.singleShot(600, self._refresh_panels_lazy)
+            # Coalesce a burst of paints into one refresh — only arm the timer
+            # if it isn't already counting down.
+            if not self._panel_refresh_timer.isActive():
+                self._panel_refresh_timer.start()
         return super().eventFilter(obj, event)
 
     def _poll_refresh_panels(self):
         """Fallback: catch any missed paint events via dirty flag."""
         if getattr(self, "_panels_dirty", False):
             self._refresh_panels_lazy()
-            self._panels_dirty = False
 
     def _refresh_panels_lazy(self):
+        self._panels_dirty = False
         if hasattr(self, "histogram"):
             self.histogram.refresh()
             # Update stats label
