@@ -9,7 +9,6 @@ import json
 import getpass
 import re
 import shutil
-from pathlib import Path
 
 
 OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
@@ -54,7 +53,7 @@ class Config:
     """Application configuration with sensible defaults."""
 
     APP_NAME = "SwiftShot"
-    APP_VERSION = "2.6.5"
+    APP_VERSION = "2.7.0"
 
     # --- Capture Settings ---
     CAPTURE_MOUSE_POINTER = False

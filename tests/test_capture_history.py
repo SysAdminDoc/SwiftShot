@@ -39,6 +39,20 @@ def test_save_to_history_indexes_sqlite_and_dedupes(fresh_config, qapp, tmp_path
     assert capture_history._history_entries(str(tmp_path), "2999-01-01") == []
 
 
+def test_search_escapes_like_wildcards(fresh_config, qapp, tmp_path):
+    """Searching '100%' must match literally, not as a LIKE wildcard."""
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+
+    pixmap = QPixmap(10, 10)
+    pixmap.fill(QColor("green"))
+    capture_history.save_to_history(pixmap, ocr_text="CPU at 100% load")
+
+    assert capture_history._history_entries(str(tmp_path), "100%")
+    assert capture_history._history_entries(str(tmp_path), "100% load")
+    # A literal '%' that appears nowhere must not act as match-anything
+    assert capture_history._history_entries(str(tmp_path), "%zzz%") == []
+
+
 def test_save_to_history_prunes_sqlite_and_files(fresh_config, qapp, tmp_path):
     capture_history = _load_capture_history(fresh_config, tmp_path)
     capture_history.config.CAPTURE_HISTORY_MAX = 1

@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="#installation"><img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white"></a>
-  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/SysAdminDoc/SwiftShot/ci.yml?branch=main&label=CI">
+  <img alt="Version 2.7.0" src="https://img.shields.io/badge/Version-2.7.0-89b4fa">
   <a href="#license"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg"></a>
   <img alt="Python 3.8+" src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white">
   <img alt="Lines of code" src="https://img.shields.io/badge/Lines_of_Code-12k-green">
@@ -44,25 +44,27 @@ Greenshot is great, but it ships with a dozen cloud upload plugins, enterprise i
 
 ### Image Editor
 
-A full annotation editor opens after every capture (configurable).
+A full layer-based editor opens after every capture (configurable) — closer
+to a lightweight Photoshop than a markup bar.
 
-| Tool | Key | |
-|------|:---:|---|
-| Select / Pan | `V` | Pan canvas, drag-and-drop export |
-| Crop | `C` | Crop with rule-of-thirds guides |
-| Rectangle | `R` | Outlined or filled rectangles |
-| Ellipse | `E` | Outlined or filled ellipses |
-| Line | `L` | Straight lines |
-| Arrow | `A` | Lines with arrowheads |
-| Freehand | `F` | Free-form pen strokes |
-| Text | `T` | Multi-line text with font picker |
-| Highlight | `H` | Semi-transparent marker |
-| Obfuscate | `O` | Pixelate or blur sensitive areas |
-| Step Number | `N` | Auto-incrementing numbered badges |
-| Ruler | `M` | Measure pixel distances |
-| Eyedropper | `I` | Pick any color from the image |
-
-**Additional editor features:** unlimited undo/redo, auto-crop, rotate/flip, brightness/contrast/grayscale/invert adjustments, border/shadow/rounded corners, image diff overlay, quick-annotate templates (bug report, tutorial, redact), zoom with Ctrl+scroll, pan with Space+drag, recent colors bar, drag-and-drop export to other apps, and dirty-state tracking.
+- **Layers** — reorder, group, blend modes, per-layer opacity, layer masks,
+  and non-destructive layer effects (drop shadow, glow, bevel, stroke,
+  color/gradient overlay)
+- **Selection** — rectangular/elliptical marquee, lasso, magnetic lasso,
+  magic wand, select-by-color, Quick Mask, feather/expand/contract
+- **Paint & retouch** — brush/pencil/spray/eraser with soft brushes, clone
+  stamp, healing, dodge/burn/sponge/smudge, red-eye removal, content-aware
+  fill, gradient and pattern fills
+- **Shapes & text** — rectangles, ellipses, lines, arrows, polygons, stars,
+  multi-line text with font picker, sticky notes
+- **Transform** — move, crop with aspect presets, free transform,
+  perspective, warp (move/grow/shrink/swirl), rotate/flip, resize
+- **Adjust & filter** — brightness/contrast, levels, curves, HSL, vibrance,
+  gamma, threshold, blurs (gaussian/box/motion), sharpen, artistic filters
+- **Workflow** — undo history panel, guides and rulers, navigator, command
+  palette, `.swiftshot` project files that preserve layers and masks,
+  export to PNG/JPEG/WebP/BMP/TIFF, copy to clipboard, pin to desktop,
+  OCR from the editor, unsaved-changes protection
 
 ### Pin to Desktop
 
@@ -185,7 +187,7 @@ app.py                  System tray, hotkey management, capture orchestration
 capture.py              Screenshot engine (Win32 GDI + Qt fallback)
 overlay.py              Region selector with edge snapping
 window_picker.py        Window capture with animated highlight
-editor.py               Full annotation editor (7,172 lines)
+editor.py               Layer-based image editor (7,400+ lines)
 config.py               JSON settings with backup, import/export
 settings_dialog.py      Preferences UI with hotkey recorder
 hotkeys.py              WH_KEYBOARD_LL global keyboard hook

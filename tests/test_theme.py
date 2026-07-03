@@ -40,6 +40,15 @@ def test_dark_and_light_theme_roles_meet_wcag_text_contrast():
         assert _contrast_ratio(colors["ACCENT"], colors["BG1"]) >= 4.5
 
 
+def test_light_stylesheet_borders_use_border_token():
+    """Control borders must use the BORDER token in the light theme
+    (regression: they mapped to a near-invisible pale hover color)."""
+    from theme import LIGHT_COLORS, LIGHT_STYLESHEET
+
+    assert f"solid {LIGHT_COLORS['BORDER']}" in LIGHT_STYLESHEET
+    assert "solid #dbeafe" not in LIGHT_STYLESHEET
+
+
 def test_apply_theme_sets_palette_and_stylesheet(qapp):
     from PyQt5.QtGui import QPalette, QColor
     from theme import DARK_COLORS, LIGHT_COLORS, apply_theme, stylesheet_for_theme

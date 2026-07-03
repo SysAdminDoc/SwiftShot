@@ -125,6 +125,52 @@ def test_preview_filename_uses_template_help_variables(fresh_config):
     assert preview == "notepad_Release notes_1920x1080_001.webp"
 
 
+def test_import_rejects_wrong_types_and_bad_enums(fresh_config, tmp_path):
+    """Malformed settings files must not corrupt runtime settings
+    (regression: a string JPEG quality later crashed saves)."""
+    cfg = fresh_config.Config()
+    bad_path = tmp_path / "bad-settings.json"
+    bad_path.write_text(json.dumps({
+        "OUTPUT_JPEG_QUALITY": "ninety",
+        "CAPTURE_TIMER_SECONDS": True,
+        "SHOW_NOTIFICATIONS": "yes",
+        "OUTPUT_FILE_FORMAT": "exe",
+        "THEME": "hotdog-stand",
+        "AFTER_CAPTURE_ACTIONS": "editor",
+    }), encoding="utf-8")
+
+    assert cfg.import_settings(str(bad_path))
+
+    assert cfg.OUTPUT_JPEG_QUALITY == fresh_config.Config.OUTPUT_JPEG_QUALITY
+    assert cfg.CAPTURE_TIMER_SECONDS == fresh_config.Config.CAPTURE_TIMER_SECONDS
+    assert cfg.SHOW_NOTIFICATIONS == fresh_config.Config.SHOW_NOTIFICATIONS
+    assert cfg.OUTPUT_FILE_FORMAT == fresh_config.Config.OUTPUT_FILE_FORMAT
+    assert cfg.THEME == fresh_config.Config.THEME
+
+
+def test_recent_colors_reset_after_mutation(fresh_config):
+    """add_recent_color used to mutate the class-level default list, which
+    made Reset to Defaults unable to clear recent colors (regression)."""
+    cfg = fresh_config.Config()
+    cfg.add_recent_color("#ABCDEF")
+    cfg.add_recent_color("#123456")
+    assert cfg.EDITOR_RECENT_COLORS == ["#123456".lower(), "#abcdef"]
+    assert fresh_config.Config.EDITOR_RECENT_COLORS == []
+
+    cfg.reset_to_defaults()
+    assert cfg.EDITOR_RECENT_COLORS == []
+
+
+def test_corrupt_config_backed_up_and_defaults_used(fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    Path(cfg._config_file).write_text("{not json", encoding="utf-8")
+
+    reloaded = fresh_config.Config()
+
+    assert reloaded.OUTPUT_FILE_FORMAT == fresh_config.Config.OUTPUT_FILE_FORMAT
+    assert Path(cfg._config_file + ".corrupt").exists()
+
+
 def test_version_info_uses_config_version(fresh_config, monkeypatch):
     app_dir = Path(__file__).resolve().parents[1] / "App"
     monkeypatch.chdir(app_dir)
