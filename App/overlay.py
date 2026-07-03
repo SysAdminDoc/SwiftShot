@@ -9,11 +9,11 @@ dimension display, edge snapping, Space to switch to window mode.
 
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtGui import (
-    QPainter, QColor, QPen, QPixmap, QFont, QPainterPath, QPolygon
+    QPainter, QColor, QPen, QPixmap, QFont, QPainterPath
 )
 from PyQt5.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal
 
-from utils import virtual_geometry, pixel_color_at, color_to_hex
+from utils import virtual_geometry, color_to_hex
 
 
 class RegionSelector(QWidget):
@@ -35,6 +35,9 @@ class RegionSelector(QWidget):
     def __init__(self, screenshot: QPixmap, mode="rectangle", parent=None):
         super().__init__(parent)
         self.screenshot = screenshot
+        # Cache the QImage once: converting the full multi-monitor pixmap
+        # on every repaint (for the color readout) is a large copy.
+        self._screenshot_image = screenshot.toImage()
         self.mode = mode
         self.selecting = False
         self.start_pos = QPoint()
@@ -292,8 +295,13 @@ class RegionSelector(QWidget):
 
     def _draw_coordinates(self, painter):
         pos = self.current_pos
-        # Get pixel color for readout
-        r, g, b = pixel_color_at(self.screenshot, pos.x(), pos.y())
+        # Get pixel color for readout (from the cached QImage)
+        img = self._screenshot_image
+        if 0 <= pos.x() < img.width() and 0 <= pos.y() < img.height():
+            c = img.pixelColor(pos.x(), pos.y())
+            r, g, b = c.red(), c.green(), c.blue()
+        else:
+            r, g, b = 0, 0, 0
         self._current_color = (r, g, b)
         hex_color = color_to_hex(r, g, b)
 
@@ -339,13 +347,12 @@ class RegionSelector(QWidget):
         if mag_y + size + 4 > self.height():
             mag_y = pos.y() - size - 24
 
-        cropped = self.screenshot.copy(src_rect)
-        magnified = cropped.scaled(size, size, Qt.IgnoreAspectRatio, Qt.FastTransformation)
-
         painter.setBrush(QColor(30, 30, 46, 230))
         painter.setPen(QPen(self.selection_border, 2))
         painter.drawRoundedRect(mag_x - 2, mag_y - 2, size + 4, size + 4, 4, 4)
-        painter.drawPixmap(mag_x, mag_y, magnified)
+        # Scale directly from the source rect -- no intermediate copy
+        painter.drawPixmap(QRect(mag_x, mag_y, size, size),
+                           self.screenshot, src_rect)
 
         center = QPoint(mag_x + size // 2, mag_y + size // 2)
         pen = QPen(QColor("#f38ba8"), 1)

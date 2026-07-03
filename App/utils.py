@@ -39,7 +39,6 @@ def distance(p1: QPoint, p2: QPoint) -> float:
 
 def pixel_color_at(pixmap, x, y):
     """Get the color of a pixel in a QPixmap. Returns (r, g, b) tuple."""
-    from PyQt5.QtGui import QImage
     img = pixmap.toImage()
     if 0 <= x < img.width() and 0 <= y < img.height():
         c = img.pixelColor(x, y)

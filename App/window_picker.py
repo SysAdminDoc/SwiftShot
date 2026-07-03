@@ -18,7 +18,7 @@ import sys
 import time
 import ctypes
 from ctypes import wintypes, byref, POINTER, WINFUNCTYPE
-from PyQt5.QtWidgets import QWidget, QApplication
+from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap, QFont, QCursor
 from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QTimer, pyqtSignal
 
@@ -299,7 +299,9 @@ class WindowPicker(QWidget):
             ir = QRect(int(hr.x()), int(hr.y()), int(hr.width()), int(hr.height()))
             src = ir.intersected(self.screenshot.rect())
             if not src.isEmpty():
-                painter.drawPixmap(src.topLeft(), self.screenshot.copy(src))
+                # Draw straight from the source rect (no per-frame copy --
+                # this runs at 60 fps during the highlight animation)
+                painter.drawPixmap(src.topLeft(), self.screenshot, src)
             painter.fillRect(ir, self.GREEN_FILL)
             painter.setPen(QPen(self.OVERLAY_PEN, 1))
             painter.setBrush(Qt.NoBrush)
@@ -344,11 +346,10 @@ class WindowPicker(QWidget):
             mx = pos.x() - sz - 24
         if my + sz + 4 > self.height():
             my = pos.y() - sz - 24
-        mag = self.screenshot.copy(src).scaled(sz, sz, Qt.IgnoreAspectRatio, Qt.FastTransformation)
         painter.setBrush(QColor(30, 30, 46, 230))
         painter.setPen(QPen(QColor(60, 179, 113, 180), 2))
         painter.drawRoundedRect(mx - 2, my - 2, sz + 4, sz + 4, 4, 4)
-        painter.drawPixmap(mx, my, mag)
+        painter.drawPixmap(QRect(mx, my, sz, sz), self.screenshot, src)
         cx, cy = mx + sz // 2, my + sz // 2
         painter.setPen(QPen(QColor(255, 80, 80), 1))
         painter.drawLine(cx - 8, cy, cx + 8, cy)

@@ -68,11 +68,11 @@ def generate_ico(png_path, ico_path):
 
 if __name__ == "__main__":
     try:
-        from PIL import Image
+        from PIL import Image  # noqa: F401 -- availability check only
     except ImportError:
-        print("Installing Pillow...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "Pillow", "-q"])
+        print("ERROR: Pillow is required. Install it with:")
+        print("  pip install -r requirements.txt")
+        sys.exit(1)
 
     print("\nSwiftShot Icon Generator")
     print("=" * 40)

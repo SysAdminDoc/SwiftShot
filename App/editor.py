@@ -4,7 +4,11 @@ SwiftShot Image Editor
 Photoshop-inspired PyQt5 / PIL layer-based editor.
 """
 
-import sys, os, math, random, threading, json
+import sys
+import os
+import math
+import random
+import json
 
 import numpy as np
 from collections import deque
@@ -16,19 +20,17 @@ from PyQt5.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QColorDialog, QDockWidget, QListWidget,
     QListWidgetItem, QPushButton, QCheckBox, QComboBox, QScrollArea,
     QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QMenu,
-    QStatusBar, QFrame, QInputDialog, QMessageBox, QSizePolicy,
-    QToolButton, QWidgetAction, QGridLayout, QLineEdit, QTextEdit,
-    QAbstractItemView, QTabWidget, QSplitter, QStackedWidget
+    QFrame, QInputDialog, QMessageBox, QSizePolicy,
+    QToolButton, QGridLayout, QLineEdit, QTextEdit,
+    QAbstractItemView, QTabWidget
 )
 from PyQt5.QtCore import (
     Qt, QPoint, QRect, QSize, QTimer, pyqtSignal, QPointF, QRectF,
-    QByteArray, QBuffer, QIODevice, QThread, QObject
+    QByteArray, QObject
 )
 from PyQt5.QtGui import (
     QImage, QPixmap, QPainter, QPen, QBrush, QColor, QIcon,
-    QCursor, QFont, QKeySequence, QPainterPath, QTransform,
-    qRgba, QPolygon, QFontMetrics, QLinearGradient, QRadialGradient,
-    QPolygonF
+    QFont, QKeySequence, QPainterPath, QPolygon, QPolygonF
 )
 from PyQt5.QtSvg import QSvgRenderer
 
@@ -2535,8 +2537,6 @@ class CanvasWidget(QWidget):
         src_pts = [(0, 0), (iw, 0), (iw, ih), (0, ih)]
         # Destination corners (user-dragged)
         dst_pts = [(p.x(), p.y()) for p in self._persp_corners]
-        # Compute perspective coefficients
-        coeffs = self._find_perspective_coeffs(src_pts, dst_pts)
         # Apply PERSPECTIVE transform (dst→src mapping)
         coeffs_inv = self._find_perspective_coeffs(dst_pts, src_pts)
         result = src.transform((iw, ih), Image.PERSPECTIVE, coeffs_inv, Image.BICUBIC)
@@ -2684,7 +2684,7 @@ class CanvasWidget(QWidget):
         if x1 <= x0 or y1 <= y0: return
         crop = layer.image.crop((x0, y0, x1, y1))
         arr = np.array(crop, dtype=np.float32)
-        r, g, b, a = arr[:,:,0], arr[:,:,1], arr[:,:,2], arr[:,:,3]
+        r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
         # "Red eye" condition: red channel dominant and overall bright
         red_dominant = (r > 100) & (r > 1.4 * g) & (r > 1.4 * b)
         # Replace red channel with average of g,b
@@ -3159,9 +3159,8 @@ class CommandPaletteDialog(QDialog):
     def _populate(self, commands):
         self._list.clear()
         for label, cat, _ in commands:
-            item = QListWidgetItem(f"{label}")
+            item = QListWidgetItem(f"{label}  ({cat})")
             item.setData(Qt.UserRole, label)
-            cat_badge = QLabel(f" {cat}")
             self._list.addItem(item)
         if self._list.count() > 0:
             self._list.setCurrentRow(0)
@@ -3390,7 +3389,6 @@ class LayerPanel(QWidget):
             # LayerGroup: show folder icon with child count
             if isinstance(layer, LayerGroup):
                 bg = Image.new("RGBA", (tw, th), (50, 55, 70, 255))
-                icon_txt_bg = Image.new("RGBA", (tw, th), (0,0,0,0))
                 draw_g = ImageDraw.Draw(bg)
                 draw_g.rectangle((2, 8, tw-3, th-3), outline=(120,140,180,200), width=1)
                 draw_g.rectangle((2, 5, 14, 10), fill=(120,140,180,200))
@@ -5172,7 +5170,6 @@ class ImageEditor(QMainWindow):
         self._ruler_v = RulerWidget(Qt.Vertical)
         self._show_rulers = True
         # Rebuild central widget with rulers
-        central = self.centralWidget()
         wrapper2 = QWidget()
         main_l = QVBoxLayout(wrapper2)
         main_l.setContentsMargins(0, 0, 0, 0); main_l.setSpacing(0)
@@ -5276,7 +5273,6 @@ class ImageEditor(QMainWindow):
 
         def flyout_tool(primary, tools, shortcut=None):
             """tools = [(tool_id, label), ...]"""
-            sz = dp(32)
             btn = FlyoutToolButton(primary, tools, self)
             btn.tool_selected.connect(lambda t: self._set_tool(t, btn))
             if shortcut:
@@ -6053,7 +6049,10 @@ class ImageEditor(QMainWindow):
         angle   = math.radians(fx.get("angle", 135))
         h_col   = self._fx_color_at({"color": fx.get("highlight_color", [255,255,255])})
         s_col   = self._fx_color_at({"color": fx.get("shadow_color",    [0,0,0])})
-        arr  = np.array(alpha, dtype=np.float32) / 255.0
+        # "size" widens the bevel by softening the alpha edge before the
+        # directional derivative (it was previously ignored).
+        arr  = np.array(alpha.filter(ImageFilter.GaussianBlur(blur_r)),
+                        dtype=np.float32) / 255.0
         # Simple emboss: convolve with directional kernel
         dx = np_sobel(arr, axis=1)
         dy = np_sobel(arr, axis=0)
@@ -7442,7 +7441,7 @@ class ImageEditor(QMainWindow):
             out[:,:,3] = 220  # slightly transparent
 
             # Add as new layer
-            depth_layer = Layer(f"Depth Map", layer.image.width, layer.image.height)
+            depth_layer = Layer("Depth Map", layer.image.width, layer.image.height)
             depth_layer.image = Image.fromarray(out, "RGBA").resize(layer.image.size, Image.LANCZOS)
             depth_layer.opacity = 200
             depth_layer.blend_mode = "Normal"
@@ -7650,7 +7649,8 @@ class ImageEditor(QMainWindow):
         self._save_project_to(path)
 
     def _save_project_to(self, path):
-        import zipfile, io
+        import zipfile
+        import io
         try:
             meta = {"magic": "SWIFTSHOT_PROJECT", "version": 2,
                     "active_index": self.active_layer_index, "layers": []}
@@ -7698,7 +7698,8 @@ class ImageEditor(QMainWindow):
         self._load_project_from(path)
 
     def _load_project_from(self, path):
-        import zipfile, io
+        import zipfile
+        import io
         try:
             with zipfile.ZipFile(path) as zf:
                 meta = json.loads(zf.read("project.json"))
@@ -7732,7 +7733,7 @@ class ImageEditor(QMainWindow):
                             cname = f"layer_{i}_child_{ci}.png"
                             if cname in zf.namelist():
                                 cimg = Image.open(io.BytesIO(zf.read(cname))).convert("RGBA")
-                                group.children.append(Layer(f"Layer", image=cimg))
+                                group.children.append(Layer("Layer", image=cimg))
                         layers.append(group)
                     else:
                         layers.append(layer)

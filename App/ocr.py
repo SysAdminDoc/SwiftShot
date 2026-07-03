@@ -187,7 +187,7 @@ def is_ocr_available():
         except Exception:
             pass
     try:
-        import pytesseract
+        import pytesseract  # noqa: F401 -- availability probe
         return True
     except ImportError:
         pass
