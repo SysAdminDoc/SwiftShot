@@ -121,6 +121,33 @@ def test_coordinate_mapping_round_trips_under_view_rotation(qapp):
     assert (abs(rotated.x() - naive.x()) + abs(rotated.y() - naive.y())) > 1.0
 
 
+def test_stamp_over_composites_translucent_paint(qapp):
+    """Semi-transparent paint must blend OVER the layer and keep it opaque,
+    not replace pixels with a translucency hole (regression)."""
+    from editor import CanvasWidget
+    from PIL import Image
+
+    dest = Image.new("RGBA", (4, 4), (0, 0, 255, 255))   # opaque blue
+    stamp = Image.new("RGBA", (4, 4), (255, 0, 0, 128))  # 50% red
+
+    CanvasWidget._stamp_over(dest, stamp, 0, 0)
+    r, g, b, a = dest.getpixel((1, 1))
+
+    assert a == 255                 # layer stays opaque (no hole punched)
+    assert r > 100 and b > 100      # blended toward purple, not pure red
+    assert g < 20
+
+
+def test_stamp_over_out_of_bounds_is_noop(qapp):
+    from editor import CanvasWidget
+    from PIL import Image
+
+    dest = Image.new("RGBA", (4, 4), (0, 0, 0, 255))
+    stamp = Image.new("RGBA", (4, 4), (255, 255, 255, 255))
+    CanvasWidget._stamp_over(dest, stamp, 100, 100)   # fully outside
+    assert dest.getpixel((0, 0)) == (0, 0, 0, 255)
+
+
 def test_np_map_bilinear_identity_and_interpolation(qapp):
     from editor import np_map_bilinear
 

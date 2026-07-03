@@ -1490,6 +1490,9 @@ class CanvasWidget(QWidget):
                         alpha = int(self.editor.brush_opacity * flow)
                         color = (c.red(), c.green(), c.blue(), alpha)
                         sw = max(1, self.editor.brush_size)
+                        # Translucent ink must composite over the layer, not
+                        # replace pixels (punching a translucency hole).
+                        stamp = self._make_brush_stamp(sw, color) if alpha < 255 else None
                         x1, y1 = int(self.last_pos.x()), int(self.last_pos.y())
                         x2, y2 = int(img_pos.x()), int(img_pos.y())
                         dist = max(1, int(math.hypot(x2 - x1, y2 - y1)))
@@ -1498,8 +1501,11 @@ class CanvasWidget(QWidget):
                             tv = i / dist
                             px = int(x1 + (x2 - x1) * tv)
                             py = int(y1 + (y2 - y1) * tv)
-                            r = sw // 2
-                            draw.ellipse((px - r, py - r, px + r, py + r), fill=color)
+                            if stamp is not None:
+                                self._stamp_over(layer.image, stamp, px - sw // 2, py - sw // 2)
+                            else:
+                                r = sw // 2
+                                draw.ellipse((px - r, py - r, px + r, py + r), fill=color)
                     self.last_pos = img_pos; self.update()
             elif tool == "transform" and self._xform_active and self._xform_handle:
                 self._xform_drag(QPointF(event.pos()))
@@ -1701,6 +1707,21 @@ class CanvasWidget(QWidget):
             stamp = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
         return stamp
 
+    @staticmethod
+    def _stamp_over(dest, stamp, px, py):
+        """Source-over composite an RGBA stamp onto dest at (px, py), clipped.
+        Uses Image.alpha_composite so translucent paint blends over the layer
+        (and keeps the layer opaque) instead of replacing pixels."""
+        dw, dh = dest.size
+        sw, sh = stamp.size
+        x0, y0 = max(0, px), max(0, py)
+        x1, y1 = min(dw, px + sw), min(dh, py + sh)
+        if x0 >= x1 or y0 >= y1:
+            return
+        region = dest.crop((x0, y0, x1, y1))
+        sc = stamp.crop((x0 - px, y0 - py, x1 - px, y1 - py))
+        dest.paste(Image.alpha_composite(region, sc), (x0, y0))
+
     def _draw_brush(self, x, y):
         layer = self.editor.active_layer()
         if not layer or layer.locked: return
@@ -1715,10 +1736,11 @@ class CanvasWidget(QWidget):
                 ox = random.randint(-sz, sz); oy = random.randint(-sz, sz)
                 if ox * ox + oy * oy <= sz * sz:
                     draw.point((x + ox, y + oy), fill=color)
-        elif getattr(self.editor, "brush_hardness", 100) < 100:
+        elif getattr(self.editor, "brush_hardness", 100) < 100 or self.editor.brush_opacity < 255:
+            # Translucent or soft strokes must composite the paint OVER the
+            # layer, not replace pixels (which punches a translucency hole).
             stamp = self._make_brush_stamp(sz, color)
-            px = x - sz // 2; py = y - sz // 2
-            layer.image.paste(stamp, (px, py), stamp)
+            self._stamp_over(layer.image, stamp, x - sz // 2, y - sz // 2)
         else:
             r = sz // 2
             draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
@@ -1735,7 +1757,10 @@ class CanvasWidget(QWidget):
         x2, y2 = int(p2.x()), int(p2.y())
         dist = max(1, int(math.hypot(x2 - x1, y2 - y1)))
         hardness = getattr(self.editor, "brush_hardness", 100)
-        use_soft = (hardness < 100) and (t not in ("spray", "pencil"))
+        translucent = self.editor.brush_opacity < 255
+        use_soft = (hardness < 100 or translucent) and (t not in ("spray", "pencil"))
+        # Reuse one stamp for the whole segment when compositing.
+        stamp = self._make_brush_stamp(sz, color) if use_soft else None
         # Step every brush_size/2 pixels for smooth stroke
         step = max(1, sz // 3)
         for i in range(0, dist + 1, step):
@@ -1748,8 +1773,7 @@ class CanvasWidget(QWidget):
                     if ox * ox + oy * oy <= sz * sz:
                         draw.point((x + ox, y + oy), fill=color)
             elif use_soft:
-                stamp = self._make_brush_stamp(sz, color)
-                layer.image.paste(stamp, (x - sz // 2, y - sz // 2), stamp)
+                self._stamp_over(layer.image, stamp, x - sz // 2, y - sz // 2)
             else:
                 r = sz // 2
                 draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
@@ -1939,7 +1963,12 @@ class CanvasWidget(QWidget):
         layer = self.editor.active_layer()
         if not layer or layer.locked: return
         self.editor.history.save_state(self.editor.layers, self.editor.active_layer_index, "Shape")
-        draw = ImageDraw.Draw(layer.image)
+        # For translucent shapes, rasterize onto a transparent overlay and
+        # source-over composite it, so opacity blends the shape over the layer
+        # (uniformly, without self-overlap build-up) instead of replacing pixels.
+        _translucent = self.editor.brush_opacity < 255
+        _overlay = Image.new("RGBA", layer.image.size, (0, 0, 0, 0)) if _translucent else None
+        draw = ImageDraw.Draw(_overlay if _translucent else layer.image)
         s, e = self._shape_start, self.last_pos
         c = self.editor.fg_color
         stroke = (c.red(), c.green(), c.blue(), self.editor.brush_opacity)
@@ -1983,6 +2012,8 @@ class CanvasWidget(QWidget):
                 rad = outer_r if i % 2 == 0 else inner_r
                 pts.append((int(cx + rad * math.cos(a)), int(cy + rad * math.sin(a))))
             draw.polygon(pts, fill=fill_c, outline=stroke)
+        if _translucent:
+            layer.image = Image.alpha_composite(layer.image, _overlay)
         self.update()
 
     def _draw_gradient(self, start, end):
