@@ -1879,10 +1879,20 @@ class CanvasWidget(QWidget):
             dx, dy = 0, 0
         self.editor.clone_source = (sx + dx, sy + dy)
         try:
-            src = layer.image.crop((sx - sz // 2, sy - sz // 2, sx + sz // 2, sy + sz // 2))
+            half = sz // 2
+            w, h = layer.image.size
+            src_x0, src_y0 = sx - half, sy - half
+            # Clip the source box to the image so out-of-bounds areas aren't
+            # sampled as transparent black (crop() padding painted holes).
+            cx0, cy0 = max(0, src_x0), max(0, src_y0)
+            cx1, cy1 = min(w, src_x0 + sz), min(h, src_y0 + sz)
+            if cx0 >= cx1 or cy0 >= cy1: return
+            src = layer.image.crop((cx0, cy0, cx1, cy1))
+            ox, oy = cx0 - src_x0, cy0 - src_y0   # offset within the stamp
             m = Image.new("L", (sz, sz), 0)
-            ImageDraw.Draw(m).ellipse((0, 0, sz, sz), fill=255)
-            layer.image.paste(src, (x - sz // 2, y - sz // 2), m)
+            ImageDraw.Draw(m).ellipse((0, 0, sz - 1, sz - 1), fill=255)
+            m_piece = m.crop((ox, oy, ox + (cx1 - cx0), oy + (cy1 - cy0)))
+            layer.image.paste(src, (x - half + ox, y - half + oy), m_piece)
         except Exception:
             pass
 

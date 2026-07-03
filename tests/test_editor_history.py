@@ -274,6 +274,34 @@ def test_retouch_dodge_brightens_center(qapp):
     assert layer.image.getpixel((0, 0))[0] == 100
 
 
+def test_clone_stamp_near_border_paints_no_holes(qapp):
+    """Cloning from a source near the image edge used to sample crop() padding
+    (transparent black), punching holes at the destination (regression)."""
+    from editor import CanvasWidget, Layer
+    from PIL import ImageDraw
+
+    layer = Layer("L", 40, 40)
+    ImageDraw.Draw(layer.image).rectangle((0, 0, 39, 39), fill=(50, 100, 150, 255))
+
+    class Ed:
+        clone_source = (2, 2)   # top-left corner — source box runs off-image
+        brush_size = 10
+
+        def active_layer(self_inner):
+            return layer
+
+    ed = Ed()
+    ed.layers = [layer]
+    ed.active_layer_index = 0
+    canvas = CanvasWidget(ed)
+    canvas.last_pos = None
+
+    canvas._draw_clone_stamp(20, 20)
+    for py in range(15, 26):
+        for px in range(15, 26):
+            assert layer.image.getpixel((px, py))[3] == 255   # no transparent holes
+
+
 def test_stamp_over_out_of_bounds_is_noop(qapp):
     from editor import CanvasWidget
     from PIL import Image
