@@ -95,9 +95,6 @@ Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/F /IM {#AppExeName}"; Flags: runhidden; RunOnceId: "KillApp"
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{userappdata}\SwiftShot"
-
 [Code]
 procedure TaskKill(ExeName: String);
 var
@@ -118,5 +115,13 @@ begin
   if CurUninstallStep = usUninstall then
     TaskKill('{#AppExeName}');
   if CurUninstallStep = usPostUninstall then
+  begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'SwiftShot');
+    { Settings and the capture-history images are user data -- never
+      delete them silently. }
+    if MsgBox('Also delete your SwiftShot settings and capture history?'
+              + #13#10 + '(This removes saved screenshots in the history folder.)',
+              mbConfirmation, MB_YESNO) = IDYES then
+      DelTree(ExpandConstant('{userappdata}\SwiftShot'), True, True, True);
+  end;
 end;

@@ -7926,7 +7926,7 @@ def main():
             if not px.isNull():
                 initial_pixmap = px
             break
-    editor = ImageEditor(pixmap=initial_pixmap)
+    editor = ImageEditor(pixmap=initial_pixmap)  # noqa: F841 -- keeps the window alive
     sys.exit(app.exec_())
 
 
