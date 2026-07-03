@@ -30,7 +30,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtGui import (
     QImage, QPixmap, QPainter, QPen, QBrush, QColor, QIcon,
-    QFont, QKeySequence, QPainterPath, QPolygon, QPolygonF
+    QFont, QKeySequence, QPainterPath, QPolygon, QPolygonF, QTransform
 )
 from PyQt5.QtSvg import QSvgRenderer
 
@@ -890,18 +890,42 @@ class CanvasWidget(QWidget):
         self.selection_mask = mask
         self._update_marching_path()
 
+    def view_transform(self):
+        """Forward image->canvas transform, identical to the order paintEvent
+        applies (rotate about widget center, then pan, then zoom). Kept as the
+        single source of truth so mouse mapping and painting never diverge."""
+        t = QTransform()
+        if self.canvas_angle:
+            cx, cy = self.width() / 2, self.height() / 2
+            t.translate(cx, cy)
+            t.rotate(self.canvas_angle)
+            t.translate(-cx, -cy)
+        t.translate(self.pan_offset.x(), self.pan_offset.y())
+        t.scale(self.zoom, self.zoom)
+        return t
+
     def canvas_to_image(self, pos):
-        return QPointF((pos.x() - self.pan_offset.x()) / self.zoom,
-                       (pos.y() - self.pan_offset.y()) / self.zoom)
+        if not self.canvas_angle:
+            return QPointF((pos.x() - self.pan_offset.x()) / self.zoom,
+                           (pos.y() - self.pan_offset.y()) / self.zoom)
+        inv, ok = self.view_transform().inverted()
+        if not ok:
+            return QPointF((pos.x() - self.pan_offset.x()) / self.zoom,
+                           (pos.y() - self.pan_offset.y()) / self.zoom)
+        return inv.map(QPointF(pos))
 
     def image_to_canvas(self, pos):
-        return QPointF(pos.x() * self.zoom + self.pan_offset.x(),
-                       pos.y() * self.zoom + self.pan_offset.y())
+        if not self.canvas_angle:
+            return QPointF(pos.x() * self.zoom + self.pan_offset.x(),
+                           pos.y() * self.zoom + self.pan_offset.y())
+        return self.view_transform().map(QPointF(pos))
 
     def image_to_canvas_f(self, x, y):
         """image_to_canvas for raw floats."""
-        return QPointF(x * self.zoom + self.pan_offset.x(),
-                       y * self.zoom + self.pan_offset.y())
+        if not self.canvas_angle:
+            return QPointF(x * self.zoom + self.pan_offset.x(),
+                           y * self.zoom + self.pan_offset.y())
+        return self.view_transform().map(QPointF(x, y))
 
     def fit_in_view(self):
         if not self.editor.layers: return
@@ -941,14 +965,9 @@ class CanvasWidget(QWidget):
         data = composite.tobytes("raw", "RGBA")
         qimg = QImage(data, composite.width, composite.height, QImage.Format_RGBA8888)
         painter.save()
-        # Rotate view around canvas center
-        if self.canvas_angle != 0.0:
-            cx, cy = self.width() / 2, self.height() / 2
-            painter.translate(cx, cy)
-            painter.rotate(self.canvas_angle)
-            painter.translate(-cx, -cy)
-        painter.translate(self.pan_offset)
-        painter.scale(self.zoom, self.zoom)
+        # Rotate view around canvas center; view_transform() is the single
+        # source of truth shared with canvas_to_image/image_to_canvas.
+        painter.setTransform(self.view_transform(), True)
         # Checkerboard
         tile = self._get_checker()
         tw, th = tile.width(), tile.height()
@@ -2097,19 +2116,21 @@ class CanvasWidget(QWidget):
         """Red overlay on the quick-mask canvas (masked = red)."""
         if self._quick_mask_layer is None: return
         painter.save()
-        painter.resetTransform()
         inv = ImageChops.invert(self._quick_mask_layer)
         overlay = Image.new("RGBA", self._quick_mask_layer.size, (200, 40, 40, 0))
         overlay.putalpha(inv.point(lambda v: int(v * 0.5)))
         qpx = pil_to_qpixmap(overlay)
         iw, ih = self._quick_mask_layer.size
-        target = QRectF(self.pan_offset.x(), self.pan_offset.y(),
-                        iw * self.zoom, ih * self.zoom)
-        painter.drawPixmap(target, qpx, QRectF(qpx.rect()))
-        # Label
+        painter.setTransform(self.view_transform())
+        painter.drawPixmap(QRectF(0, 0, iw, ih), qpx, QRectF(qpx.rect()))
+        painter.restore()
+        # Label in screen space so it stays upright and readable
+        painter.save()
+        painter.resetTransform()
+        tl = self.image_to_canvas(QPointF(0, 0))
         painter.setPen(QColor(255, 80, 80, 220))
         painter.setFont(QFont("Consolas", dp(9)))
-        painter.drawText(QPointF(target.x() + 6, target.y() + dp(14)), "QUICK MASK")
+        painter.drawText(QPointF(tl.x() + 6, tl.y() + dp(14)), "QUICK MASK")
         painter.restore()
 
     def quick_mask_enter(self):
@@ -2267,18 +2288,19 @@ class CanvasWidget(QWidget):
         overlay = Image.new("RGBA", layer.mask.size, (200, 0, 0, 0))
         overlay.putalpha(inv_mask.point(lambda v: int(v * 0.55)))  # 55% max opacity
         qpx = pil_to_qpixmap(overlay)
-        # Draw at canvas position/scale
+        # Draw in image space via the shared view transform so the overlay
+        # tracks pan/zoom AND view rotation.
         iw, ih = layer.mask.size
-        target = QRectF(self.pan_offset.x(), self.pan_offset.y(),
-                        iw * self.zoom, ih * self.zoom)
+        painter.setTransform(self.view_transform())
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.drawPixmap(target, qpx, QRectF(qpx.rect()))
+        painter.drawPixmap(QRectF(0, 0, iw, ih), qpx, QRectF(qpx.rect()))
         # Border indicator: bright magenta dashed frame
         pen = QPen(QColor(255, 0, 200, 200), 2.0)
+        pen.setCosmetic(True)
         pen.setDashPattern([8, 4])
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        painter.drawRect(target.adjusted(1, 1, -1, -1))
+        painter.drawRect(QRectF(0, 0, iw, ih))
         painter.restore()
 
     def _draw_brush_on_mask(self, x, y):

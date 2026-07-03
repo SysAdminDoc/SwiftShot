@@ -71,6 +71,56 @@ def test_np_sobel_detects_vertical_edge(qapp):
     assert np.abs(dy).max() == 0            # no vertical change
 
 
+class _StubEditor:
+    layers = []
+    current_tool = None
+
+
+def _make_canvas():
+    from editor import CanvasWidget
+
+    canvas = CanvasWidget(_StubEditor())
+    canvas.resize(400, 300)
+    return canvas
+
+
+def test_coordinate_mapping_round_trips_without_rotation(qapp):
+    from PyQt5.QtCore import QPointF
+
+    canvas = _make_canvas()
+    canvas.zoom = 2.0
+    canvas.pan_offset = QPointF(37, -12)
+    p = QPointF(123.0, 45.0)
+
+    back = canvas.canvas_to_image(canvas.image_to_canvas(p))
+    assert abs(back.x() - p.x()) < 1e-6
+    assert abs(back.y() - p.y()) < 1e-6
+
+
+def test_coordinate_mapping_round_trips_under_view_rotation(qapp):
+    """Rotate View used to break mouse-to-image mapping: canvas_to_image
+    inverted only pan+zoom, so every click landed at the wrong image
+    position once the view was rotated (regression)."""
+    from PyQt5.QtCore import QPointF
+
+    canvas = _make_canvas()
+    canvas.zoom = 1.5
+    canvas.pan_offset = QPointF(20, 40)
+    canvas.canvas_angle = 37.0
+
+    for p in (QPointF(0, 0), QPointF(100, 60), QPointF(250.5, 199.25)):
+        canvas_pt = canvas.image_to_canvas(p)
+        back = canvas.canvas_to_image(canvas_pt)
+        assert abs(back.x() - p.x()) < 1e-3
+        assert abs(back.y() - p.y()) < 1e-3
+
+    # A rotated view must actually move the projected point off the
+    # pan+zoom-only prediction (otherwise rotation is being ignored).
+    naive = QPointF(100 * 1.5 + 20, 60 * 1.5 + 40)
+    rotated = canvas.image_to_canvas(QPointF(100, 60))
+    assert (abs(rotated.x() - naive.x()) + abs(rotated.y() - naive.y())) > 1.0
+
+
 def test_np_map_bilinear_identity_and_interpolation(qapp):
     from editor import np_map_bilinear
 
