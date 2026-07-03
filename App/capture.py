@@ -7,8 +7,8 @@ Includes mouse pointer overlay and camera sound support.
 
 import sys
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QPixmap, QScreen, QImage, QPainter, QCursor
-from PyQt5.QtCore import QRect, QPoint, Qt
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QCursor
+from PyQt5.QtCore import QPoint
 
 from utils import virtual_geometry
 from config import config
@@ -152,7 +152,6 @@ class CaptureManager:
     def _capture_fullscreen_win32():
         """Capture fullscreen using Win32 API for better DPI handling."""
         import ctypes
-        from ctypes import wintypes
 
         user32 = ctypes.windll.user32
         gdi32 = ctypes.windll.gdi32

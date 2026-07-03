@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QDialogButtonBox, QAbstractButton,
     QApplication, QListWidget, QListWidgetItem, QAbstractItemView
 )
-from PyQt5.QtGui import QColor, QFont, QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import (
