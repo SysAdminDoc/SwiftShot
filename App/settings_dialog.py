@@ -257,10 +257,6 @@ class SettingsDialog(QDialog):
         self.launch_startup.setChecked(config.LAUNCH_AT_STARTUP)
         layout.addRow(self.launch_startup)
 
-        self.minimize_tray = QCheckBox("Minimize to system tray")
-        self.minimize_tray.setChecked(config.MINIMIZE_TO_TRAY)
-        layout.addRow(self.minimize_tray)
-
         self.check_updates = QCheckBox("Check for updates on startup")
         self.check_updates.setChecked(config.CHECK_FOR_UPDATES)
         layout.addRow(self.check_updates)
@@ -411,12 +407,6 @@ class SettingsDialog(QDialog):
         form.addRow("Scrolling Capture:", self.hk_scrolling)
 
         form.addRow(QLabel(""))
-
-        restart_note = QLabel(
-            f"<i style='color:{colors['YELLOW']};'>Hotkey changes require a restart "
-            "to take effect.</i>"
-        )
-        form.addRow(restart_note)
 
         # Reset hotkeys button
         reset_hk_btn = QPushButton("Reset Hotkeys to Defaults")
@@ -725,6 +715,9 @@ class SettingsDialog(QDialog):
         )
         if reply == QMessageBox.Yes:
             config.reset_to_defaults()
+            app = QApplication.instance()
+            if app:
+                apply_theme(app, config.THEME)
             self.accept()
             log.info("Settings reset to defaults")
 
@@ -761,9 +754,26 @@ class SettingsDialog(QDialog):
                     self, "Export Failed", "Could not export settings.")
 
     def _apply_and_close(self):
+        # Refuse to apply if the same shortcut is bound to multiple actions
+        combos = [c for c in (
+            self.hk_region.get_combo(), self.hk_window.get_combo(),
+            self.hk_fullscreen.get_combo(), self.hk_last_region.get_combo(),
+            self.hk_ocr.get_combo(), self.hk_freehand.get_combo(),
+            self.hk_scrolling.get_combo(),
+        ) if c]
+        duplicates = sorted({c for c in combos if combos.count(c) > 1})
+        if duplicates:
+            QMessageBox.warning(
+                self, "Duplicate Shortcuts",
+                "The same shortcut is assigned to more than one action: "
+                f"{', '.join(duplicates)}.\n\n"
+                "Give each action a unique shortcut, or clear one with Backspace."
+            )
+            self.tabs.setCurrentIndex(2)
+            return
+
         # General
         config.LAUNCH_AT_STARTUP = self.launch_startup.isChecked()
-        config.MINIMIZE_TO_TRAY = self.minimize_tray.isChecked()
         config.CHECK_FOR_UPDATES = self.check_updates.isChecked()
         config.SHOW_NOTIFICATIONS = self.show_notifications.isChecked()
         config.PLAY_CAMERA_SOUND = self.play_sound.isChecked()
@@ -846,7 +856,6 @@ class SettingsDialog(QDialog):
 
         named_controls = {
             self.launch_startup: "Launch SwiftShot on Windows startup",
-            self.minimize_tray: "Minimize to system tray",
             self.check_updates: "Check for updates on startup",
             self.show_notifications: "Show tray notifications",
             self.theme: "Application theme",
