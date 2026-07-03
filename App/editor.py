@@ -172,7 +172,10 @@ except ImportError:
 
 
 class C:
-    """Shared Catppuccin Mocha palette used by the main app and editor."""
+    """Shared palette used by the main app and editor. Rebindable at runtime
+    via apply_editor_theme() so the editor honours the light theme too — every
+    editor stylesheet reads C.* at widget-build time, so rebinding before the
+    UI is constructed is sufficient."""
     BG0 = EDITOR_COLORS["BG0"]
     BG1 = EDITOR_COLORS["BG1"]
     BG2 = EDITOR_COLORS["BG2"]
@@ -188,6 +191,25 @@ class C:
     GREEN = EDITOR_COLORS["GREEN"]
     YELLOW = EDITOR_COLORS["YELLOW"]
     CANVAS_BG = EDITOR_COLORS["CANVAS_BG"]
+
+
+_EDITOR_THEME = "dark"
+
+
+def apply_editor_theme(theme_name):
+    """Rebind class C to the requested theme's palette. Call before building
+    editor widgets. Falls back to the dark set if theme.py is unavailable."""
+    global _EDITOR_THEME
+    try:
+        from theme import colors_for_theme, normalize_theme
+        theme_name = normalize_theme(theme_name)
+        colors = colors_for_theme(theme_name)
+    except ImportError:
+        theme_name, colors = "dark", EDITOR_COLORS
+    for role, value in colors.items():
+        setattr(C, role, value)
+    _EDITOR_THEME = theme_name
+    return theme_name
 
 # ── QSS Stylesheet ────────────────────────────────────────────────────────────
 def build_ss():
@@ -276,7 +298,7 @@ QSlider::handle:horizontal {{
     height: {dp(13)}px;
     margin: -{dp(5)}px 0;
     border-radius: {dp(7)}px;
-    border: 1px solid #1a1a1a;
+    border: 1px solid {C.BORDER};
 }}
 QSlider::handle:horizontal:hover {{ background: {C.ACCENT_H}; }}
 QSlider::sub-page:horizontal {{ background: {C.ACCENT}; border-radius: 2px; }}
@@ -939,12 +961,14 @@ class CanvasWidget(QWidget):
     def _get_checker(self):
         if self._checker_tile is None:
             cs = dp(16)
+            light, dark = ("#e9edf5", "#cbd3e0") if _EDITOR_THEME == "light" \
+                else ("#2a2a2a", "#222222")
             self._checker_tile = QPixmap(cs * 2, cs * 2)
             tp = QPainter(self._checker_tile)
-            tp.fillRect(0, 0, cs, cs, QColor("#2a2a2a"))
-            tp.fillRect(cs, 0, cs, cs, QColor("#222222"))
-            tp.fillRect(0, cs, cs, cs, QColor("#222222"))
-            tp.fillRect(cs, cs, cs, cs, QColor("#2a2a2a"))
+            tp.fillRect(0, 0, cs, cs, QColor(light))
+            tp.fillRect(cs, 0, cs, cs, QColor(dark))
+            tp.fillRect(0, cs, cs, cs, QColor(dark))
+            tp.fillRect(cs, cs, cs, cs, QColor(light))
             tp.end()
         return self._checker_tile
 
@@ -4982,6 +5006,10 @@ class OptionsBar(QWidget):
 class ImageEditor(QMainWindow):
     def __init__(self, pixmap=None, swiftshot_app=None):
         super().__init__()
+        # Rebind the palette to the user's theme BEFORE any widget is built —
+        # every editor stylesheet reads C.* at construction time.
+        theme_name = getattr(config, "THEME", "dark") if config is not None else "dark"
+        apply_editor_theme(theme_name)
         scale = get_ui_scale()
         scale_str = f" [{scale*100:.0f}% UI]" if abs(scale - 1.0) > 0.01 else ""
         version = getattr(config, "APP_VERSION", "")

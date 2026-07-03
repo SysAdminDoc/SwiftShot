@@ -30,6 +30,25 @@ def _contrast_ratio(foreground, background):
     return (lighter + 0.05) / (darker + 0.05)
 
 
+def test_editor_theme_rebinds_palette_and_stylesheet(qapp):
+    """The editor used to be permanently dark: class C bound the dark set at
+    import. apply_editor_theme('light') must repaint it (regression)."""
+    import editor
+    from theme import DARK_COLORS, LIGHT_COLORS
+
+    try:
+        editor.apply_editor_theme("light")
+        assert editor.C.BG1 == LIGHT_COLORS["BG1"]
+        assert editor.C.TEXT_PRI == LIGHT_COLORS["TEXT_PRI"]
+        sheet = editor.build_ss()
+        assert LIGHT_COLORS["BG1"] in sheet
+        assert DARK_COLORS["BG1"] not in sheet
+        assert "#1a1a1a" not in sheet          # slider handle border tokenized
+    finally:
+        editor.apply_editor_theme("dark")
+    assert editor.C.BG1 == DARK_COLORS["BG1"]
+
+
 def test_dark_and_light_theme_roles_meet_wcag_text_contrast():
     from theme import DARK_COLORS, LIGHT_COLORS
 
