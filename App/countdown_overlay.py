@@ -1,21 +1,26 @@
 """
 SwiftShot Countdown Overlay
-Full-screen translucent overlay showing a countdown timer before capture.
-Used when CAPTURE_DELAY_MS > 0.
+Small always-on-top countdown badge shown before a capture fires.
+Used for timed capture and CAPTURE_DELAY_MS.
+
+Deliberately NOT full-screen and NOT focus-stealing: timed capture exists
+so the user can interact with the screen (open menus, hover tooltips)
+while the countdown runs. Clicking the badge cancels the capture.
 """
 
 from PyQt5.QtWidgets import QWidget, QApplication
-from PyQt5.QtGui import QPainter, QColor, QFont, QPen
+from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF
-
-from utils import virtual_geometry
 
 
 class CountdownOverlay(QWidget):
-    """Full-screen countdown overlay before capture."""
+    """Compact countdown badge shown in the corner of the active screen."""
 
     countdown_finished = pyqtSignal()
     cancelled = pyqtSignal()
+
+    BADGE_W = 150
+    BADGE_H = 172
 
     def __init__(self, total_ms, parent=None):
         super().__init__(parent)
@@ -23,26 +28,37 @@ class CountdownOverlay(QWidget):
         self._remaining_ms = self._total_ms
         self._seconds_left = (self._total_ms + 999) // 1000
 
-        geo = virtual_geometry()
-        self.setFixedSize(geo.width(), geo.height())
-        self.move(geo.x(), geo.y())
-
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |
             Qt.FramelessWindowHint |
-            Qt.Tool |
-            Qt.BypassWindowManagerHint
+            Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setCursor(Qt.WaitCursor)
+        # Never steal focus: the user must be able to keep interacting
+        # with other applications during the countdown.
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(self.BADGE_W, self.BADGE_H)
+        self.setToolTip("Click to cancel the timed capture")
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
+    def _position_badge(self):
+        """Bottom-right corner of the screen the cursor is on."""
+        screen = QApplication.screenAt(QCursor.pos())
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        self.move(geo.right() - self.width() - 24,
+                  geo.bottom() - self.height() - 24)
+
     def start(self):
-        """Show the overlay and start counting down."""
+        """Show the badge and start counting down."""
+        self._position_badge()
         self.show()
-        self.activateWindow()
         self.raise_()
         self._timer.start(50)
 
@@ -62,13 +78,9 @@ class CountdownOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Semi-transparent dark background
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 60))
-
-        # Center circle with countdown number
+        radius = 56
         cx = self.width() / 2
-        cy = self.height() / 2
-        radius = 80
+        cy = radius + 8
 
         # Progress ring
         progress = 1.0 - (self._remaining_ms / self._total_ms)
@@ -78,11 +90,11 @@ class CountdownOverlay(QWidget):
 
         # Background circle
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(30, 30, 46, 220))
+        painter.setBrush(QColor(30, 30, 46, 230))
         painter.drawEllipse(ring_rect)
 
         # Progress arc
-        pen = QPen(QColor("#89b4fa"), 6)
+        pen = QPen(QColor("#89b4fa"), 5)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
@@ -91,23 +103,31 @@ class CountdownOverlay(QWidget):
         # Number
         display = max(1, self._seconds_left)
         painter.setPen(QColor("#cdd6f4"))
-        font = QFont("Segoe UI", 48, QFont.Bold)
+        font = QFont("Segoe UI", 32, QFont.Bold)
         painter.setFont(font)
         painter.drawText(ring_rect, Qt.AlignCenter, str(display))
 
         # Label below
         painter.setPen(QColor("#a6adc8"))
-        font = QFont("Segoe UI", 12)
+        font = QFont("Segoe UI", 8)
         painter.setFont(font)
-        label_rect = QRectF(cx - 150, cy + radius + 10, 300, 40)
-        painter.drawText(label_rect, Qt.AlignCenter, "Capturing in... (Esc to cancel)")
+        label_rect = QRectF(0, cy + radius + 6, self.width(), 32)
+        painter.drawText(label_rect, Qt.AlignHCenter | Qt.AlignTop,
+                         "Capturing soon\nClick to cancel")
 
         painter.end()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._cancel()
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
-            self._timer.stop()
-            self.hide()
-            self.cancelled.emit()
+            self._cancel()
         else:
             super().keyPressEvent(event)
+
+    def _cancel(self):
+        self._timer.stop()
+        self.hide()
+        self.cancelled.emit()

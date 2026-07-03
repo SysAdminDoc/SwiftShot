@@ -4,33 +4,34 @@ Entry point with logging and update checking.
 """
 
 import sys
-import os
-from pathlib import Path
-from PyQt5.QtGui import QIcon
 
 
-# codex-branding:start
-def _branding_icon_path() -> Path:
-    candidates = []
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        candidates.append(exe_dir / "icon.png")
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            candidates.append(Path(meipass) / "icon.png")
-    current = Path(__file__).resolve()
-    candidates.extend([current.parent / "icon.png", current.parent.parent / "icon.png", current.parent.parent.parent / "icon.png"])
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return Path("icon.png")
-# codex-branding:end
+def _install_excepthook():
+    """Log unhandled exceptions instead of letting PyQt5 abort the process.
+
+    PyQt5 >= 5.5 calls qFatal() (process abort) for unhandled Python
+    exceptions raised inside Qt slots unless a sys.excepthook is installed.
+    A screenshot tool must never lose a user's unsaved editor work to a
+    single bad slot, so log it and keep running.
+    """
+    def hook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        try:
+            from logger import log
+            log.critical("Unhandled exception",
+                         exc_info=(exc_type, exc_value, exc_tb))
+        except Exception:
+            pass
+    sys.excepthook = hook
 
 
 def main():
     # Early logging setup before anything else
     from logger import setup_logger, log
     setup_logger()
+    _install_excepthook()
     log.info("SwiftShot starting up")
 
     from PyQt5.QtWidgets import QApplication
@@ -44,10 +45,6 @@ def main():
         pass
 
     app = QApplication(sys.argv)
-
-    branding_icon = QIcon(str(_branding_icon_path()))
-
-    app.setWindowIcon(branding_icon)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("SwiftShot")
     app.setOrganizationName("SwiftShot")
@@ -74,6 +71,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # Prevent PyInstaller onefile builds from re-launching the app when
+    # a bundled library spawns a subprocess.
+    import multiprocessing
+    multiprocessing.freeze_support()
     try:
         main()
     except Exception as e:

@@ -14,7 +14,7 @@ import sys
 import os
 import webbrowser
 from PyQt5.QtWidgets import (
-    QSystemTrayIcon, QMenu, QApplication, QMessageBox, QDialog
+    QSystemTrayIcon, QMenu, QApplication, QMessageBox, QDialog, QAction
 )
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PyQt5.QtCore import Qt, QTimer, QRect
@@ -36,11 +36,15 @@ class SwiftShotApp:
         self._hotkey_listener = None
         self._pin_windows = []
         self._clipboard_watcher_enabled = config.CLIPBOARD_WATCHER_ENABLED
-        self._clipboard_timer = None
-        self._last_clipboard_pixmap = None
+        self._clipboard_watcher_connected = False
+        self._last_clipboard_change = 0.0
         self._history_dialog = None
         self._capture_menu = None
         self._update_checker = None
+        self._update_url = None
+        self._update_action = None
+        self._tray_menu = None
+        self._exit_action = None
 
     def start(self):
         # Set app-wide icon so every QWidget/QDialog inherits it
@@ -89,13 +93,29 @@ class SwiftShotApp:
             log.warning(f"Could not start update checker: {e}")
 
     def _on_update_available(self, version, url):
+        self._update_url = url
         if config.SHOW_NOTIFICATIONS:
             self.tray_icon.showMessage(
                 "SwiftShot Update Available",
-                f"Version {version} is available. Click tray icon to download.",
+                f"Version {version} is available. Click this notification to download.",
                 QSystemTrayIcon.Information, 5000
             )
-        self._update_url = url
+        # Add a download entry to the tray menu so the update stays reachable
+        # after the notification fades.
+        if self._tray_menu and self._update_action is None:
+            action = QAction(f"Download Update {version}...", self._tray_menu)
+            action.triggered.connect(self._open_update_page)
+            self._tray_menu.insertAction(self._exit_action, action)
+            self._tray_menu.insertSeparator(self._exit_action)
+            self._update_action = action
+
+    def _open_update_page(self):
+        if self._update_url:
+            webbrowser.open(self._update_url)
+
+    def _on_tray_message_clicked(self):
+        if self._update_url:
+            self._open_update_page()
 
     # -------------------------------------------------------------------
     # Tray Icon
@@ -179,11 +199,14 @@ class SwiftShotApp:
         menu.addSeparator()
         menu.addAction("About SwiftShot").triggered.connect(self.show_about)
         menu.addSeparator()
-        menu.addAction("Exit").triggered.connect(self.exit_app)
+        self._exit_action = menu.addAction("Exit")
+        self._exit_action.triggered.connect(self.exit_app)
 
+        self._tray_menu = menu
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.setToolTip("SwiftShot - Screenshot Tool")
         self.tray_icon.activated.connect(self._tray_activated)
+        self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -229,6 +252,16 @@ class SwiftShotApp:
             log.info("Hotkeys registered successfully")
         except Exception as e:
             log.warning(f"Could not register hotkeys: {e}")
+
+    def _reregister_hotkeys(self):
+        """Tear down and rebuild the global hotkey hook (live rebinding)."""
+        if self._hotkey_listener:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
+            self._hotkey_listener = None
+        self._register_hotkeys()
 
     # -------------------------------------------------------------------
     # Capture Delay Helper
@@ -323,6 +356,9 @@ class SwiftShotApp:
             self._overlay.region_selected.connect(
                 lambda rect: self._on_region_selected(full, rect, ocr_mode)
             )
+            self._overlay.freehand_selected.connect(
+                lambda data: self._on_freehand_selected(full, data)
+            )
             self._overlay.switch_to_window.connect(
                 lambda: self._switch_to_window_mode(full)
             )
@@ -363,6 +399,33 @@ class SwiftShotApp:
                     self._handle_capture(cropped)
             except Exception as e:
                 log.error(f"Region selection failed: {e}")
+
+    def _on_freehand_selected(self, full_screenshot, data):
+        """Crop to the freehand bounding rect, then mask outside the drawn
+        shape to transparent so the capture matches what was drawn."""
+        self._close_overlay()
+        try:
+            points, rect = data
+            rect = QRect(rect)
+        except Exception:
+            return
+        if rect.width() < 1 or rect.height() < 1:
+            return
+
+        config.LAST_REGION = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
+        config.save()
+
+        if config.CAPTURE_TIMER_ENABLED and config.CAPTURE_TIMER_SECONDS > 0:
+            self._timed_capture_region(rect, points)
+            return
+        try:
+            from capture import CaptureManager
+            from utils import apply_freehand_mask
+            cropped = CaptureManager.crop_image(full_screenshot, rect)
+            if cropped:
+                self._handle_capture(apply_freehand_mask(cropped, points, rect))
+        except Exception as e:
+            log.error(f"Freehand selection failed: {e}")
 
     def _close_overlay(self):
         if self._overlay:
@@ -447,7 +510,7 @@ class SwiftShotApp:
     # Timed Capture
     # -------------------------------------------------------------------
 
-    def _timed_capture_region(self, rect):
+    def _timed_capture_region(self, rect, freehand_points=None):
         """
         Timed capture flow:
         1. User already selected a region/window (overlay is closed)
@@ -463,7 +526,7 @@ class SwiftShotApp:
             from countdown_overlay import CountdownOverlay
             overlay = CountdownOverlay(total_ms)
             overlay.countdown_finished.connect(
-                lambda r=QRect(rect): self._timed_capture_fire(r)
+                lambda r=QRect(rect): self._timed_capture_fire(r, freehand_points)
             )
             overlay.cancelled.connect(lambda: log.info("Timed capture cancelled"))
             self._countdown = overlay  # prevent GC
@@ -471,9 +534,9 @@ class SwiftShotApp:
         except Exception as e:
             log.error(f"Timed capture countdown failed: {e}")
             # Fall back to immediate capture
-            self._timed_capture_fire(rect)
+            self._timed_capture_fire(rect, freehand_points)
 
-    def _timed_capture_fire(self, rect):
+    def _timed_capture_fire(self, rect, freehand_points=None):
         """Take a fresh screenshot and crop to the saved region."""
         try:
             from capture import CaptureManager
@@ -481,6 +544,10 @@ class SwiftShotApp:
             if fresh:
                 cropped = CaptureManager.crop_image(fresh, rect)
                 if cropped:
+                    if freehand_points:
+                        from utils import apply_freehand_mask
+                        cropped = apply_freehand_mask(
+                            cropped, freehand_points, rect)
                     log.info("Timed capture completed")
                     self._handle_capture(cropped)
                 else:
@@ -618,6 +685,12 @@ class SwiftShotApp:
     # -------------------------------------------------------------------
 
     def _handle_capture(self, pixmap):
+        if config.PLAY_CAMERA_SOUND:
+            try:
+                from utils import play_camera_sound
+                play_camera_sound()
+            except Exception:
+                pass
         pixmap = self._apply_beautification(pixmap)
         actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
@@ -708,8 +781,19 @@ class SwiftShotApp:
                 if config.COPY_PATH_TO_CLIPBOARD:
                     QApplication.clipboard().setText(filepath)
                 log.info(f"Screenshot saved: {filepath}")
+            else:
+                log.error(f"Direct save failed: {filepath}")
+                self.tray_icon.showMessage(
+                    "SwiftShot",
+                    f"Could not save screenshot to {filepath}",
+                    QSystemTrayIcon.Warning, 4000
+                )
         except Exception as e:
             log.error(f"Direct save failed: {e}")
+            self.tray_icon.showMessage(
+                "SwiftShot", "Could not save screenshot. Check the log for details.",
+                QSystemTrayIcon.Warning, 4000
+            )
 
     def _copy_to_clipboard(self, pixmap):
         QApplication.clipboard().setPixmap(pixmap)
@@ -785,30 +869,41 @@ class SwiftShotApp:
             )
 
     def _start_clipboard_watcher(self):
-        if self._clipboard_timer:
+        """Watch the clipboard via Qt's change signal (no polling)."""
+        if self._clipboard_watcher_connected:
             return
-        self._last_clipboard_pixmap = QApplication.clipboard().pixmap()
-        self._clipboard_timer = QTimer()
-        self._clipboard_timer.timeout.connect(self._check_clipboard)
-        self._clipboard_timer.start(1000)
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        self._clipboard_watcher_connected = True
         log.info("Clipboard watcher started")
 
     def _stop_clipboard_watcher(self):
-        if self._clipboard_timer:
-            self._clipboard_timer.stop()
-            self._clipboard_timer = None
+        if self._clipboard_watcher_connected:
+            try:
+                QApplication.clipboard().dataChanged.disconnect(
+                    self._on_clipboard_changed)
+            except Exception:
+                pass
+            self._clipboard_watcher_connected = False
             log.info("Clipboard watcher stopped")
 
-    def _check_clipboard(self):
+    def _on_clipboard_changed(self):
         try:
-            pixmap = QApplication.clipboard().pixmap()
+            import time
+            clipboard = QApplication.clipboard()
+            # Ignore our own copies (capture actions, editor copy, OCR text)
+            if clipboard.ownsClipboard():
+                return
+            mime = clipboard.mimeData()
+            if not mime or not mime.hasImage():
+                return
+            # Some apps fire several change notifications per copy
+            now = time.monotonic()
+            if now - self._last_clipboard_change < 0.5:
+                return
+            self._last_clipboard_change = now
+            pixmap = clipboard.pixmap()
             if pixmap and not pixmap.isNull():
-                if self._last_clipboard_pixmap is None or self._last_clipboard_pixmap.isNull():
-                    self._last_clipboard_pixmap = pixmap
-                    self._open_editor(pixmap)
-                elif pixmap.size() != self._last_clipboard_pixmap.size():
-                    self._last_clipboard_pixmap = pixmap
-                    self._open_editor(pixmap)
+                self._open_editor(pixmap)
         except Exception as e:
             log.warning(f"Clipboard check failed: {e}")
 
@@ -848,10 +943,12 @@ class SwiftShotApp:
             from theme import stylesheet_for_theme
 
             dialog = SettingsDialog()
-            if dialog.exec_() == QDialog.Accepted and self.tray_icon:
-                menu = self.tray_icon.contextMenu()
-                if menu:
-                    menu.setStyleSheet(stylesheet_for_theme(config.THEME))
+            if dialog.exec_() == QDialog.Accepted:
+                self._reregister_hotkeys()
+                if self.tray_icon:
+                    menu = self.tray_icon.contextMenu()
+                    if menu:
+                        menu.setStyleSheet(stylesheet_for_theme(config.THEME))
         except Exception as e:
             log.error(f"Settings dialog failed: {e}")
 
@@ -880,6 +977,15 @@ class SwiftShotApp:
             self.editors.remove(editor)
 
     def exit_app(self):
+        # Give open editors the chance to prompt for unsaved changes;
+        # an editor that refuses to close aborts the exit.
+        for editor in list(self.editors):
+            try:
+                if not editor.close():
+                    log.info("Exit cancelled from editor close prompt")
+                    return
+            except Exception:
+                pass
         log.info("SwiftShot shutting down")
         if self._hotkey_listener:
             try:

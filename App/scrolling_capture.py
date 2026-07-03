@@ -111,6 +111,16 @@ class ScrollingCaptureDialog(QDialog):
             log.warning("Scrolling capture: no foreground window found")
             return
 
+        # If no other window was clicked, the foreground window is this
+        # dialog -- scrolling and capturing ourselves is never intended.
+        if self._target_hwnd == int(self.winId()):
+            self.status_label.setText(
+                "That was this dialog. Click 'Start', then click the window "
+                "you want to capture.")
+            self._target_hwnd = None
+            self.start_btn.setEnabled(True)
+            return
+
         # Get window rect
         rect = wintypes.RECT()
         dwmapi = ctypes.windll.dwmapi
