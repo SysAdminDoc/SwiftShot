@@ -124,10 +124,8 @@ class Config:
 
     # --- General ---
     LAUNCH_AT_STARTUP = False
-    MINIMIZE_TO_TRAY = True
     CHECK_FOR_UPDATES = True
     SHOW_NOTIFICATIONS = True
-    LANGUAGE = "en-US"
     THEME = "dark"  # "dark" or "light"
 
     # --- Persisted State ---
@@ -141,6 +139,11 @@ class Config:
     def __init__(self):
         self._config_dir = self._get_config_dir()
         self._config_file = os.path.join(self._config_dir, "swiftshot.json")
+        # Give the instance its own copies of mutable class defaults so
+        # in-place mutation never pollutes the class-level values (which
+        # reset_to_defaults() reads back).
+        self.EDITOR_RECENT_COLORS = list(Config.EDITOR_RECENT_COLORS)
+        self.AFTER_CAPTURE_ACTIONS = list(Config.AFTER_CAPTURE_ACTIONS)
         self._ensure_history_dir()
         self._load()
 
@@ -161,6 +164,36 @@ class Config:
     def _get_saveable_keys(self):
         return [k for k in dir(self) if k.isupper() and not k.startswith('_')]
 
+    def _apply_value(self, key, value):
+        """Apply a persisted/imported value only if it matches the type of
+        the default -- malformed files must not corrupt runtime settings."""
+        default = getattr(Config, key, None)
+        if isinstance(default, bool):
+            if not isinstance(value, bool):
+                return
+        elif isinstance(default, int):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return
+            value = int(value)
+        elif isinstance(default, str):
+            if not isinstance(value, str):
+                return
+        elif isinstance(default, list):
+            if not isinstance(value, list):
+                return
+            value = list(value)
+        setattr(self, key, value)
+
+    def _normalize_enums(self):
+        if self.OUTPUT_FILE_FORMAT not in OUTPUT_FILE_FORMAT_CHOICES:
+            self.OUTPUT_FILE_FORMAT = Config.OUTPUT_FILE_FORMAT
+        if self.THEME not in ("dark", "light"):
+            self.THEME = Config.THEME
+        if self.BEAUTIFY_PRESET not in BEAUTIFICATION_PRESETS:
+            self.BEAUTIFY_PRESET = Config.BEAUTIFY_PRESET
+        if self.EDITOR_OBFUSCATE_MODE not in ("pixelate", "blur"):
+            self.EDITOR_OBFUSCATE_MODE = Config.EDITOR_OBFUSCATE_MODE
+
     def _load(self):
         if not os.path.exists(self._config_file):
             return
@@ -169,18 +202,22 @@ class Config:
                 data = json.load(f)
             for key, value in data.items():
                 if hasattr(self, key) and key.isupper():
-                    setattr(self, key, value)
+                    self._apply_value(key, value)
             if "AFTER_CAPTURE_ACTIONS" not in data:
                 self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
             self._normalize_after_capture_actions()
-        except json.JSONDecodeError:
+            self._normalize_enums()
+        except json.JSONDecodeError as e:
             backup = self._config_file + ".corrupt"
             try:
                 shutil.copy2(self._config_file, backup)
             except Exception:
                 pass
-        except Exception:
-            pass
+            self._log_warning(
+                f"Config file is corrupt ({e}); using defaults. "
+                f"Backup saved to {backup}")
+        except Exception as e:
+            self._log_warning(f"Could not load config: {e}")
 
     def save(self):
         data = {k: getattr(self, k) for k in self._get_saveable_keys()}
@@ -189,6 +226,14 @@ class Config:
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_path, self._config_file)
+        except Exception as e:
+            self._log_warning(f"Could not save config: {e}")
+
+    @staticmethod
+    def _log_warning(message):
+        try:
+            from logger import log
+            log.warning(message)
         except Exception:
             pass
 
@@ -226,15 +271,19 @@ class Config:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                return False
             for key, value in data.items():
                 if hasattr(self, key) and key.isupper() and key not in self._STATE_KEYS:
-                    setattr(self, key, value)
+                    self._apply_value(key, value)
             if "AFTER_CAPTURE_ACTIONS" not in data:
                 self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
             self._normalize_after_capture_actions()
+            self._normalize_enums()
             self.save()
             return True
-        except Exception:
+        except Exception as e:
+            self._log_warning(f"Settings import failed: {e}")
             return False
 
     def add_recent_color(self, hex_color):
