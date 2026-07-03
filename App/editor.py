@@ -1628,7 +1628,9 @@ class CanvasWidget(QWidget):
             else:
                 self.quick_mask_enter()
         elif key == Qt.Key_Escape:
-            if self.editor.current_tool == "magnetic-lasso" and self._mag_anchors:
+            if self.editor.quick_mask_active:
+                self.quick_mask_cancel()
+            elif self.editor.current_tool == "magnetic-lasso" and self._mag_anchors:
                 self._mag_anchors = []
                 self._mag_preview = None
                 self._mag_edge_map = None
@@ -2208,7 +2210,19 @@ class CanvasWidget(QWidget):
         self.editor.quick_mask_active = True
         self.set_selection_mask(None)
         self.update()
-        self.editor._status("Quick Mask — paint black to mask, white to unmask; press Q to exit")
+        self.editor._status("Quick Mask — paint black to mask, white to unmask; Q applies, Esc cancels")
+
+    def quick_mask_cancel(self):
+        """Exit Quick Mask WITHOUT committing — restore the selection that was
+        active before entering (was saved to _quick_mask_prev but never read)."""
+        if not self.editor.quick_mask_active: return
+        prev = self._quick_mask_prev
+        self._quick_mask_layer = None
+        self._quick_mask_prev = None
+        self.editor.quick_mask_active = False
+        self.set_selection_mask(prev.copy() if prev is not None else None)
+        self.update()
+        self.editor._status("Quick Mask cancelled — selection restored")
 
     def quick_mask_exit(self):
         """Exit Quick Mask — paint result becomes selection."""

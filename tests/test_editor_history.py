@@ -293,6 +293,48 @@ def test_retouch_dodge_brightens_center(qapp):
     assert layer.image.getpixel((0, 0))[0] == 100
 
 
+def test_quick_mask_cancel_restores_previous_selection(qapp):
+    """Cancelling Quick Mask must restore the pre-mask selection (the saved
+    _quick_mask_prev was never read before)."""
+    from editor import CanvasWidget, Layer
+    from PIL import Image
+    from PyQt5.QtGui import QColor
+
+    layer = Layer("L", 30, 30)
+
+    class Ed:
+        current_tool = "brush"
+        brush_size = 8
+        quick_mask_active = False
+        fg_color = QColor(255, 255, 255)
+
+        def active_layer(self_inner):
+            return layer
+
+        def _status(self_inner, *_a):
+            pass
+
+    ed = Ed()
+    ed.layers = [layer]
+    ed.active_layer_index = 0
+    canvas = CanvasWidget(ed)
+
+    original = Image.new("L", (30, 30), 0)
+    original.paste(255, (5, 5, 15, 15))
+    canvas.set_selection_mask(original)
+
+    canvas.quick_mask_enter()
+    assert ed.quick_mask_active
+    # Scribble on the quick-mask layer, then cancel.
+    canvas._paint_quick_mask_stroke(20, 20)
+    canvas.quick_mask_cancel()
+
+    assert not ed.quick_mask_active
+    assert canvas.selection_mask is not None
+    assert canvas.selection_mask.getpixel((10, 10)) == 255   # restored
+    assert canvas.selection_mask.getpixel((20, 20)) == 0     # scribble discarded
+
+
 def test_clone_stamp_near_border_paints_no_holes(qapp):
     """Cloning from a source near the image edge used to sample crop() padding
     (transparent black), punching holes at the destination (regression)."""
