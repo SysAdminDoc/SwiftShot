@@ -733,6 +733,20 @@ class SwiftShotApp:
     def _open_editor(self, pixmap):
         try:
             from editor import ImageEditor
+            # Reuse an existing editor window if the user asked for it --
+            # but only one without unsaved changes, never discarding work.
+            if config.EDITOR_REUSE_EDITOR:
+                for existing in reversed(self.editors):
+                    try:
+                        if existing.isVisible() and not getattr(existing, "_dirty", False):
+                            existing.load_pixmap(pixmap)
+                            existing.show()
+                            existing.raise_()
+                            existing.activateWindow()
+                            log.info("Capture loaded into existing editor")
+                            return
+                    except Exception:
+                        continue
             editor = ImageEditor(pixmap, self)
             editor.show()
             editor.raise_()

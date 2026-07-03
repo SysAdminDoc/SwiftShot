@@ -108,6 +108,44 @@ def pil_to_qpixmap(pil_image):
     qimg = QImage(data, img.width, img.height, 4 * img.width, QImage.Format_RGBA8888)
     return QPixmap.fromImage(qimg.copy())
 
+# ── Numpy image helpers (scipy-free) ─────────────────────────────────────────
+# scipy is not a dependency and is excluded from the frozen build; these
+# replace the two scipy.ndimage operations the editor needs.
+
+def np_sobel(arr, axis):
+    """Sobel derivative of a 2-D float array (edge-padded)."""
+    p = np.pad(arr, 1, mode="edge")
+    if axis == 1:
+        d = p[:, 2:] - p[:, :-2]
+        return d[:-2, :] + 2.0 * d[1:-1, :] + d[2:, :]
+    d = p[2:, :] - p[:-2, :]
+    return d[:, :-2] + 2.0 * d[:, 1:-1] + d[:, 2:]
+
+
+def np_map_bilinear(channel, sy, sx):
+    """Bilinear sample of a 2-D array at float coordinates (sy, sx).
+    Equivalent to scipy.ndimage.map_coordinates(order=1, mode='nearest')
+    for in-range coordinates."""
+    h, w = channel.shape
+    x0 = np.clip(np.floor(sx).astype(np.int32), 0, w - 1)
+    y0 = np.clip(np.floor(sy).astype(np.int32), 0, h - 1)
+    x1 = np.clip(x0 + 1, 0, w - 1)
+    y1 = np.clip(y0 + 1, 0, h - 1)
+    fx = np.clip(sx - x0, 0.0, 1.0)
+    fy = np.clip(sy - y0, 0.0, 1.0)
+    top = channel[y0, x0] * (1.0 - fx) + channel[y0, x1] * fx
+    bot = channel[y1, x0] * (1.0 - fx) + channel[y1, x1] * fx
+    return top * (1.0 - fy) + bot * fy
+
+
+def np_warp_rgba(arr, sy, sx):
+    """Remap every channel of an HxWx4 array with bilinear sampling."""
+    result = np.zeros_like(arr)
+    for c in range(arr.shape[2]):
+        result[:, :, c] = np_map_bilinear(arr[:, :, c], sy, sx)
+    return result
+
+
 # ── Shared Color Variables ───────────────────────────────────────────────────
 try:
     from theme import EDITOR_COLORS
@@ -568,36 +606,50 @@ class HistoryManager:
     def __init__(self, max_states=30):
         self.undo_stack = deque(maxlen=max_states)
         self.redo_stack = deque(maxlen=max_states)
-        self.labels = deque(maxlen=max_states)
+        # Invoked on every mutation -- the editor uses it for dirty tracking.
+        self.on_change = None
+
+    def _notify(self):
+        if self.on_change:
+            try:
+                self.on_change()
+            except Exception:
+                pass
 
     def save_state(self, layers, active_index, label="Edit"):
         state = self._snap(layers, active_index)
         self.undo_stack.append((state, label))
         self.redo_stack.clear()
+        self._notify()
 
     def undo(self, current_layers, current_index):
         if not self.undo_stack: return None, None, None
         (restore, lbl) = self.undo_stack.pop()
         self.redo_stack.append((self._snap(current_layers, current_index), lbl))
+        self._notify()
         return restore[0], restore[1], lbl
 
     def redo(self, current_layers, current_index):
         if not self.redo_stack: return None, None, None
         (restore, lbl) = self.redo_stack.pop()
         self.undo_stack.append((self._snap(current_layers, current_index), lbl))
+        self._notify()
         return restore[0], restore[1], lbl
 
+    @staticmethod
+    def _copy_layer(l):
+        # Layer.copy()/LayerGroup.copy() preserve image, mask, mask_enabled,
+        # effects and group children -- everything undo must restore.
+        # They append " copy" to names (duplicate-layer UX), so restore them.
+        s = l.copy()
+        s.name = l.name
+        if hasattr(s, "children") and hasattr(l, "children"):
+            for src_child, dst_child in zip(l.children, s.children):
+                dst_child.name = src_child.name
+        return s
+
     def _snap(self, layers, idx):
-        state = []
-        for l in layers:
-            s = Layer(l.name)
-            s.image = l.image.copy()
-            s.visible = l.visible
-            s.opacity = l.opacity
-            s.blend_mode = l.blend_mode
-            s.locked = l.locked
-            state.append(s)
-        return (state, idx)
+        return ([self._copy_layer(l) for l in layers], idx)
 
     def all_labels(self):
         return [lbl for (_, lbl) in self.undo_stack]
@@ -783,6 +835,16 @@ class CanvasWidget(QWidget):
         # ── Quick Mask state ──────────────────────────────────────────────────
         self._quick_mask_prev = None  # saved selection before entering quick mask
         self._quick_mask_layer = None # PIL L image used as the mask canvas
+        # ── Transform / Perspective / Warp state ─────────────────────────────
+        # Must exist before the first hover/click with these tools selected:
+        # the mouse handlers read them unconditionally.
+        self._xform_active = False
+        self._xform_handle = None
+        self._xform_drag_wp = None
+        self._persp_active = False
+        self._persp_drag_i = -1
+        self._persp_corners = []
+        self._warp_orig = None
         # ── Magnetic Scissors state ───────────────────────────────────────────
         self._mag_anchors = []        # list of QPointF (image coords)
         self._mag_preview = None      # cursor QPointF for live edge preview
@@ -870,7 +932,7 @@ class CanvasWidget(QWidget):
             painter.drawText(self.rect(), Qt.AlignCenter, "Open or create an image to begin")
             painter.end()
             return
-        composite = self.editor.get_composite()
+        composite = self.editor.get_composite(apply_channel_visibility=True)
         if composite is None:
             painter.end()
             return
@@ -1065,7 +1127,7 @@ class CanvasWidget(QWidget):
         if (event.button() == Qt.MiddleButton or
                 (event.button() == Qt.LeftButton and
                  event.modifiers() & Qt.AltModifier and
-                 tool not in ("clone", "healing"))):
+                 tool not in ("clone", "healing", "magic-wand"))):
             self.panning = True
             self.pan_start = QPointF(event.pos()) - self.pan_offset
             self.setCursor(Qt.ClosedHandCursor)
@@ -1080,7 +1142,15 @@ class CanvasWidget(QWidget):
             w, h = layer.image.size
             if tool == "move":
                 self.last_pos = img_pos; self.drawing = True
+            elif (tool in ("brush", "pencil", "spray", "eraser")
+                  and self.editor.quick_mask_active):
+                # Quick mask: strokes go to the quick-mask layer, never the
+                # image. This must run before the generic brush branches.
+                self.drawing = True; self.last_pos = img_pos
+                self._paint_quick_mask_stroke(ix, iy); self.update()
             elif tool in ("brush", "pencil", "spray"):
+                if layer.locked:
+                    self.status_update.emit("Layer is locked"); return
                 self.editor.history.save_state(self.editor.layers, self.editor.active_layer_index, tool.title())
                 self.drawing = True; self.last_pos = img_pos
                 if layer and getattr(layer, 'editing_mask', False) and layer.mask is not None:
@@ -1089,6 +1159,8 @@ class CanvasWidget(QWidget):
                     self._draw_brush(ix, iy)
                 self.update()
             elif tool == "eraser":
+                if layer.locked:
+                    self.status_update.emit("Layer is locked"); return
                 self.editor.history.save_state(self.editor.layers, self.editor.active_layer_index, "Erase")
                 self.drawing = True; self.last_pos = img_pos
                 if layer and getattr(layer, 'editing_mask', False) and layer.mask is not None:
@@ -1163,6 +1235,8 @@ class CanvasWidget(QWidget):
                         self._xform_start = (self._xform_cx, self._xform_cy,
                                              self._xform_w, self._xform_h,
                                              self._xform_angle)
+                        # The drag dispatch in mouseMoveEvent requires it.
+                        self.drawing = True
                 else:
                     self.xform_enter()
             elif tool == "perspective":
@@ -1177,6 +1251,7 @@ class CanvasWidget(QWidget):
                             best_d, best = d, i
                     if best_d < dp(12):
                         self._persp_drag_i = best
+                        self.drawing = True
                 else:
                     self.persp_enter()
             elif tool == "warp":
@@ -1211,10 +1286,6 @@ class CanvasWidget(QWidget):
                 self.update()
             elif tool == "select-color":
                 self._select_by_color(ix, iy)
-            elif tool in ("brush", "pencil", "spray", "eraser") and self.editor.quick_mask_active:
-                # Quick mask: redirect strokes to the mask layer
-                self.drawing = True; self.last_pos = img_pos
-                self._paint_quick_mask_stroke(ix, iy); self.update()
 
     def mouseMoveEvent(self, event):
         img_pos = self.canvas_to_image(QPointF(event.pos()))
@@ -1288,7 +1359,12 @@ class CanvasWidget(QWidget):
             return
         tool = self.editor.current_tool
         if self.drawing and event.buttons() & Qt.LeftButton:
-            if tool in ("brush", "pencil", "spray"):
+            if (tool in ("brush", "pencil", "spray", "eraser")
+                    and self.editor.quick_mask_active):
+                # Quick mask strokes must never touch the layer image.
+                self._paint_quick_mask_line(self.last_pos, img_pos)
+                self.last_pos = img_pos; self.update()
+            elif tool in ("brush", "pencil", "spray"):
                 _layer = self.editor.active_layer()
                 if _layer and getattr(_layer, 'editing_mask', False) and _layer.mask is not None:
                     self._draw_brush_line_on_mask(self.last_pos, img_pos)
@@ -1389,10 +1465,6 @@ class CanvasWidget(QWidget):
             elif tool == "magnetic-lasso":
                 self._mag_preview = self._mag_snap_to_edge(img_pos, search_radius=14)
                 self.update()
-            elif (tool in ("brush", "pencil", "spray", "eraser")
-                  and self.editor.quick_mask_active and self.drawing):
-                self._paint_quick_mask_line(self.last_pos, img_pos)
-                self.last_pos = img_pos; self.update()
             elif tool == "warp" and self.drawing:
                 layer = self.editor.active_layer()
                 if layer and self.last_pos:
@@ -1551,7 +1623,7 @@ class CanvasWidget(QWidget):
     def wheelEvent(self, event):
         old_zoom = self.zoom
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        self.zoom = max(0.05, min(50.0, self.zoom * factor))
+        self.zoom = max(0.05, min(32.0, self.zoom * factor))
         cp = QPointF(event.pos())
         self.pan_offset = cp - (cp - self.pan_offset) * (self.zoom / old_zoom)
         self.zoom_changed.emit(self.zoom, self.pan_offset.x(), self.pan_offset.y())
@@ -1907,10 +1979,13 @@ class CanvasWidget(QWidget):
             t = np.clip((np.abs(dx) + np.abs(dy)) / radius, 0, 1)
         else:
             t = np.zeros((h, w))
+        grad_a = from_c[3] * (1 - t) + to_c[3] * t
+        alpha = grad_a / 255.0
         for ch in range(3):
             color_ch = from_c[ch] * (1 - t) + to_c[ch] * t
-            alpha = (from_c[3] * (1 - t) + to_c[3] * t) / 255.0
             arr[:, :, ch] = arr[:, :, ch] * (1 - alpha) + color_ch * alpha
+        # Composite alpha too, or the gradient is invisible on transparent layers
+        arr[:, :, 3] = grad_a + arr[:, :, 3] * (1 - alpha)
         layer.image = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
         self.update()
 
@@ -2111,10 +2186,9 @@ class CanvasWidget(QWidget):
         """Compute Sobel edge-strength map for current composite."""
         layer = self.editor.active_layer()
         if not layer: return
-        import scipy.ndimage as ndi
         arr = np.array(self.editor.get_composite().convert("L"), dtype=np.float32)
-        sx = ndi.sobel(arr, axis=1)
-        sy = ndi.sobel(arr, axis=0)
+        sx = np_sobel(arr, axis=1)
+        sy = np_sobel(arr, axis=0)
         strength = np.hypot(sx, sy)
         # Normalize 0-1
         mx = strength.max()
@@ -2217,23 +2291,20 @@ class CanvasWidget(QWidget):
             stamp_sz = max(2, sz)
             center_val = col
             edge_val   = 255 - col  # inverted at edge for soft falloff
-            stamp = Image.new("L", (stamp_sz * 2, stamp_sz * 2), edge_val)
-            for iy in range(stamp_sz * 2):
-                for ix2 in range(stamp_sz * 2):
-                    dx, dy = ix2 - stamp_sz, iy - stamp_sz
-                    d = math.sqrt(dx * dx + dy * dy) / stamp_sz
-                    if d <= 1.0:
-                        fac = 1.0 - d ** (hardness / 50.0 + 0.1)
-                        v = int(edge_val + (center_val - edge_val) * fac)
-                        stamp.putpixel((ix2, iy), max(0, min(255, v)))
+            yy, xx = np.mgrid[0:stamp_sz * 2, 0:stamp_sz * 2]
+            d = np.sqrt((xx - stamp_sz) ** 2 + (yy - stamp_sz) ** 2) / stamp_sz
+            fac = np.where(d <= 1.0, 1.0 - d ** (hardness / 50.0 + 0.1), 0.0)
+            vals = (edge_val + (center_val - edge_val) * fac).clip(0, 255)
+            stamp = Image.fromarray(vals.astype(np.uint8), "L")
             # Blend stamp onto mask
             x0, y0 = x - stamp_sz, y - stamp_sz
             region = layer.mask.crop((x0, y0, x0 + stamp_sz * 2, y0 + stamp_sz * 2))
             if col == 255:
                 merged = ImageChops.lighter(region, stamp)
             else:
-                merged = ImageChops.darker(region, ImageChops.invert(stamp))
-                merged = ImageChops.invert(merged)
+                # Hide-paint: darken toward the black stamp centre. The old
+                # invert/darker/invert dance inverted mask values instead.
+                merged = ImageChops.darker(region, stamp)
             layer.mask.paste(merged, (x0, y0))
         else:
             r = sz // 2
@@ -2541,10 +2612,7 @@ class CanvasWidget(QWidget):
             strength = getattr(self.editor, "warp_strength", 60) / 100.0
             sx = np.clip(xg - ddx * falloff * strength, 0, w - 1).astype(np.float32)
             sy = np.clip(yg - ddy * falloff * strength, 0, h - 1).astype(np.float32)
-            from scipy.ndimage import map_coordinates
-            result = np.zeros_like(arr)
-            for c in range(arr.shape[2]):
-                result[:, :, c] = map_coordinates(arr[:, :, c], [sy, sx], order=1, mode='nearest')
+            result = np_warp_rgba(arr, sy, sx)
             layer.image = Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGBA")
         elif mode == "grow":
             # Expand pixels outward from center
@@ -2553,10 +2621,7 @@ class CanvasWidget(QWidget):
             dy_field = (yg - cy) * falloff * strength
             sx = np.clip(xg - dx_field, 0, w - 1).astype(np.float32)
             sy = np.clip(yg - dy_field, 0, h - 1).astype(np.float32)
-            from scipy.ndimage import map_coordinates
-            result = np.zeros_like(arr)
-            for c in range(arr.shape[2]):
-                result[:, :, c] = map_coordinates(arr[:, :, c], [sy, sx], order=1, mode='nearest')
+            result = np_warp_rgba(arr, sy, sx)
             layer.image = Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGBA")
         elif mode == "shrink":
             strength = getattr(self.editor, "warp_strength", 60) / 200.0
@@ -2564,10 +2629,7 @@ class CanvasWidget(QWidget):
             dy_field = -(yg - cy) * falloff * strength
             sx = np.clip(xg - dx_field, 0, w - 1).astype(np.float32)
             sy = np.clip(yg - dy_field, 0, h - 1).astype(np.float32)
-            from scipy.ndimage import map_coordinates
-            result = np.zeros_like(arr)
-            for c in range(arr.shape[2]):
-                result[:, :, c] = map_coordinates(arr[:, :, c], [sy, sx], order=1, mode='nearest')
+            result = np_warp_rgba(arr, sy, sx)
             layer.image = Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGBA")
         elif mode == "swirl":
             strength = getattr(self.editor, "warp_strength", 60) / 100.0 * 0.05
@@ -2576,10 +2638,7 @@ class CanvasWidget(QWidget):
             rx = xg - cx; ry = yg - cy
             sx = np.clip(cx + rx * cos_a - ry * sin_a, 0, w - 1).astype(np.float32)
             sy = np.clip(cy + rx * sin_a + ry * cos_a, 0, h - 1).astype(np.float32)
-            from scipy.ndimage import map_coordinates
-            result = np.zeros_like(arr)
-            for c in range(arr.shape[2]):
-                result[:, :, c] = map_coordinates(arr[:, :, c], [sy, sx], order=1, mode='nearest')
+            result = np_warp_rgba(arr, sy, sx)
             layer.image = Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGBA")
         self.update()
 
@@ -2632,7 +2691,6 @@ class CanvasWidget(QWidget):
         new_r = (g + b) / 2.0
         arr[:,:,0] = np.where(red_dominant, new_r, r)
         # Also darken overall to natural pupil colour
-        gray = 0.299 * arr[:,:,0] + 0.587 * arr[:,:,1] + 0.114 * arr[:,:,2]
         factor = np.where(red_dominant, 0.25, 1.0)  # darken the red-eye region
         for ch in range(3):
             arr[:,:,ch] = np.where(red_dominant, arr[:,:,ch] * factor, arr[:,:,ch])
@@ -2650,14 +2708,14 @@ class CanvasWidget(QWidget):
         if self.selection_mask is None:
             self.editor._status("No selection — draw a selection first")
             return
-        self.editor.history.save_state(
-            self.editor.layers, self.editor.active_layer_index, "Content-Aware Fill")
         img = np.array(layer.image, dtype=np.uint8)
         mask = np.array(self.selection_mask, dtype=np.uint8)
         h, w = img.shape[:2]
         patch_sz = max(8, self.editor.brush_size // 2)
         ys, xs = np.where(mask > 127)
         if len(ys) == 0: return
+        self.editor.history.save_state(
+            self.editor.layers, self.editor.active_layer_index, "Content-Aware Fill")
         # Build list of valid source patches (outside mask with enough margin)
         margin = patch_sz // 2
         valid_src = []
@@ -2884,7 +2942,11 @@ class NavigatorPanel(QWidget):
                     rw = (br.x() - tl.x()) * sx
                     rh = (br.y() - tl.y()) * sy
                     p.setPen(QPen(QColor(C.ACCENT), 1.5))
-                    p.setBrush(QColor(C.ACCENT_D[0:7] + "44" if len(C.ACCENT_D) == 7 else C.ACCENT_D))
+                    # Qt parses 9-digit hex as #AARRGGBB -- build the color
+                    # with an explicit alpha instead of appending a suffix.
+                    _vc = QColor(C.ACCENT_D)
+                    _vc.setAlpha(0x44)
+                    p.setBrush(_vc)
                     p.drawRect(QRectF(rx, ry, rw, rh))
         else:
             p.setPen(QColor(C.TEXT_MUT))
@@ -3428,8 +3490,13 @@ class LayerPanel(QWidget):
             if has_mask:
                 editing = getattr(layer, 'editing_mask', False)
                 enabled = getattr(layer, 'mask_enabled', True)
+                # Rebuild the color rule from scratch: a replace() chain can
+                # never switch back once TEXT_SEC has been substituted away.
+                base = self.mask_edit_btn.styleSheet()
+                base = base.replace("color:" + C.ACCENT, "color:" + C.TEXT_SEC)
                 self.mask_edit_btn.setStyleSheet(
-                    self.mask_edit_btn.styleSheet().replace("color:" + C.TEXT_SEC, "color:" + (C.ACCENT if editing else C.TEXT_SEC)))
+                    base.replace("color:" + C.TEXT_SEC,
+                                 "color:" + (C.ACCENT if editing else C.TEXT_SEC)))
                 self.mask_dis_btn.setText("Enable" if not enabled else "Disable")
         self.layer_list.blockSignals(False)
 
@@ -3486,9 +3553,21 @@ class LayerPanel(QWidget):
         self.group_btn.setEnabled(len(sel) >= 2)
 
     def on_layers_reordered(self):
-        new = []
+        # Rows of expanded groups store a (group_idx, child_idx) tuple in
+        # UserRole -- only integer rows are top-level layers. Indexing the
+        # layer list with a tuple raised TypeError and killed the app.
+        indices = []
         for i in range(self.layer_list.count()):
-            new.append(self.editor.layers[self.layer_list.item(i).data(Qt.UserRole)])
+            idx = self.layer_list.item(i).data(Qt.UserRole)
+            if isinstance(idx, int) and 0 <= idx < len(self.editor.layers):
+                indices.append(idx)
+        if sorted(indices) != list(range(len(self.editor.layers))):
+            # Incomplete/duplicated view (e.g. mid-drag artifact) -- rebuild.
+            self.refresh()
+            return
+        self.editor.history.save_state(
+            self.editor.layers, self.editor.active_layer_index, "Reorder Layers")
+        new = [self.editor.layers[idx] for idx in indices]
         new.reverse(); self.editor.layers = new
         self.editor.active_layer_index = max(0, min(self.editor.active_layer_index, len(self.editor.layers) - 1))
         self.refresh(); self.editor.canvas.update()
@@ -3700,97 +3779,38 @@ class FxDialog(QDialog):
         self._populate_list()
 
     def _build_ui(self):
-        main = QHBoxLayout(self)
-        main.setContentsMargins(dp(10), dp(10), dp(10), dp(10))
-        main.setSpacing(dp(10))
+        root = QVBoxLayout(self)
+        root.setContentsMargins(dp(10), dp(10), dp(10), dp(10))
+        root.setSpacing(dp(8))
 
-        # ── Left: effect list ─────────────────────────────────────────────────
-        left = QVBoxLayout(); left.setSpacing(dp(5))
-        lbl = QLabel("Effects")
-        lbl.setStyleSheet(f"color:{C.TEXT_PRI};font-size:{dp(12)}px;font-weight:bold;")
-        left.addWidget(lbl)
-        self.fx_list = QListWidget()
-        self.fx_list.setFixedWidth(dp(175))
-        self.fx_list.currentRowChanged.connect(self._on_row_change)
-        left.addWidget(self.fx_list, 1)
-
-        # Add / Remove buttons
-        btn_row = QHBoxLayout(); btn_row.setSpacing(dp(4))
-        add_btn = QPushButton("+ Add")
-        add_btn.clicked.connect(self._add_effect)
-        btn_row.addWidget(add_btn)
-        self.del_btn = QPushButton("Remove")
-        self.del_btn.clicked.connect(self._remove_effect)
-        btn_row.addWidget(self.del_btn)
-        left.addLayout(btn_row)
-        main.addLayout(left)
-
-        # ── Right: parameters panel ───────────────────────────────────────────
-        right = QVBoxLayout(); right.setSpacing(dp(6))
-        self.params_label = QLabel("Select an effect to edit its parameters")
-        self.params_label.setStyleSheet(
-            f"color:{C.TEXT_MUT};font-size:{dp(11)}px;font-style:italic;")
-        right.addWidget(self.params_label)
-        self.params_area = QWidget()
-        self.params_layout = QVBoxLayout(self.params_area)
-        self.params_layout.setContentsMargins(0, 0, 0, 0)
-        self.params_layout.setSpacing(dp(6))
-        right.addWidget(self.params_area, 1)
-        right.addStretch()
-        main.addLayout(right, 1)
-
-        # ── Bottom: OK / Cancel ───────────────────────────────────────────────
-        outer = QVBoxLayout()
-        outer.addLayout(main, 1)
-        btn_bottom = QHBoxLayout(); btn_bottom.addStretch()
-        ok = QPushButton("OK")
-        ok.setStyleSheet(
-            f"QPushButton{{background:{C.ACCENT};color:{C.BG0};border:none;border-radius:4px;"
-            f"padding:{dp(5)}px {dp(18)}px;font-weight:bold;}}"
-            f"QPushButton:hover{{background:#a6d3f5;}}")
-        ok.clicked.connect(self.accept)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self._cancel)
-        btn_bottom.addWidget(cancel); btn_bottom.addWidget(ok)
-        outer.addLayout(btn_bottom)
-        # replace existing layout
-        while self.layout().count():
-            self.layout().takeAt(0)
-        for i in range(outer.count()):
-            item = outer.itemAt(i)
-            if item.widget():
-                self.layout().addWidget(item.widget())
-            elif item.layout():
-                self.layout().addLayout(item.layout())
-
-        # Use a proper single layout
-        self.setLayout(QVBoxLayout())
-        self.layout().setContentsMargins(dp(10), dp(10), dp(10), dp(10))
-        self.layout().setSpacing(dp(8))
         content = QWidget()
         content_layout = QHBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(dp(10))
-        # Left panel
+
+        # ── Left: effect list ─────────────────────────────────────────────────
         lp = QWidget(); lp.setFixedWidth(dp(175))
-        ll = QVBoxLayout(lp); ll.setContentsMargins(0,0,0,0); ll.setSpacing(dp(5))
-        lbl2 = QLabel("Active Effects")
-        lbl2.setStyleSheet(f"color:{C.TEXT_PRI};font-size:{dp(12)}px;font-weight:bold;")
-        ll.addWidget(lbl2)
+        ll = QVBoxLayout(lp); ll.setContentsMargins(0, 0, 0, 0); ll.setSpacing(dp(5))
+        lbl = QLabel("Active Effects")
+        lbl.setStyleSheet(f"color:{C.TEXT_PRI};font-size:{dp(12)}px;font-weight:bold;")
+        ll.addWidget(lbl)
         self.fx_list = QListWidget()
         self.fx_list.currentRowChanged.connect(self._on_row_change)
         ll.addWidget(self.fx_list, 1)
         br = QHBoxLayout(); br.setSpacing(dp(4))
         ab = QPushButton("+ Add"); ab.clicked.connect(self._add_effect)
-        rb = QPushButton("Remove"); rb.clicked.connect(self._remove_effect)
-        br.addWidget(ab); br.addWidget(rb)
+        self.del_btn = QPushButton("Remove")
+        self.del_btn.clicked.connect(self._remove_effect)
+        br.addWidget(ab); br.addWidget(self.del_btn)
         ll.addLayout(br)
         content_layout.addWidget(lp)
-        # Right panel
+
+        # ── Right: parameters panel ───────────────────────────────────────────
         rp = QWidget()
-        rl = QVBoxLayout(rp); rl.setContentsMargins(0,0,0,0); rl.setSpacing(dp(6))
-        self.params_label = QLabel("Select an effect")
-        self.params_label.setStyleSheet(f"color:{C.TEXT_MUT};font-style:italic;font-size:{dp(11)}px;")
+        rl = QVBoxLayout(rp); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(dp(6))
+        self.params_label = QLabel("Select an effect to edit its parameters")
+        self.params_label.setStyleSheet(
+            f"color:{C.TEXT_MUT};font-style:italic;font-size:{dp(11)}px;")
         rl.addWidget(self.params_label)
         self.params_scroll = QScrollArea()
         self.params_scroll.setWidgetResizable(True)
@@ -3802,18 +3822,20 @@ class FxDialog(QDialog):
         self.params_scroll.setWidget(self.params_container)
         rl.addWidget(self.params_scroll, 1)
         content_layout.addWidget(rp, 1)
-        self.layout().addWidget(content, 1)
-        # Bottom buttons
+        root.addWidget(content, 1)
+
+        # ── Bottom: OK / Cancel ───────────────────────────────────────────────
         bb = QHBoxLayout(); bb.addStretch()
-        ok2 = QPushButton("OK")
-        ok2.setStyleSheet(
+        ok = QPushButton("OK")
+        ok.setStyleSheet(
             f"QPushButton{{background:{C.ACCENT};color:{C.BG0};border:none;border-radius:4px;"
             f"padding:{dp(5)}px {dp(18)}px;font-weight:bold;}}"
-            f"QPushButton:hover{{background:#a6d3f5;}}")
-        ok2.clicked.connect(self.accept)
-        ca2 = QPushButton("Cancel"); ca2.clicked.connect(self._cancel)
-        bb.addWidget(ca2); bb.addWidget(ok2)
-        self.layout().addLayout(bb)
+            f"QPushButton:hover{{background:{C.ACCENT_H};}}")
+        ok.clicked.connect(self.accept)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self._cancel)
+        bb.addWidget(cancel); bb.addWidget(ok)
+        root.addLayout(bb)
 
     def _populate_list(self):
         self.fx_list.clear()
@@ -4631,7 +4653,7 @@ class OptionsBar(QWidget):
         xform_commit.setStyleSheet(
             f"QPushButton{{background:{C.ACCENT};color:{C.BG0};border:none;"
             f"border-radius:4px;padding:0 10px;font-weight:bold;font-size:{dp(11)}px;}}"
-            f"QPushButton:hover{{background:#a6d3f5;}}")
+            f"QPushButton:hover{{background:{C.ACCENT_H};}}")
         xform_commit.clicked.connect(self._commit_xform)
         ly.addWidget(xform_commit); self._widgets["xform_commit"] = xform_commit
 
@@ -4670,7 +4692,7 @@ class OptionsBar(QWidget):
         persp_commit.setStyleSheet(
             f"QPushButton{{background:{C.ACCENT};color:{C.BG0};border:none;"
             f"border-radius:4px;padding:0 10px;font-weight:bold;font-size:{dp(11)}px;}}"
-            f"QPushButton:hover{{background:#a6d3f5;}}")
+            f"QPushButton:hover{{background:{C.ACCENT_H};}}")
         persp_commit.clicked.connect(self._commit_persp)
         ly.addWidget(persp_commit); self._widgets["persp_commit"] = persp_commit
 
@@ -4752,7 +4774,7 @@ class OptionsBar(QWidget):
         confirm_btn.setStyleSheet(
             f"QPushButton{{background:{C.ACCENT};color:{C.BG0};border:none;"
             f"border-radius:4px;padding:0 10px;font-weight:bold;font-size:11px;}}"
-            f"QPushButton:hover{{background:#a6d3f5;}}"
+            f"QPushButton:hover{{background:{C.ACCENT_H};}}"
         )
         confirm_btn.clicked.connect(self._confirm_crop)
         ly.addWidget(confirm_btn)
@@ -4959,7 +4981,9 @@ class ImageEditor(QMainWindow):
         self.magic_wand_contiguous = True
         self.magic_wand_sample_all = False
         self.clone_source = None
+        self._dirty = False
         self.history = HistoryManager()
+        self.history.on_change = self._mark_dirty
         self.file_path = None
         self.saved_path = None
         self.selected_layer_indices = set()  # multi-select
@@ -4978,6 +5002,22 @@ class ImageEditor(QMainWindow):
         self.text_size = 36
         self.text_bold = False
         self.text_italic = False
+        # Apply user preferences from Settings (config is None when the
+        # editor is run fully standalone without the app modules).
+        if config is not None:
+            try:
+                default_color = QColor(getattr(config, "EDITOR_DEFAULT_COLOR", ""))
+                if default_color.isValid():
+                    self.fg_color = default_color
+                self.shape_stroke_width = int(getattr(
+                    config, "EDITOR_DEFAULT_LINE_WIDTH", self.shape_stroke_width))
+                self.text_size = int(getattr(
+                    config, "EDITOR_DEFAULT_FONT_SIZE", self.text_size))
+                family = getattr(config, "EDITOR_DEFAULT_FONT_FAMILY", "")
+                if family:
+                    self.text_font_family = family
+            except Exception:
+                pass
         self.pen_flow = 100
         self.pen_smooth = 3
         # Transform / Warp / Blur-Sharpen state
@@ -5015,6 +5055,25 @@ class ImageEditor(QMainWindow):
         if 0 <= self.active_layer_index < len(self.layers):
             return self.layers[self.active_layer_index]
         return None
+
+    # ── Dirty tracking ────────────────────────────────────────────────────────
+    def _mark_dirty(self):
+        if not self._dirty:
+            self._set_dirty(True)
+
+    def _set_dirty(self, dirty):
+        self._dirty = dirty
+        title = self.windowTitle()
+        if dirty and not title.startswith("* "):
+            self.setWindowTitle("* " + title)
+        elif not dirty and title.startswith("* "):
+            self.setWindowTitle(title[2:])
+
+    def _reset_history(self):
+        """Fresh document state: new history, hooked for dirty tracking."""
+        self.history = HistoryManager()
+        self.history.on_change = self._mark_dirty
+        self._set_dirty(False)
 
     # ── Config / Recent Files ─────────────────────────────────────────────────
     @staticmethod
@@ -5711,7 +5770,7 @@ class ImageEditor(QMainWindow):
         self._act(selm, "Color Range...", "", self.color_range_select)
         self._act(selm, "Select by Color", "", self.selection_by_color_dialog)
         selm.addSeparator()
-        self._act(selm, "Quick Mask Mode (Q)", "Q", self.toggle_quick_mask)
+        self._act(selm, "Quick Mask Mode", "Q", self.toggle_quick_mask)
         selm.addSeparator()
         # Selection mode submenu
         sm_m = selm.addMenu("Mode")
@@ -5792,7 +5851,7 @@ class ImageEditor(QMainWindow):
         from PyQt5.QtWidgets import QMessageBox
         mb = QMessageBox(self)
         mb.setWindowTitle("UI Scale Changed")
-        mb.setText("UI Scale set to %s.  Restart to apply." % label)
+        mb.setText("UI Scale set to %s. Restart to apply." % label)
 
         mb.setIcon(QMessageBox.Information)
         mb.setStandardButtons(QMessageBox.Ok)
@@ -5825,7 +5884,13 @@ class ImageEditor(QMainWindow):
             self.history_panel.refresh()
 
     # ── Compositing ───────────────────────────────────────────────────────────
-    def get_composite(self):
+    def get_composite(self, apply_channel_visibility=False):
+        """Flatten all layers.
+
+        apply_channel_visibility is a screen-preview aid only -- saves,
+        exports and clipboard copies must pass False (the default) so the
+        Channels panel debugging view is never baked into output files.
+        """
         if not self.layers: return None
         result = Image.new("RGBA", self.layers[0].image.size, (0, 0, 0, 0))
         for layer in self.layers:
@@ -5845,11 +5910,10 @@ class ImageEditor(QMainWindow):
                 result = self._blend_with_effects(result, img, layer)
             else:
                 result = self._blend(result, img, layer.blend_mode)
-        # Apply channel visibility from ChannelsPanel
-        if hasattr(self, 'channels_panel'):
+        # Apply channel visibility from ChannelsPanel (preview only)
+        if apply_channel_visibility and hasattr(self, 'channels_panel'):
             cp = self.channels_panel
             r2, g2, b2, a2 = result.split()
-            blank_l = Image.new("L", result.size, 0)
             blank_rgb = Image.new("L", result.size, 128)  # mid-gray for hidden color ch
             if cp.channel_hidden("R"): r2 = blank_rgb
             if cp.channel_hidden("G"): g2 = blank_rgb
@@ -5991,9 +6055,8 @@ class ImageEditor(QMainWindow):
         s_col   = self._fx_color_at({"color": fx.get("shadow_color",    [0,0,0])})
         arr  = np.array(alpha, dtype=np.float32) / 255.0
         # Simple emboss: convolve with directional kernel
-        import scipy.ndimage as ndi
-        dx = ndi.sobel(arr, axis=1)
-        dy = ndi.sobel(arr, axis=0)
+        dx = np_sobel(arr, axis=1)
+        dy = np_sobel(arr, axis=0)
         # Light direction
         lx, ly = math.cos(angle), math.sin(angle)
         light = np.clip(dx * lx + dy * ly, -1, 1) * depth / 3.0
@@ -6150,9 +6213,11 @@ class ImageEditor(QMainWindow):
             bgc = {"Transparent": (0, 0, 0, 0), "White": (255, 255, 255, 255), "Black": (0, 0, 0, 255)}[bg.currentText()]
             self.layers = [Layer("Background", w, h)]
             self.layers[0].image = Image.new("RGBA", (w, h), bgc)
-            self.active_layer_index = 0; self.history = HistoryManager(); self.file_path = None
+            self.active_layer_index = 0
+            self.file_path = None; self.saved_path = None
             self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
             self.setWindowTitle("SwiftShot Editor — Untitled")
+            self._reset_history()
 
     def _rebuild_recent_menu(self):
         """Rebuild Open Recent submenu from current _recent_files list."""
@@ -6183,39 +6248,20 @@ class ImageEditor(QMainWindow):
             self._rebuild_recent_menu()
             return
         if path.endswith(".swiftshot"):
-            # Load project
-            self.saved_path = None
-            import zipfile, io
-            try:
-                with zipfile.ZipFile(path) as zf:
-                    meta = json.loads(zf.read("project.json"))
-                    if meta.get("magic") != "SWIFTSHOT_PROJECT":
-                        QMessageBox.critical(self, "Error", "Not a valid SwiftShot project"); return
-                    layers = []
-                    for i, lmeta in enumerate(meta["layers"]):
-                        img = Image.open(io.BytesIO(zf.read(f"layer_{i}.png"))).convert("RGBA")
-                        layer = Layer(lmeta["name"], image=img)
-                        layer.visible = lmeta.get("visible", True)
-                        layer.opacity = lmeta.get("opacity", 255)
-                        layer.blend_mode = lmeta.get("blend_mode", "Normal")
-                        layer.locked = lmeta.get("locked", False)
-                        layers.append(layer)
-                self.layers = layers
-                self.active_layer_index = meta.get("active_index", 0)
-                self.history = HistoryManager()
-                self.file_path = None; self.saved_path = path
-                self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
-                self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to open project:\n{e}")
+            # Use the full project loader: the old inline loader here
+            # silently dropped masks, effects and groups, and the next
+            # Ctrl+S baked that loss into the file.
+            self._load_project_from(path)
         else:
             try:
                 img = Image.open(path).convert("RGBA")
                 self.layers = [Layer("Background", image=img)]
-                self.active_layer_index = 0; self.history = HistoryManager(); self.file_path = path
+                self.active_layer_index = 0
+                self.file_path = path; self.saved_path = None
                 self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
                 self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
                 self._add_recent(path)
+                self._reset_history()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to open:\n{e}")
 
@@ -6226,10 +6272,12 @@ class ImageEditor(QMainWindow):
             try:
                 img = Image.open(path).convert("RGBA")
                 self.layers = [Layer("Background", image=img)]
-                self.active_layer_index = 0; self.history = HistoryManager(); self.file_path = path
+                self.active_layer_index = 0
+                self.file_path = path; self.saved_path = None
                 self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
                 self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
                 self._add_recent(path)
+                self._reset_history()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to open:\n{e}")
 
@@ -6267,23 +6315,34 @@ class ImageEditor(QMainWindow):
                     c.save(path)
                 self._add_recent(path)
                 self._status(f"Saved: {path}")
+                self._set_dirty(False)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
     def export_png(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export PNG", "", "PNG (*.png)")
         if path:
-            c = self.get_composite()
-            if c: c.save(path, "PNG"); self._status(f"Exported: {path}")
+            try:
+                c = self.get_composite()
+                if c:
+                    c.save(path, "PNG")
+                    self._status(f"Exported: {path}")
+                    self._set_dirty(False)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
 
     def export_webp(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Export WebP", "", "WebP Lossless (*.webp)")
         if path:
-            c = self.get_composite()
-            if c:
-                c.save(path, "WEBP", lossless=True, quality=100, method=6)
-                self._status(f"Exported: {path}")
+            try:
+                c = self.get_composite()
+                if c:
+                    c.save(path, "WEBP", lossless=True, quality=100, method=6)
+                    self._status(f"Exported: {path}")
+                    self._set_dirty(False)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
 
     # ── Edit Ops ──────────────────────────────────────────────────────────────
     def undo(self):
@@ -6340,11 +6399,27 @@ class ImageEditor(QMainWindow):
     def cut_selection(self): self.copy_selection(); self.delete_selection()
 
     def paste_clipboard(self):
+        pasted = None
         if hasattr(self, "_clipboard") and self._clipboard:
-            self.history.save_state(self.layers, self.active_layer_index, "Paste")
-            nl = Layer("Pasted"); nl.image = self._clipboard.copy()
-            self.layers.append(nl); self.active_layer_index = len(self.layers) - 1
+            pasted = self._clipboard.copy()
+        else:
+            # Fall back to the OS clipboard so Ctrl+V works with images
+            # copied from other applications.
+            qpx = QApplication.clipboard().pixmap()
+            if qpx and not qpx.isNull():
+                pasted = qpixmap_to_pil(qpx)
+        if pasted is None:
+            self._status("Nothing to paste")
+            return
+        if not self.layers:
+            self.layers = [Layer("Background", image=pasted)]
+            self.active_layer_index = 0
             self.update_layer_panel(); self.canvas.update()
+            return
+        self.history.save_state(self.layers, self.active_layer_index, "Paste")
+        nl = Layer("Pasted"); nl.image = pasted
+        self.layers.append(nl); self.active_layer_index = len(self.layers) - 1
+        self.update_layer_panel(); self.canvas.update()
 
     # ── Selection modify ──────────────────────────────────────────────────────
     def selection_expand(self):
@@ -6469,6 +6544,15 @@ class ImageEditor(QMainWindow):
         result = bot.image.copy()
         if top.visible:
             img = top.image.copy()
+            # Respect the top layer's mask, matching what get_composite
+            # renders -- otherwise masked-out pixels reappear after merging.
+            if top.mask is not None and getattr(top, "mask_enabled", True):
+                r, g, b, a = img.split()
+                mask = top.mask
+                if mask.size != img.size:
+                    mask = mask.resize(img.size, Image.LANCZOS)
+                a = ImageChops.multiply(a, mask)
+                img = Image.merge("RGBA", (r, g, b, a))
             if top.opacity < 255:
                 r, g, b, a = img.split()
                 a = a.point(lambda x: int(x * top.opacity / 255))
@@ -6644,24 +6728,16 @@ class ImageEditor(QMainWindow):
         if dlg.exec_() == QDialog.Accepted:
             text = te.toPlainText()
             if not text: return
-            self.history.save_state(self.layers, self.active_layer_index, "Text")
             l = self.active_layer()
             if not l: return
+            self.history.save_state(self.layers, self.active_layer_index, "Text")
             draw = ImageDraw.Draw(l.image)
             sz = fs.value()
             family = fam_combo.currentText()
             # Try to load font with full style
             font = None
             try:
-                from PyQt5.QtGui import QFontDatabase
-                fdb = QFontDatabase()
-                style = ""
-                if bc.isChecked() and ic.isChecked(): style = "Bold Italic"
-                elif bc.isChecked(): style = "Bold"
-                elif ic.isChecked(): style = "Italic"
-                font_path = fdb.applicationFontFamilies(fdb.addApplicationFont(""))
                 # Try Windows/Linux font paths
-                import platform
                 win_dirs = [
                     os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts"),
                     os.path.expanduser("~/AppData/Local/Microsoft/Windows/Fonts"),
@@ -6825,15 +6901,13 @@ class ImageEditor(QMainWindow):
             amt = v / 100.0
             def apply(img):
                 arr = np.array(img).astype(np.float64)
-                for py in range(arr.shape[0]):
-                    for px in range(arr.shape[1]):
-                        rv, gv, bv = arr[py, px, :3]
-                        mx, mn = max(rv, gv, bv), min(rv, gv, bv)
-                        sat = 0 if mx == 0 else (mx - mn) / mx
-                        boost = amt * (1 - sat) * (1 if sat < 0.5 else 0.5)
-                        avg = (rv + gv + bv) / 3
-                        for c in range(3):
-                            arr[py, px, c] = max(0, min(255, arr[py, px, c] + (arr[py, px, c] - avg) * boost))
+                rgb = arr[:, :, :3]
+                mx = rgb.max(axis=2)
+                mn = rgb.min(axis=2)
+                sat = np.where(mx == 0, 0.0, (mx - mn) / np.maximum(mx, 1e-9))
+                boost = amt * (1 - sat) * np.where(sat < 0.5, 1.0, 0.5)
+                avg = rgb.mean(axis=2)
+                arr[:, :, :3] = rgb + (rgb - avg[:, :, None]) * boost[:, :, None]
                 return Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
             self._apply_to_active(apply, "Vibrance")
 
@@ -6899,11 +6973,27 @@ class ImageEditor(QMainWindow):
         if ok: self._apply_to_active(lambda img: img.filter(ImageFilter.BoxBlur(v)), "Box Blur")
 
     def motion_blur(self):
+        # Pillow's ImageFilter.Kernel only supports 3x3 / 5x5, which made
+        # this fail for 98 of the 100 offered sizes -- average shifted
+        # copies with numpy instead (horizontal motion blur).
         v, ok = QInputDialog.getInt(self, "Motion Blur", "Size:", 10, 1, 100)
         if ok:
-            k = [0] * (v * v); c = v // 2
-            for i in range(v): k[c * v + i] = 1
-            self._apply_to_active(lambda img: img.filter(ImageFilter.Kernel((v, v), k, scale=v)), "Motion Blur")
+            def apply(img):
+                arr = np.array(img).astype(np.float32)
+                acc = np.zeros_like(arr)
+                first = -(v // 2)
+                for i in range(v):
+                    shift = first + i
+                    shifted = np.roll(arr, shift, axis=1)
+                    # Clamp the wrap-around: repeat the edge column instead
+                    if shift > 0:
+                        shifted[:, :shift] = arr[:, :1]
+                    elif shift < 0:
+                        shifted[:, shift:] = arr[:, -1:]
+                    acc += shifted
+                return Image.fromarray(
+                    (acc / v).clip(0, 255).astype(np.uint8), "RGBA")
+            self._apply_to_active(apply, "Motion Blur")
 
     def sharpen(self):
         self._apply_to_active(lambda img: img.filter(ImageFilter.SHARPEN), "Sharpen")
@@ -6989,12 +7079,12 @@ class ImageEditor(QMainWindow):
 
     # ── View ──────────────────────────────────────────────────────────────────
     def _zoom(self, f):
-        self.canvas.zoom = max(0.05, min(50.0, self.canvas.zoom * f))
+        self.canvas.zoom = max(0.05, min(32.0, self.canvas.zoom * f))
         self.canvas.zoom_changed.emit(self.canvas.zoom, self.canvas.pan_offset.x(), self.canvas.pan_offset.y())
         self.canvas.update()
 
     def _set_zoom(self, v):
-        self.canvas.zoom = max(0.05, min(50.0, v))
+        self.canvas.zoom = max(0.05, min(32.0, v))
         self.canvas.zoom_changed.emit(self.canvas.zoom, self.canvas.pan_offset.x(), self.canvas.pan_offset.y())
         self.canvas.update()
 
@@ -7534,9 +7624,11 @@ class ImageEditor(QMainWindow):
     def load_pixmap(self, pixmap):
         pil_img = qpixmap_to_pil(pixmap)
         self.layers = [Layer("Background", image=pil_img)]
-        self.active_layer_index = 0; self.history = HistoryManager()
+        self.active_layer_index = 0
+        self.file_path = None; self.saved_path = None
         self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
         self.setWindowTitle(f"SwiftShot Editor — {pil_img.width}×{pil_img.height}")
+        self._reset_history()
 
     def open_from_clipboard(self):
         px = QApplication.clipboard().pixmap()
@@ -7596,13 +7688,17 @@ class ImageEditor(QMainWindow):
                     meta["layers"].append(ldata)
                 zf.writestr("project.json", json.dumps(meta, indent=2))
             self.saved_path = path; self._status(f"Project saved: {path}")
+            self._set_dirty(False)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save project:\n{e}")
 
     def open_project(self):
-        import zipfile, io
         path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "SwiftShot Project (*.swiftshot)")
         if not path: return
+        self._load_project_from(path)
+
+    def _load_project_from(self, path):
+        import zipfile, io
         try:
             with zipfile.ZipFile(path) as zf:
                 meta = json.loads(zf.read("project.json"))
@@ -7642,11 +7738,12 @@ class ImageEditor(QMainWindow):
                         layers.append(layer)
             self.layers = layers
             self.active_layer_index = meta.get("active_index", 0)
-            self.history = HistoryManager()
             self.file_path = None          # not an image file
             self.saved_path = path
             self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
             self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
+            self._add_recent(path)
+            self._reset_history()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open project:\n{e}")
 
@@ -7688,6 +7785,9 @@ class ImageEditor(QMainWindow):
                     self._status("OCR: no text detected")
         except ImportError:
             self._status("OCR module not available")
+        except Exception as e:
+            QMessageBox.warning(
+                self, "OCR Error", f"Could not extract text:\n\n{e}")
 
     # ── SwiftShot App Integration ─────────────────────────────────────────────
 
@@ -7709,6 +7809,26 @@ class ImageEditor(QMainWindow):
             self._status(f"Pin failed: {e}")
 
     def closeEvent(self, event):
+        if self._dirty:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "This image has unsaved changes.\n\nSave before closing?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if reply == QMessageBox.Save:
+                self.save_image()
+                if self._dirty:
+                    # Save was cancelled or failed -- keep the editor open.
+                    event.ignore()
+                    return
+        try:
+            self.canvas.march_timer.stop()
+        except Exception:
+            pass
         if self.swiftshot_app:
             try:
                 self.swiftshot_app.editor_closed(self)
@@ -7724,24 +7844,45 @@ class ImageEditor(QMainWindow):
 # ── Crash handler ─────────────────────────────────────────────────────────────
 import traceback
 
+_reported_crash_sites = set()
+
 def _exception_handler(exc_type, exc_value, exc_tb):
+    """Log unhandled exceptions and keep running.
+
+    This must NOT terminate the process: a single bad slot would otherwise
+    take down the tray app and destroy every open editor's unsaved work
+    (PyQt5 aborts on unhandled slot exceptions unless a hook is installed).
+    """
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
     msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    crash_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash.log")
+    log.critical(f"Unhandled exception:\n{msg}")
+    crash_dir = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")), "SwiftShot")
+    crash_path = os.path.join(crash_dir, "crash.log")
     try:
-        with open(crash_path, "w") as f:
-            f.write(msg)
+        os.makedirs(crash_dir, exist_ok=True)
+        with open(crash_path, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
     except Exception:
         pass
+    # Show the dialog once per crash site so a repainting error loop
+    # cannot spam modal dialogs.
+    site = (exc_type.__name__, exc_tb.tb_lineno if exc_tb else 0)
+    if site in _reported_crash_sites:
+        return
+    _reported_crash_sites.add(site)
     try:
         app = QApplication.instance()
         if app:
             from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.critical(None, "SwiftShot — Crash",
+            QMessageBox.critical(None, "SwiftShot — Error",
                 f"An unexpected error occurred:\n\n{str(exc_value)}\n\n"
-                f"Full log saved to:\n{crash_path}")
+                f"Details were saved to:\n{crash_path}\n\n"
+                "Your work is still open — save it now if needed.")
     except Exception:
         print(msg)
-    sys.exit(1)
 
 sys.excepthook = _exception_handler
 
@@ -7756,7 +7897,7 @@ def main():
         pass
     app = QApplication(sys.argv)
     app.setApplicationName("SwiftShot Editor")
-    app.setApplicationVersion("2.5.2")
+    app.setApplicationVersion(getattr(config, "APP_VERSION", "0.0.0") if config else "0.0.0")
     app.setOrganizationName("SysAdminDoc")
     app.setStyle("Fusion")
 
