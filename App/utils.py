@@ -133,20 +133,60 @@ def apply_beautification_preset(pixmap, preset_name):
     return pil_to_qpixmap(canvas)
 
 
+def apply_freehand_mask(pixmap, points, bounding_rect):
+    """Mask a cropped pixmap to a freehand polygon (transparent outside).
+
+    points are in the same coordinate space as bounding_rect (the overlay),
+    pixmap is the crop of bounding_rect.
+    """
+    from PyQt5.QtGui import QPainter, QPainterPath, QPolygonF, QPixmap
+    from PyQt5.QtCore import QPointF, Qt
+
+    if len(points) < 3:
+        return pixmap
+    result = QPixmap(pixmap.size())
+    result.fill(Qt.transparent)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.Antialiasing)
+    polygon = QPolygonF([
+        QPointF(p.x() - bounding_rect.x(), p.y() - bounding_rect.y())
+        for p in points
+    ])
+    path = QPainterPath()
+    path.addPolygon(polygon)
+    path.closeSubpath()
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return result
+
+
 def save_pixmap(pixmap, filepath, file_format, jpeg_quality=90):
     """Save a QPixmap with SwiftShot output-format semantics."""
     fmt = file_format.lower()
     if fmt == "jpg":
         fmt = "jpeg"
 
-    if fmt == "webp":
-        image = qpixmap_to_pil(pixmap)
-        image.save(filepath, "WEBP", lossless=True, quality=100, method=6)
-        return True
+    try:
+        if fmt == "webp":
+            image = qpixmap_to_pil(pixmap)
+            image.save(filepath, "WEBP", lossless=True, quality=100, method=6)
+            return True
 
-    qt_format = "JPEG" if fmt == "jpeg" else fmt.upper()
-    quality = int(jpeg_quality) if qt_format == "JPEG" else -1
-    return pixmap.save(filepath, qt_format, quality)
+        if fmt == "gif":
+            # Qt has no GIF encoder -- route through Pillow.
+            from PIL import Image
+            image = qpixmap_to_pil(pixmap)
+            image = image.convert("RGB").convert("P", palette=Image.ADAPTIVE)
+            image.save(filepath, "GIF")
+            return True
+
+        qt_format = "JPEG" if fmt == "jpeg" else fmt.upper()
+        quality = int(jpeg_quality) if qt_format == "JPEG" else -1
+        return pixmap.save(filepath, qt_format, quality)
+    except Exception as e:
+        log.error(f"save_pixmap failed for {filepath} ({fmt}): {e}")
+        return False
 
 
 def color_to_hex(r, g, b):
@@ -228,7 +268,6 @@ def set_startup_registry(enable=True):
             else:
                 cmd = f'"{sys.executable}" "{__file__}"'
                 # Try to find main.py relative to this file
-                import os
                 main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'main.py')
                 if os.path.exists(main_py):
                     cmd = f'"{sys.executable}" "{main_py}"'

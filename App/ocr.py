@@ -152,17 +152,17 @@ def _ocr_windows(image_path):
         except OSError:
             pass
 
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
-
     stderr = result.stderr.strip()
     if 'OCR_ERROR' in stderr:
         raise RuntimeError(stderr.split('OCR_ERROR:')[-1].strip())
 
-    if result.stdout.strip():
+    if result.returncode == 0:
+        # Empty output with a clean exit means the engine ran and simply
+        # found no text -- that is a valid result, not an error.
         return result.stdout.strip()
 
-    raise RuntimeError(f"Windows OCR returned no text. stderr: {stderr}")
+    raise RuntimeError(
+        f"Windows OCR failed (exit code {result.returncode}). stderr: {stderr}")
 
 
 def _ocr_tesseract(image_path):

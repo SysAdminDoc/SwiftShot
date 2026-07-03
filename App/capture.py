@@ -59,10 +59,8 @@ class CaptureManager:
         if pixmap and config.CAPTURE_MOUSE_POINTER:
             pixmap = CaptureManager._draw_cursor(pixmap)
 
-        if pixmap and config.PLAY_CAMERA_SOUND:
-            from utils import play_camera_sound
-            play_camera_sound()
-
+        # Camera sound is played by the app when a capture completes,
+        # not here: this method also grabs overlay backdrops.
         return pixmap
 
     @staticmethod
@@ -99,13 +97,6 @@ class CaptureManager:
 
             # Draw cursor icon onto pixmap
             result = pixmap.copy()
-            hdc_pixmap = None
-
-            # Use QPainter approach: draw a standard cursor pixmap
-            cursor_pixmap = QPixmap(32, 32)
-            cursor_pixmap.fill(Qt.transparent)
-
-            # Draw the actual cursor icon at the screen position
             painter = QPainter(result)
             cursor_x = ci.ptScreenPos.x - geo.x()
             cursor_y = ci.ptScreenPos.y - geo.y()
@@ -255,16 +246,15 @@ class CaptureManager:
 
     @staticmethod
     def capture_monitor(monitor_index=0):
-        """Capture a specific monitor."""
+        """Capture a specific monitor.
+
+        Grabs via the monitor's own QScreen: grabbing another screen's
+        area through the primary screen with logical coordinates returns
+        the wrong region under mixed/high-DPI scaling.
+        """
         screens = QApplication.screens()
-        if monitor_index < len(screens):
-            screen = screens[monitor_index]
-            geometry = screen.geometry()
-            primary = QApplication.primaryScreen()
-            return primary.grabWindow(
-                0, geometry.x(), geometry.y(),
-                geometry.width(), geometry.height()
-            )
+        if 0 <= monitor_index < len(screens):
+            return screens[monitor_index].grabWindow(0)
         return CaptureManager.capture_fullscreen()
 
     @staticmethod

@@ -20,6 +20,9 @@ class RegionSelector(QWidget):
     """Full-screen overlay for region selection."""
 
     region_selected = pyqtSignal(QRect)
+    # Emits (points, bounding_rect) so the capture can be masked to the
+    # drawn shape instead of silently degrading to a rectangle.
+    freehand_selected = pyqtSignal(object)
     switch_to_window = pyqtSignal()
     cancelled = pyqtSignal()
 
@@ -422,7 +425,12 @@ class RegionSelector(QWidget):
                 bounding = path.boundingRect().toAlignedRect()
                 if bounding.width() > 2 and bounding.height() > 2:
                     self.hide()
-                    QTimer.singleShot(50, lambda r=QRect(bounding): self.region_selected.emit(r))
+                    points = [QPoint(p) for p in self.freehand_points]
+                    QTimer.singleShot(
+                        50,
+                        lambda r=QRect(bounding), pts=points:
+                            self.freehand_selected.emit((pts, r))
+                    )
                 else:
                     self.hide()
                     QTimer.singleShot(50, lambda: self.cancelled.emit())
