@@ -231,6 +231,49 @@ def test_expand_canvas_grows_groups_and_selection_mask(qapp):
     assert canvas.selection_mask.size == (new_w, new_h)  # selection resized
 
 
+def test_soft_brush_stamp_has_radial_falloff(qapp):
+    """Vectorized soft-brush stamp must keep the radial alpha falloff:
+    opaque at the centre, transparent at the corner."""
+    canvas = _make_canvas()
+    canvas.editor.brush_hardness = 0          # fully soft
+    stamp = canvas._make_brush_stamp(20, (255, 0, 0, 255))
+
+    assert stamp.getpixel((10, 10))[3] == 255   # centre opaque
+    assert stamp.getpixel((0, 0))[3] == 0       # corner (outside disc) clear
+    mid = stamp.getpixel((14, 10))[3]
+    assert 0 < mid < 255                        # falloff in between
+
+
+def test_retouch_dodge_brightens_center(qapp):
+    """Vectorized dodge must still brighten pixels under the brush."""
+    from editor import CanvasWidget, Layer
+    from PIL import ImageDraw
+
+    layer = Layer("L", 40, 40)
+    ImageDraw.Draw(layer.image).rectangle((0, 0, 39, 39), fill=(100, 100, 100, 255))
+
+    class Ed:
+        current_tool = "dodge"
+        brush_size = 20
+        retouch_exposure = 100
+
+        def active_layer(self_inner):
+            return layer
+
+    ed = Ed()
+    ed.layers = [layer]
+    ed.active_layer_index = 0
+    canvas = CanvasWidget(ed)
+    canvas.last_pos = None
+
+    before = layer.image.getpixel((20, 20))[0]
+    canvas._draw_retouch("dodge", 20, 20)
+    after = layer.image.getpixel((20, 20))[0]
+    assert after > before
+    # A pixel far outside the brush disc is untouched.
+    assert layer.image.getpixel((0, 0))[0] == 100
+
+
 def test_stamp_over_out_of_bounds_is_noop(qapp):
     from editor import CanvasWidget
     from PIL import Image

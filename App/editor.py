@@ -1690,20 +1690,20 @@ class CanvasWidget(QWidget):
             # Hard brush: simple filled ellipse
             ImageDraw.Draw(stamp).ellipse((0, 0, d - 1, d - 1), fill=color)
         else:
-            # Soft brush: radial alpha gradient
+            # Soft brush: radial alpha gradient (vectorized — the old nested
+            # per-pixel Python loop lagged noticeably at large brush sizes).
+            c = d / 2.0
+            yy, xx = np.mgrid[0:d, 0:d].astype(np.float64)
+            dist = np.sqrt((xx - c) ** 2 + (yy - c) ** 2) / c
+            alpha = np.zeros((d, d), dtype=np.float64)
+            core = dist <= hardness
+            falloff = (dist > hardness) & (dist < 1.0)
+            t = (dist - hardness) / max(1e-6, 1.0 - hardness)
+            alpha[falloff] = 0.5 * (1.0 + np.cos(np.pi * t[falloff]))
+            alpha[core] = 1.0
             arr = np.zeros((d, d, 4), dtype=np.float64)
-            cx, cy = d / 2.0, d / 2.0
-            for py in range(d):
-                for px in range(d):
-                    dist = math.sqrt((px - cx) ** 2 + (py - cy) ** 2) / (d / 2.0)
-                    if dist >= 1.0: continue
-                    # Alpha falloff: hard_edge → 1, soft_edge → cosine falloff
-                    if dist <= hardness:
-                        alpha = 1.0
-                    else:
-                        t = (dist - hardness) / (1.0 - hardness)
-                        alpha = 0.5 * (1.0 + math.cos(math.pi * t))
-                    arr[py, px] = [color[0], color[1], color[2], color[3] * alpha]
+            arr[..., 0], arr[..., 1], arr[..., 2] = color[0], color[1], color[2]
+            arr[..., 3] = color[3] * alpha
             stamp = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
         return stamp
 
@@ -1894,21 +1894,17 @@ class CanvasWidget(QWidget):
         if x - r < 0 or y - r < 0 or x + r >= w or y + r >= h: return
         arr = np.array(layer.image).astype(np.float64)
         region = arr[y - r:y + r, x - r:x + r].copy()
-        mask_ring = np.zeros((2 * r, 2 * r), dtype=bool)
-        mask_inner = np.zeros((2 * r, 2 * r), dtype=bool)
-        for py in range(2 * r):
-            for px in range(2 * r):
-                d = math.sqrt((px - r) ** 2 + (py - r) ** 2)
-                if d < r * 0.6: mask_inner[py, px] = True
-                elif d < r: mask_ring[py, px] = True
+        size = 2 * r
+        # Vectorized ring sampling + inner blend (was a double per-pixel loop).
+        yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+        d = np.sqrt((xx - r) ** 2 + (yy - r) ** 2)
+        mask_inner = d < r * 0.6
+        mask_ring = (d >= r * 0.6) & (d < r)
         if mask_ring.sum() > 0:
             avg = region[mask_ring].mean(axis=0)
-            for py in range(2 * r):
-                for px in range(2 * r):
-                    if mask_inner[py, px]:
-                        d = math.sqrt((px - r) ** 2 + (py - r) ** 2)
-                        blend = d / (r * 0.6)
-                        region[py, px] = region[py, px] * blend + avg * (1 - blend)
+            blend = np.clip(d / (r * 0.6), 0.0, 1.0)[..., None]
+            blended = region * blend + avg * (1.0 - blend)
+            region[mask_inner] = blended[mask_inner]
             arr[y - r:y + r, x - r:x + r] = region
             layer.image = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
 
@@ -1923,39 +1919,29 @@ class CanvasWidget(QWidget):
         if x1 <= x0 or y1 <= y0: return
         arr = np.array(layer.image).astype(np.float64)
         region = arr[y0:y1, x0:x1]
-        for py in range(region.shape[0]):
-            for px in range(region.shape[1]):
-                d = math.sqrt((px + x0 - x) ** 2 + (py + y0 - y) ** 2)
-                if d > r: continue
-                falloff = 1 - d / r; strength = exposure * falloff * 0.2
-                if tool == "dodge":
-                    for ch in range(3):
-                        region[py, px, ch] = min(255, region[py, px, ch] + (255 - region[py, px, ch]) * strength)
-                elif tool == "burn":
-                    for ch in range(3):
-                        region[py, px, ch] = max(0, region[py, px, ch] * (1 - strength))
-                elif tool == "sponge":
-                    # Saturate (increase color distance from gray) or desaturate
-                    # Pressing Alt key desaturates; normal saturates
-                    gray = 0.299 * region[py, px, 0] + 0.587 * region[py, px, 1] + 0.114 * region[py, px, 2]
-                    saturate = True  # could tie to modifier key
-                    for ch in range(3):
-                        if saturate:
-                            region[py, px, ch] = max(0, min(255, region[py, px, ch] + (region[py, px, ch] - gray) * strength * 1.5))
-                        else:
-                            region[py, px, ch] = max(0, min(255, region[py, px, ch] + (gray - region[py, px, ch]) * strength * 1.5))
-                elif tool == "smudge":
-                    # Smear toward drag direction
-                    b = min(0.9, strength * 0.7)
-                    if self.last_pos is not None:
-                        ddx = int(x - self.last_pos.x())
-                        ddy = int(y - self.last_pos.y())
-                    else:
-                        ddx, ddy = 0, 0
-                    spx = max(0, min(region.shape[1] - 1, px - ddx))
-                    spy = max(0, min(region.shape[0] - 1, py - ddy))
-                    for ch in range(3):
-                        region[py, px, ch] = region[py, px, ch] * (1 - b) + region[spy, spx, ch] * b
+        hh, ww = region.shape[:2]
+        # Vectorized falloff over the brush disc (was a double per-pixel loop).
+        yy, xx = np.mgrid[0:hh, 0:ww].astype(np.float64)
+        d = np.sqrt((xx + x0 - x) ** 2 + (yy + y0 - y) ** 2)
+        falloff = np.where(d <= r, 1.0 - d / r, 0.0)
+        strength = (exposure * falloff * 0.2)[..., None]   # broadcast over RGB
+        rgb = region[..., :3]
+        if tool == "dodge":
+            rgb[:] = np.minimum(255.0, rgb + (255.0 - rgb) * strength)
+        elif tool == "burn":
+            rgb[:] = np.maximum(0.0, rgb * (1.0 - strength))
+        elif tool == "sponge":
+            gray = (0.299 * region[..., 0] + 0.587 * region[..., 1]
+                    + 0.114 * region[..., 2])[..., None]
+            rgb[:] = np.clip(rgb + (rgb - gray) * strength * 1.5, 0.0, 255.0)
+        elif tool == "smudge":
+            b = np.minimum(0.9, exposure * falloff * 0.2 * 0.7)[..., None]
+            ddx = int(x - self.last_pos.x()) if self.last_pos is not None else 0
+            ddy = int(y - self.last_pos.y()) if self.last_pos is not None else 0
+            sx = np.clip(xx.astype(np.int64) - ddx, 0, ww - 1)
+            sy = np.clip(yy.astype(np.int64) - ddy, 0, hh - 1)
+            sampled = rgb[sy, sx]
+            rgb[:] = rgb * (1.0 - b) + sampled * b
         arr[y0:y1, x0:x1] = region
         layer.image = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
 
@@ -2793,44 +2779,50 @@ class CanvasWidget(QWidget):
         if len(ys) == 0: return
         self.editor.history.save_state(
             self.editor.layers, self.editor.active_layer_index, "Content-Aware Fill")
-        # Build list of valid source patches (outside mask with enough margin)
-        margin = patch_sz // 2
-        valid_src = []
-        step = max(1, patch_sz // 3)
-        for sy in range(margin, h - margin, step):
-            for sx in range(margin, w - margin, step):
-                # Check that the entire patch is outside the mask
-                patch_mask = mask[sy-margin:sy+margin+1, sx-margin:sx+margin+1]
-                if patch_mask.max() == 0:
-                    valid_src.append((sy, sx))
-        if not valid_src:
-            # Fallback: sample average color from border of selection
-            border_ys, border_xs = np.where((mask == 0))
-            if len(border_ys) > 0:
-                sample = img[border_ys, border_xs, :3].mean(axis=0).astype(np.uint8)
-                for y, x in zip(ys, xs):
-                    img[y, x, :3] = sample
+        # This is an unavoidably heavy per-pixel search — show a busy cursor so
+        # the UI doesn't just appear frozen for the second-plus it can take.
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Build list of valid source patches (outside mask with enough margin)
+            margin = patch_sz // 2
+            valid_src = []
+            step = max(1, patch_sz // 3)
+            for sy in range(margin, h - margin, step):
+                for sx in range(margin, w - margin, step):
+                    # Check that the entire patch is outside the mask
+                    patch_mask = mask[sy-margin:sy+margin+1, sx-margin:sx+margin+1]
+                    if patch_mask.max() == 0:
+                        valid_src.append((sy, sx))
+            if not valid_src:
+                # Fallback: sample average color from border of selection
+                border_ys, border_xs = np.where((mask == 0))
+                if len(border_ys) > 0:
+                    sample = img[border_ys, border_xs, :3].mean(axis=0).astype(np.uint8)
+                    for y, x in zip(ys, xs):
+                        img[y, x, :3] = sample
+                layer.image = Image.fromarray(img, "RGBA")
+                self.update(); return
+            # For each hole pixel, find best-matching source patch and copy center
+            rng = np.random.default_rng(42)
+            for y, x in zip(ys, xs):
+                # Sample a few candidates and pick the closest by color
+                candidates = [valid_src[i] for i in rng.integers(0, len(valid_src), size=min(20, len(valid_src)))]
+                best_diff = float('inf')
+                best_src = candidates[0]
+                for sy, sx in candidates:
+                    src_patch = img[sy-1:sy+2, sx-1:sx+2, :3].astype(np.float32)
+                    tgt_patch = img[y-1:y+2, x-1:x+2, :3].astype(np.float32) if (
+                        y > 0 and y < h-1 and x > 0 and x < w-1) else src_patch
+                    diff = float(np.mean(np.abs(src_patch - tgt_patch)))
+                    if diff < best_diff:
+                        best_diff = diff; best_src = (sy, sx)
+                img[y, x, :3] = img[best_src[0], best_src[1], :3]
             layer.image = Image.fromarray(img, "RGBA")
-            self.update(); return
-        # For each hole pixel, find best-matching source patch and copy center
-        rng = np.random.default_rng(42)
-        for y, x in zip(ys, xs):
-            # Sample a few candidates and pick the closest by color
-            candidates = [valid_src[i] for i in rng.integers(0, len(valid_src), size=min(20, len(valid_src)))]
-            best_diff = float('inf')
-            best_src = candidates[0]
-            for sy, sx in candidates:
-                src_patch = img[sy-1:sy+2, sx-1:sx+2, :3].astype(np.float32)
-                tgt_patch = img[y-1:y+2, x-1:x+2, :3].astype(np.float32) if (
-                    y > 0 and y < h-1 and x > 0 and x < w-1) else src_patch
-                diff = float(np.mean(np.abs(src_patch - tgt_patch)))
-                if diff < best_diff:
-                    best_diff = diff; best_src = (sy, sx)
-            img[y, x, :3] = img[best_src[0], best_src[1], :3]
-        layer.image = Image.fromarray(img, "RGBA")
-        self.set_selection_mask(None)
-        self.update()
-        self.editor._status("Content-Aware Fill applied")
+            self.set_selection_mask(None)
+            self.update()
+            self.editor._status("Content-Aware Fill applied")
+        finally:
+            QApplication.restoreOverrideCursor()
 
     # ── Off-canvas painting expansion ─────────────────────────────────────────
 
