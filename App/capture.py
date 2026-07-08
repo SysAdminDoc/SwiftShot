@@ -244,8 +244,11 @@ class CaptureManager:
         hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
         old_bmp = gdi32.SelectObject(hdc_mem, hbmp)
 
+        # CAPTUREBLT includes layered/transparent windows (tooltips, some
+        # overlays) that plain SRCCOPY misses; without it they capture black.
         SRCCOPY = 0x00CC0020
-        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY)
+        CAPTUREBLT = 0x40000000
+        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY | CAPTUREBLT)
 
         bmi = BITMAPINFOHEADER()
         bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -257,12 +260,15 @@ class CaptureManager:
 
         buf_size = w * h * 4
         buf = ctypes.create_string_buffer(buf_size)
+        # GetDIBits requires the bitmap NOT to be selected into a DC.
+        gdi32.SelectObject(hdc_mem, old_bmp)
         gdi32.GetDIBits(hdc_mem, hbmp, 0, h, buf, ctypes.byref(bmi), 0)
 
-        img = QImage(buf, w, h, w * 4, QImage.Format_ARGB32)
+        # Screen blits carry undefined alpha bytes (layered windows can leave
+        # alpha < 255); RGB32 ignores them instead of saving transparent holes.
+        img = QImage(buf, w, h, w * 4, QImage.Format_RGB32)
         pixmap = QPixmap.fromImage(img.copy())
 
-        gdi32.SelectObject(hdc_mem, old_bmp)
         gdi32.DeleteObject(hbmp)
         gdi32.DeleteDC(hdc_mem)
         user32.ReleaseDC(None, hdc_screen)
@@ -276,7 +282,8 @@ class CaptureManager:
             try:
                 return CaptureManager._capture_window_win32()
             except Exception:
-                pass
+                log.warning("Win32 window capture failed; falling back to full-screen grab",
+                            exc_info=True)
         screen = QApplication.primaryScreen()
         if screen is None:
             return None

@@ -35,6 +35,8 @@ VK_RMENU = 0xA5
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12
+VK_LWIN = 0x5B
+VK_RWIN = 0x5C
 
 # Modifier bit flags (our own, not Windows MOD_ flags)
 MOD_NONE = 0
@@ -213,11 +215,18 @@ class HotkeyManager:
                 if vk not in (VK_SHIFT, VK_LSHIFT, VK_RSHIFT,
                               VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
                               VK_MENU, VK_LMENU, VK_RMENU):
-                    mods = self._get_active_modifiers()
-                    combo = self._bindings.get((mods, vk))
-                    if combo and self._bridge:
-                        self._bridge.fired.emit(combo)
-                        return 1  # Swallow the key
+                    gas = user32.GetAsyncKeyState
+                    # Bindings can never include the Win key, so a held Win
+                    # key means a DIFFERENT shortcut (e.g. Win+PrtSc =
+                    # Windows' own save-to-file) — pass it through instead
+                    # of hijacking it as a bare-key match.
+                    win_held = (gas(VK_LWIN) & 0x8000) or (gas(VK_RWIN) & 0x8000)
+                    if not win_held:
+                        mods = self._get_active_modifiers()
+                        combo = self._bindings.get((mods, vk))
+                        if combo and self._bridge:
+                            self._bridge.fired.emit(combo)
+                            return 1  # Swallow the key
 
             return user32.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
@@ -275,12 +284,25 @@ class HotkeyManager:
         can be created immediately afterwards (used for live re-binding)."""
         self._running = False
         if self._thread and self._thread.is_alive():
-            try:
-                # Post WM_QUIT to break the message loop
-                ctypes.windll.user32.PostThreadMessageW(
-                    self._thread.ident, 0x0012, 0, 0
-                )
-            except Exception:
-                pass
+            # PostThreadMessageW fails until the thread owns a message queue
+            # (window between Thread.start() and the first GetMessage call).
+            # Retry briefly — a WM_QUIT that never lands leaves the old hook
+            # alive alongside the new one after a settings re-bind.
+            import time
+            posted = False
+            for _ in range(20):
+                try:
+                    if ctypes.windll.user32.PostThreadMessageW(
+                            self._thread.ident, 0x0012, 0, 0):
+                        posted = True
+                        break
+                except Exception:
+                    break
+                if not self._thread.is_alive():
+                    break
+                time.sleep(0.05)
             self._thread.join(timeout=1.0)
+            if self._thread.is_alive():
+                log.warning("Hotkey hook thread did not stop within 1s%s",
+                            "" if posted else " (WM_QUIT could not be posted)")
         self._thread = None

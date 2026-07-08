@@ -179,6 +179,8 @@ class WindowPicker(QWidget):
                 return True
             if not self.user32.IsWindowVisible(hwnd):
                 return True
+            if self._is_cloaked(hwnd):
+                return True
             title_len = self.user32.GetWindowTextLengthW(hwnd)
             if title_len == 0:
                 return True
@@ -203,6 +205,16 @@ class WindowPicker(QWidget):
             self.user32.GetWindowRect(hwnd, byref(rect))
         return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
 
+    def _is_cloaked(self, hwnd):
+        """Windows on other virtual desktops / suspended UWP frames report
+        IsWindowVisible but are DWM-cloaked — selecting one captures whatever
+        pixels happen to be under its rect."""
+        DWMWA_CLOAKED = 14
+        cloaked = wintypes.DWORD(0)
+        r = self.dwmapi.DwmGetWindowAttribute(
+            hwnd, DWMWA_CLOAKED, byref(cloaked), ctypes.sizeof(cloaked))
+        return r == 0 and cloaked.value != 0
+
     def _to_display(self, screen_rect):
         return QRect(
             screen_rect.x() - self._desktop_offset.x(),
@@ -213,15 +225,21 @@ class WindowPicker(QWidget):
     def _enum_direct_children(self, parent_hwnd):
         if parent_hwnd in self._child_cache:
             return self._child_cache[parent_hwnd]
-        GW_CHILD, GW_HWNDNEXT = 5, 2
+        # EnumChildWindows snapshots the child list — a manual GW_CHILD/
+        # GW_HWNDNEXT walk over a foreign process's windows can loop forever
+        # or touch destroyed handles if it mutates children mid-walk.
         children = []
-        child = self.user32.GetWindow(parent_hwnd, GW_CHILD)
-        while child:
-            if self.user32.IsWindowVisible(child):
-                rect = self._get_win_rect(child)
+
+        def child_cb(hwnd, lparam):
+            if (self.user32.GetParent(hwnd) == parent_hwnd
+                    and self.user32.IsWindowVisible(hwnd)):
+                rect = self._get_win_rect(hwnd)
                 if rect.width() > 2 and rect.height() > 2:
-                    children.append((child, rect))
-            child = self.user32.GetWindow(child, GW_HWNDNEXT)
+                    children.append((hwnd, rect))
+            return True
+
+        proc = WNDENUMPROC(child_cb)
+        self.user32.EnumChildWindows(parent_hwnd, proc, 0)
         self._child_cache[parent_hwnd] = children
         return children
 

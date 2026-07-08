@@ -110,6 +110,13 @@ class RegionSelector(QWidget):
                 length = user32.GetWindowTextLengthW(hwnd)
                 if length == 0:
                     return True
+                # Skip DWM-cloaked windows (other virtual desktops, suspended
+                # UWP) — they'd contribute snap edges at invisible positions.
+                cloaked = wintypes.DWORD(0)
+                if dwmapi.DwmGetWindowAttribute(
+                        hwnd, 14, ctypes.byref(cloaked),
+                        ctypes.sizeof(cloaked)) == 0 and cloaked.value:
+                    return True
 
                 rect = wintypes.RECT()
                 DWMWA = 9

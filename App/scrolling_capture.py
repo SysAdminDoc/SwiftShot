@@ -69,6 +69,38 @@ class ScrollingCaptureDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
+    def reject(self):
+        # Cancel/Escape must stop the capture loop — a pending singleShot
+        # kept _capture_frame firing (and auto-scrolling the user's window)
+        # long after the dialog was dismissed.
+        self._capturing = False
+        super().reject()
+
+    def closeEvent(self, event):
+        self._capturing = False
+        super().closeEvent(event)
+
+    def _dodge_target(self):
+        """Move this always-on-top dialog out of the capture rect — otherwise
+        it gets grabbed into every stitched frame. Hides as a last resort."""
+        if not self.frameGeometry().intersects(self._target_rect):
+            return
+        screen = QApplication.screenAt(self._target_rect.center())
+        if screen:
+            geo = screen.availableGeometry()
+            fg = self.frameGeometry()
+            corners = [
+                (geo.left(), geo.top()),
+                (geo.right() - fg.width(), geo.top()),
+                (geo.left(), geo.bottom() - fg.height()),
+                (geo.right() - fg.width(), geo.bottom() - fg.height()),
+            ]
+            for x, y in corners:
+                if not QRect(x, y, fg.width(), fg.height()).intersects(self._target_rect):
+                    self.move(x, y)
+                    return
+        self.hide()
+
     def _begin_capture(self):
         if sys.platform != 'win32':
             self.status_label.setText("Scrolling capture is only supported on Windows.")
@@ -129,6 +161,7 @@ class ScrollingCaptureDialog(QDialog):
         self._capturing = True
         self._frames = []
         self._scroll_count = 0
+        self._dodge_target()
 
         # Focus the target window
         user32.SetForegroundWindow(self._target_hwnd)
@@ -223,6 +256,7 @@ class ScrollingCaptureDialog(QDialog):
     def _finish(self):
         self._capturing = False
         self.stop_btn.setEnabled(False)
+        if self.isHidden(): self.show()
 
         if len(self._frames) < 1:
             self.status_label.setText("No frames captured.")

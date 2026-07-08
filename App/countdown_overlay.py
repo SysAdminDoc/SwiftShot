@@ -8,6 +8,8 @@ so the user can interact with the screen (open menus, hover tooltips)
 while the countdown runs. Clicking the badge cancels the capture.
 """
 
+import time
+
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF
@@ -60,10 +62,14 @@ class CountdownOverlay(QWidget):
         self._position_badge()
         self.show()
         self.raise_()
+        self._started_at = time.monotonic()
         self._timer.start(50)
 
     def _tick(self):
-        self._remaining_ms -= 50
+        # Derive remaining time from the clock, not tick counts — coarse
+        # QTimer slack accumulates and made long countdowns fire late.
+        elapsed_ms = int((time.monotonic() - self._started_at) * 1000)
+        self._remaining_ms = self._total_ms - elapsed_ms
         new_seconds = max(0, (self._remaining_ms + 999) // 1000)
         if new_seconds != self._seconds_left:
             self._seconds_left = new_seconds

@@ -594,11 +594,14 @@ class SwiftShotApp:
             screens = QApplication.screens()
             if len(screens) > 1:
                 from monitor_picker import MonitorPicker
+                from PyQt5.QtWidgets import QDialog
                 picker = MonitorPicker()
-                picker.monitor_selected.connect(
-                    lambda idx: self._do_capture_monitor(idx)
-                )
-                picker.exec_()
+                # Capture only after the dialog is closed AND has had a paint
+                # cycle to leave the screen — capturing from the selection
+                # signal grabbed the picker itself into the screenshot.
+                if picker.exec_() == QDialog.Accepted:
+                    idx = picker.selected_index()
+                    QTimer.singleShot(150, lambda: self._do_capture_monitor(idx))
             else:
                 from capture import CaptureManager
                 screenshot = CaptureManager.capture_fullscreen()
@@ -738,6 +741,15 @@ class SwiftShotApp:
         except Exception as e:
             log.warning(f"History OCR skipped: {e}")
             return ""
+
+    def open_image_file(self, path):
+        """Open an image file in the editor (file-association / CLI entry)."""
+        px = QPixmap(path)
+        if px.isNull():
+            log.warning(f"Could not load image file: {path}")
+            return
+        log.info(f"Opening image file in editor: {path}")
+        self._open_editor(px)
 
     def _open_editor(self, pixmap):
         try:
