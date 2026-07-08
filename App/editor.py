@@ -1187,8 +1187,31 @@ class CanvasWidget(QWidget):
             ix, iy = int(img_pos.x()), int(img_pos.y())
             layer = self.editor.active_layer()
             if layer is None: return
+            # Pixel-writing tools cannot target a LayerGroup — its image setter
+            # is a no-op, so strokes would silently vanish (or worse, push a
+            # bogus undo state). Quick-mask strokes never touch the layer, so
+            # they stay allowed.
+            _pixel_tools = ("move", "brush", "pencil", "spray", "eraser", "fill",
+                            "gradient", "rect", "ellipse", "line", "arrow",
+                            "triangle", "polygon", "star", "clone", "healing",
+                            "dodge", "burn", "sponge", "smudge", "warp",
+                            "blur-sharpen", "red-eye", "pattern", "pen",
+                            "text", "note", "transform", "perspective")
+            if (isinstance(layer, LayerGroup) and tool in _pixel_tools
+                    and not (self.editor.quick_mask_active
+                             and tool in ("brush", "pencil", "spray", "eraser"))
+                    and not (getattr(layer, 'editing_mask', False) and layer.mask is not None)):
+                self.status_update.emit("Select a layer, not a group"); return
             w, h = layer.image.size
             if tool == "move":
+                if layer.locked:
+                    self.status_update.emit("Layer is locked"); return
+                self.editor.history.save_state(self.editor.layers, self.editor.active_layer_index, "Move")
+                # Snapshot the untouched image+mask: each drag step re-pastes
+                # from these, so content dragged off-canvas and back is kept.
+                self._move_orig_img = layer.image.copy()
+                self._move_orig_mask = layer.mask.copy() if layer.mask is not None else None
+                self._move_start = img_pos
                 self.last_pos = img_pos; self.drawing = True
             elif (tool in ("brush", "pencil", "spray", "eraser")
                   and self.editor.quick_mask_active):
@@ -2540,8 +2563,13 @@ class CanvasWidget(QWidget):
         if not self._xform_active: return
         layer = self.editor.active_layer()
         if layer and self._xform_orig:
+            # The layer already holds the live preview render — restore the
+            # original pixels first so the undo snapshot captures the
+            # pre-transform state, then apply the final render.
+            final = self._xform_render_final()
+            layer.image = self._xform_orig
             self.editor.history.save_state(self.editor.layers, self.editor.active_layer_index, "Transform")
-            layer.image = self._xform_render_final()
+            layer.image = final
         self._xform_active = False
         self._xform_orig   = None
         self.update()
@@ -7823,48 +7851,54 @@ class ImageEditor(QMainWindow):
         if not path.endswith(".swiftshot"): path += ".swiftshot"
         self._save_project_to(path)
 
+    def _serialize_layer(self, zf, layer, key):
+        """Serialize one layer (or group, recursively) into the project zip.
+        Returns the metadata dict. Format v3: image at {key}.png, mask at
+        {key}.mask.png, group children at {key}_child_{n} (legacy-compatible
+        naming for top-level children)."""
+        import io
+        is_group = isinstance(layer, LayerGroup)
+        try:
+            buf = io.BytesIO(); layer.image.save(buf, "PNG")
+            zf.writestr(f"{key}.png", buf.getvalue())
+        except Exception:
+            # A group's composite is only a preview — children below are the
+            # real data. A plain layer without pixels is unrecoverable.
+            if not is_group: raise
+            log.warning(f"Project save: composite for group '{layer.name}' failed", exc_info=True)
+        if layer.mask is not None:
+            mbuf = io.BytesIO(); layer.mask.save(mbuf, "PNG")
+            zf.writestr(f"{key}.mask.png", mbuf.getvalue())
+        ldata = {
+            "name": layer.name, "visible": layer.visible,
+            "opacity": layer.opacity, "blend_mode": layer.blend_mode,
+            "locked": layer.locked,
+            "mask_enabled": getattr(layer, "mask_enabled", True),
+            "has_mask": layer.mask is not None,
+            "effects": [dict(fx) for fx in getattr(layer, "effects", [])],
+            "is_group": is_group,
+        }
+        if is_group:
+            ldata["group_size"] = [layer._w, layer._h]
+            ldata["group_collapsed"] = getattr(layer, "collapsed", False)
+            ldata["group_child_count"] = len(layer.children)  # legacy readers
+            ldata["children"] = [self._serialize_layer(zf, c, f"{key}_child_{ci}")
+                                 for ci, c in enumerate(layer.children)]
+        return ldata
+
     def _save_project_to(self, path):
         import zipfile
-        import io
         try:
-            meta = {"magic": "SWIFTSHOT_PROJECT", "version": 2,
+            meta = {"magic": "SWIFTSHOT_PROJECT", "version": 3,
                     "active_index": self.active_layer_index, "layers": []}
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for i, layer in enumerate(self.layers):
-                    is_group = isinstance(layer, LayerGroup)
-                    if not is_group:
-                        buf = io.BytesIO(); layer.image.save(buf, "PNG")
-                        zf.writestr(f"layer_{i}.png", buf.getvalue())
-                    else:
-                        # Save group image composite for thumbnail; children saved separately
-                        try:
-                            g_img = layer.image
-                            buf = io.BytesIO(); g_img.save(buf, "PNG")
-                            zf.writestr(f"layer_{i}.png", buf.getvalue())
-                        except Exception:
-                            pass
-                        for ci, child in enumerate(layer.children):
-                            cbuf = io.BytesIO(); child.image.save(cbuf, "PNG")
-                            zf.writestr(f"layer_{i}_child_{ci}.png", cbuf.getvalue())
-                    ldata = {
-                        "name": layer.name, "visible": layer.visible,
-                        "opacity": layer.opacity, "blend_mode": layer.blend_mode,
-                        "locked": layer.locked,
-                        "mask_enabled": getattr(layer, "mask_enabled", True),
-                        "has_mask": layer.mask is not None,
-                        "effects": [dict(fx) for fx in getattr(layer, "effects", [])],
-                        "is_group": is_group,
-                        "group_child_count": len(layer.children) if is_group else 0,
-                        "group_collapsed": getattr(layer, "collapsed", False),
-                    }
-                    if layer.mask is not None:
-                        mbuf = io.BytesIO(); layer.mask.save(mbuf, "PNG")
-                        zf.writestr(f"mask_{i}.png", mbuf.getvalue())
-                    meta["layers"].append(ldata)
+                    meta["layers"].append(self._serialize_layer(zf, layer, f"layer_{i}"))
                 zf.writestr("project.json", json.dumps(meta, indent=2))
             self.saved_path = path; self._status(f"Project saved: {path}")
             self._set_dirty(False)
         except Exception as e:
+            log.warning(f"Project save failed: {path}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to save project:\n{e}")
 
     def open_project(self):
@@ -7872,48 +7906,101 @@ class ImageEditor(QMainWindow):
         if not path: return
         self._load_project_from(path)
 
+    @staticmethod
+    def _apply_layer_meta(layer, lmeta):
+        layer.visible = lmeta.get("visible", True)
+        layer.opacity = lmeta.get("opacity", 255)
+        layer.blend_mode = lmeta.get("blend_mode", "Normal")
+        layer.locked = lmeta.get("locked", False)
+        layer.mask_enabled = lmeta.get("mask_enabled", True)
+        layer.effects = [dict(fx) for fx in lmeta.get("effects", []) if isinstance(fx, dict)]
+
+    def _deserialize_layer(self, zf, lmeta, key, names):
+        """Rebuild one layer (or group, recursively) from a v3 project zip."""
+        import io
+        img = None
+        if f"{key}.png" in names:
+            img = Image.open(io.BytesIO(zf.read(f"{key}.png"))).convert("RGBA")
+        if lmeta.get("is_group"):
+            children = [self._deserialize_layer(zf, cm, f"{key}_child_{ci}", names)
+                        for ci, cm in enumerate(lmeta.get("children", []))]
+            size = lmeta.get("group_size")
+            if isinstance(size, (list, tuple)) and len(size) == 2:
+                gw, gh = int(size[0]), int(size[1])
+            elif img is not None:
+                gw, gh = img.size
+            elif children:
+                gw = max(c.image.width for c in children); gh = max(c.image.height for c in children)
+            else:
+                gw, gh = 800, 600
+            layer = LayerGroup(lmeta.get("name", "Group"), gw, gh)
+            layer.children = children
+            layer.collapsed = lmeta.get("group_collapsed", False)
+        else:
+            if img is None:
+                raise KeyError(f"{key}.png missing from project archive")
+            layer = Layer(lmeta.get("name", "Layer"), image=img)
+        self._apply_layer_meta(layer, lmeta)
+        if lmeta.get("has_mask") and f"{key}.mask.png" in names:
+            layer.mask = Image.open(io.BytesIO(zf.read(f"{key}.mask.png"))).convert("L")
+        return layer
+
+    def _load_layers_v2(self, zf, meta, names):
+        """Legacy loader for version<=2 projects (flat child images, masks at
+        mask_{i}.png, no per-child metadata, no stored group size)."""
+        import io
+        layers = []
+        for i, lmeta in enumerate(meta["layers"]):
+            img = None
+            if f"layer_{i}.png" in names:
+                img = Image.open(io.BytesIO(zf.read(f"layer_{i}.png"))).convert("RGBA")
+            if lmeta.get("is_group"):
+                # v2 saved the group's own composite at layer_{i}.png — its size
+                # IS the group size (older builds derived it from the previous
+                # layer, defaulting to 800x600: wrong for first/oversized groups).
+                children = []
+                for ci in range(lmeta.get("group_child_count", 0)):
+                    cname = f"layer_{i}_child_{ci}.png"
+                    if cname in names:
+                        cimg = Image.open(io.BytesIO(zf.read(cname))).convert("RGBA")
+                        children.append(Layer(f"Layer {ci + 1}", image=cimg))
+                if img is not None:
+                    iw, ih = img.size
+                elif children:
+                    iw = max(c.image.width for c in children); ih = max(c.image.height for c in children)
+                else:
+                    iw, ih = 800, 600
+                layer = LayerGroup(lmeta.get("name", "Group"), iw, ih)
+                layer.children = children
+                layer.collapsed = lmeta.get("group_collapsed", False)
+            else:
+                if img is None:
+                    raise KeyError(f"layer_{i}.png missing from project archive")
+                layer = Layer(lmeta.get("name", "Layer"), image=img)
+            self._apply_layer_meta(layer, lmeta)
+            if lmeta.get("has_mask") and f"mask_{i}.png" in names:
+                layer.mask = Image.open(io.BytesIO(zf.read(f"mask_{i}.png"))).convert("L")
+            layers.append(layer)
+        return layers
+
     def _load_project_from(self, path):
         import zipfile
-        import io
         try:
             with zipfile.ZipFile(path) as zf:
                 meta = json.loads(zf.read("project.json"))
                 if meta.get("magic") != "SWIFTSHOT_PROJECT":
                     QMessageBox.critical(self, "Error", "Not a valid SwiftShot project"); return
-                layers = []
-                for i, lmeta in enumerate(meta["layers"]):
-                    img = Image.open(io.BytesIO(zf.read(f"layer_{i}.png"))).convert("RGBA")
-                    layer = Layer(lmeta["name"], image=img)
-                    layer.visible = lmeta.get("visible", True)
-                    layer.opacity = lmeta.get("opacity", 255)
-                    layer.blend_mode = lmeta.get("blend_mode", "Normal")
-                    layer.locked = lmeta.get("locked", False)
-                    layer.mask_enabled = lmeta.get("mask_enabled", True)
-                    if lmeta.get("has_mask") and f"mask_{i}.png" in zf.namelist():
-                        layer.mask = Image.open(io.BytesIO(zf.read(f"mask_{i}.png"))).convert("L")
-                    layer.effects = lmeta.get("effects", [])
-                    if lmeta.get("is_group"):
-                        # Reconstruct LayerGroup from saved children
-                        img = layers[-1].image if layers else None  # placeholder
-                        iw = img.width if img else 800
-                        ih = img.height if img else 600
-                        group = LayerGroup(lmeta["name"], iw, ih)
-                        group.visible      = lmeta.get("visible", True)
-                        group.opacity      = lmeta.get("opacity", 255)
-                        group.blend_mode   = lmeta.get("blend_mode", "Normal")
-                        group.locked       = lmeta.get("locked", False)
-                        group.collapsed    = lmeta.get("group_collapsed", False)
-                        group.effects      = lmeta.get("effects", [])
-                        for ci in range(lmeta.get("group_child_count", 0)):
-                            cname = f"layer_{i}_child_{ci}.png"
-                            if cname in zf.namelist():
-                                cimg = Image.open(io.BytesIO(zf.read(cname))).convert("RGBA")
-                                group.children.append(Layer("Layer", image=cimg))
-                        layers.append(group)
-                    else:
-                        layers.append(layer)
+                names = set(zf.namelist())
+                if meta.get("version", 1) >= 3:
+                    layers = [self._deserialize_layer(zf, lmeta, f"layer_{i}", names)
+                              for i, lmeta in enumerate(meta["layers"])]
+                else:
+                    layers = self._load_layers_v2(zf, meta, names)
+            if not layers:
+                QMessageBox.critical(self, "Error", "Project contains no layers"); return
             self.layers = layers
-            self.active_layer_index = meta.get("active_index", 0)
+            idx = meta.get("active_index", 0)
+            self.active_layer_index = min(max(0, idx if isinstance(idx, int) else 0), len(layers) - 1)
             self.file_path = None          # not an image file
             self.saved_path = path
             self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
@@ -7921,6 +8008,7 @@ class ImageEditor(QMainWindow):
             self._add_recent(path)
             self._reset_history()
         except Exception as e:
+            log.warning(f"Project load failed: {path}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to open project:\n{e}")
 
     def insert_note_at(self, x, y):
