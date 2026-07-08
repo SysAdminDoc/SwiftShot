@@ -2,6 +2,80 @@
 
 All notable changes to SwiftShot will be documented in this file.
 
+## [Unreleased]
+
+First batch of the 2026-07-07 deep-audit fixes (the remaining verified
+findings live in ROADMAP.md as the prioritized "Audit Backlog").
+
+### Capture & display scaling
+- The process is now per-monitor DPI-aware with Qt scaling off, so widget
+  coordinates equal physical screen pixels at every display scale factor.
+  Previously 150%/175%/200% scaling broke every capture surface (overlay,
+  pickers, crops, cursor draw) by mixing logical and physical coordinates.
+- GDI fullscreen capture uses `SRCCOPY | CAPTUREBLT` (layered windows such
+  as tooltips no longer capture black), interprets the blit as RGB32 (stray
+  alpha bytes from layered windows no longer punch transparent holes into
+  saved PNGs), and calls GetDIBits only after deselecting the bitmap.
+- Multi-monitor capture no longer photographs the monitor-picker dialog:
+  the grab fires only after the dialog has closed and had a paint cycle.
+- Scrolling capture: Cancel/Esc/close actually stops the capture loop (it
+  kept auto-scrolling the target window after dismissal), and the
+  always-on-top progress dialog moves out of (or hides from) the capture
+  rect instead of being stitched into every frame.
+- Window picker and snap-edge detection skip DWM-cloaked windows (other
+  virtual desktops, suspended UWP apps) — hovering can no longer select an
+  invisible window. Child-window enumeration uses EnumChildWindows instead
+  of an unsafe manual GW_CHILD/GW_HWNDNEXT walk over foreign processes.
+- Win+PrintScreen (and any Win+key combo) passes through to Windows instead
+  of being hijacked by the bare-key hotkey binding.
+- Hotkey re-binding no longer risks orphaning the old keyboard hook: the
+  WM_QUIT post is retried until it lands and a failed join is logged.
+- Countdown badge derives remaining time from a monotonic clock instead of
+  counting nominal timer ticks, so timed captures fire on time under load.
+
+### Reliability & config
+- The app version is no longer persisted into swiftshot.json and can no
+  longer be overwritten by a config/import file. Older builds pinned the
+  running version string to the release that wrote the config, making the
+  updater nag "update available" forever after any upgrade.
+- Numeric settings from config/import files are clamped to their Settings-UI
+  ranges. A hand-edited `CAPTURE_HISTORY_MAX: 0` made the history pruner
+  delete every capture immediately after saving it.
+- Windows OCR output is decoded correctly: PowerShell 5.1 emits redirected
+  stdout in the OEM code page, so non-ASCII OCR text (accents, quotes,
+  non-Latin scripts) arrived as mojibake. The OCR script now forces UTF-8.
+- Single-instance guard: a second SwiftShot exits immediately instead of
+  fighting over the keyboard hook and log file (creates the
+  `SwiftShot_SingleInstance` mutex the installer's AppMutex already checks).
+- The installer's "open with SwiftShot" file association works: an image
+  path on the command line now opens in the editor (previously the argument
+  was ignored); the startup shortcut's `--minimized` flag is tolerated.
+- "Launch at startup" failures are surfaced (message + log) instead of
+  silently doing nothing; settings export failures and the capture
+  win32→Qt fallback are logged; the corrupt-config message no longer claims
+  a backup was saved when the backup copy itself failed.
+
+### Editor
+- `.swiftshot` project format v3: group layers round-trip with their exact
+  size (previously a first-in-list or oversized group reloaded at 800×600 —
+  silent data loss), children keep their name/visibility/opacity/blend
+  mode/lock/mask/effects (previously all reset to defaults), groups keep
+  their own masks, and nested groups survive. Legacy v2 files load with the
+  group size taken from the saved composite. Project save/load failures are
+  logged with tracebacks; the active-layer index is validated on load.
+- Free Transform can be undone: the undo snapshot used to capture the
+  already-transformed pixels, so Ctrl+Z after committing a transform was a
+  permanent no-op.
+- The Move tool records an undo step and refuses locked layers. (Off-canvas
+  content preservation while moving is AB-01 in ROADMAP.md.)
+- Paint tools refuse to target a layer group instead of silently discarding
+  the stroke while still pushing a bogus undo entry.
+
+### Tests
+- 80 tests (75 → 80): project-format v3 round-trip (group size, child
+  metadata/masks, nested groups, group masks/effects) and the legacy-v2
+  group-size regression.
+
 ## [v2.8.0] - 2026-07-03
 
 Audit-backlog drain: the verified-but-deferred findings from the v2.7.0 deep
