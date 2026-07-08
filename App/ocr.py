@@ -19,6 +19,11 @@ from logger import log
 _WIN_OCR_SCRIPT = r'''
 param([string]$ImagePath)
 
+# Windows PowerShell 5.1 encodes redirected stdout in the OEM code page by
+# default; Python decodes it as UTF-8. Force UTF-8 so non-ASCII OCR text
+# (accents, quotes, non-Latin scripts) survives the pipe intact.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 try {
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
 

@@ -826,9 +826,14 @@ class SettingsDialog(QDialog):
         # Apply startup registry
         try:
             from utils import set_startup_registry
-            set_startup_registry(config.LAUNCH_AT_STARTUP)
+            if not set_startup_registry(config.LAUNCH_AT_STARTUP) and config.LAUNCH_AT_STARTUP:
+                log.warning("Could not write the startup registry entry")
+                QMessageBox.warning(
+                    self, "Startup setting",
+                    "SwiftShot could not register itself to launch at startup.\n"
+                    "The rest of your settings were saved.")
         except Exception:
-            pass
+            log.warning("Startup registry update failed", exc_info=True)
 
         config.save()
         app = QApplication.instance()

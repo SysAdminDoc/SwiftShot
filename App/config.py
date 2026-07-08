@@ -133,6 +133,27 @@ class Config:
 
     _STATE_KEYS = {"LAST_SAVE_DIR", "LAST_REGION", "WINDOW_GEOMETRY",
                    "CAPTURE_HISTORY_DIR"}
+    # Identity constants: never persisted, never overwritten from a file.
+    # (Older builds saved APP_VERSION into swiftshot.json, which pinned the
+    # running version string to the release the config was written by.)
+    _IDENTITY_KEYS = {"APP_NAME", "APP_VERSION"}
+    # Numeric keys are clamped to their Settings-UI ranges on load/import —
+    # e.g. a hand-edited CAPTURE_HISTORY_MAX of 0 made the history pruner
+    # delete every capture immediately after saving it.
+    _NUMERIC_RANGES = {
+        "CAPTURE_DELAY_MS": (0, 10000),
+        "CAPTURE_TIMER_SECONDS": (1, 30),
+        "OUTPUT_JPEG_QUALITY": (1, 100),
+        "EDITOR_DEFAULT_LINE_WIDTH": (1, 20),
+        "EDITOR_DEFAULT_FONT_SIZE": (6, 72),
+        "EDITOR_OBFUSCATE_FACTOR": (2, 50),
+        "BORDER_WIDTH": (0, 50),
+        "SHADOW_RADIUS": (0, 50),
+        "SHADOW_OPACITY": (0, 255),
+        "ROUNDED_CORNERS_RADIUS": (0, 100),
+        "CAPTURE_HISTORY_MAX": (5, 500),
+        "PIN_OPACITY": (10, 100),
+    }
 
     def __init__(self):
         self._config_dir = self._get_config_dir()
@@ -160,11 +181,14 @@ class Config:
         os.makedirs(self.CAPTURE_HISTORY_DIR, exist_ok=True)
 
     def _get_saveable_keys(self):
-        return [k for k in dir(self) if k.isupper() and not k.startswith('_')]
+        return [k for k in dir(self) if k.isupper() and not k.startswith('_')
+                and k not in self._IDENTITY_KEYS]
 
     def _apply_value(self, key, value):
         """Apply a persisted/imported value only if it matches the type of
         the default -- malformed files must not corrupt runtime settings."""
+        if key in self._IDENTITY_KEYS:
+            return
         default = getattr(Config, key, None)
         if isinstance(default, bool):
             if not isinstance(value, bool):
@@ -191,6 +215,10 @@ class Config:
             self.BEAUTIFY_PRESET = Config.BEAUTIFY_PRESET
         if self.EDITOR_OBFUSCATE_MODE not in ("pixelate", "blur"):
             self.EDITOR_OBFUSCATE_MODE = Config.EDITOR_OBFUSCATE_MODE
+        for key, (lo, hi) in self._NUMERIC_RANGES.items():
+            val = getattr(self, key, None)
+            if isinstance(val, int) and not isinstance(val, bool):
+                setattr(self, key, min(max(val, lo), hi))
 
     def _load(self):
         if not os.path.exists(self._config_file):
@@ -209,11 +237,11 @@ class Config:
             backup = self._config_file + ".corrupt"
             try:
                 shutil.copy2(self._config_file, backup)
-            except Exception:
-                pass
+                saved = f"Backup saved to {backup}"
+            except Exception as be:
+                saved = f"Backup copy also failed ({be})"
             self._log_warning(
-                f"Config file is corrupt ({e}); using defaults. "
-                f"Backup saved to {backup}")
+                f"Config file is corrupt ({e}); using defaults. {saved}")
         except Exception as e:
             self._log_warning(f"Could not load config: {e}")
 
@@ -261,7 +289,8 @@ class Config:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             return True
-        except Exception:
+        except Exception as e:
+            self._log_warning(f"Settings export failed: {e}")
             return False
 
     def import_settings(self, filepath):
