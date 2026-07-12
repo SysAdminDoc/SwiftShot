@@ -235,6 +235,12 @@ def save_pixmap(pixmap, filepath, file_format, jpeg_quality=90):
             image.save(filepath, "GIF")
             return True
 
+        if fmt == "avif":
+            # Qt has no AVIF encoder -- route through Pillow (libavif, 12.3.0+).
+            image = qpixmap_to_pil(pixmap)
+            image.save(filepath, "AVIF", quality=90)
+            return True
+
         qt_format = "JPEG" if fmt == "jpeg" else fmt.upper()
         quality = int(jpeg_quality) if qt_format == "JPEG" else -1
         return pixmap.save(filepath, qt_format, quality)

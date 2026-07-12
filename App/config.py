@@ -11,7 +11,20 @@ import re
 import shutil
 
 
+def _avif_supported():
+    """AVIF export is available only when Pillow was built with libavif
+    (bundled in the 12.3.0+ wheels). Probe at import so the format is offered
+    only when it will actually save."""
+    try:
+        from PIL import features
+        return features.check("avif")
+    except Exception:
+        return False
+
+
 OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
+if _avif_supported():
+    OUTPUT_FILE_FORMAT_CHOICES = OUTPUT_FILE_FORMAT_CHOICES + ("avif",)
 AFTER_CAPTURE_ACTION_CHOICES = ("editor", "save", "clipboard")
 BEAUTIFICATION_PRESETS = {
     "none": {

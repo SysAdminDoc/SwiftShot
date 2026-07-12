@@ -7,6 +7,11 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Formats
+- AVIF export is offered wherever WebP is (capture auto-save, Settings output
+  format, editor Save-As and a new Export AVIF menu entry) — enabled only when
+  the installed Pillow was built with libavif (the 12.3.0+ wheels are).
+
 ### Security & dependencies
 - Pillow floor raised to `>=12.3.0`, clearing six 2026 CVEs including
   CVE-2026-55798 (OS command injection), CVE-2026-55380 / CVE-2026-54060

@@ -5873,6 +5873,9 @@ class ImageEditor(QMainWindow):
         self._act(fm, "Save &As...", "Ctrl+Shift+S", self.save_image_as)
         self._act(fm, "Export &PNG...", "", self.export_png)
         self._act(fm, "Export &WebP...", "", self.export_webp)
+        from config import OUTPUT_FILE_FORMAT_CHOICES
+        if "avif" in OUTPUT_FILE_FORMAT_CHOICES:
+            self._act(fm, "Export &AVIF...", "", self.export_avif)
         fm.addSeparator()
         self._act(fm, "&Copy to Clipboard", "Ctrl+Shift+C", self.copy_to_clipboard)
         self._act(fm, "Save &Project (.swiftshot)...", "", self.save_project)
@@ -6568,9 +6571,11 @@ class ImageEditor(QMainWindow):
             self.save_image_as()
 
     def save_image_as(self):
+        from config import OUTPUT_FILE_FORMAT_CHOICES
+        avif_filter = "AVIF (*.avif);;" if "avif" in OUTPUT_FILE_FORMAT_CHOICES else ""
         path, _ = QFileDialog.getSaveFileName(self, "Save Image", "",
             "PNG (*.png);;JPEG (*.jpg *.jpeg);;"
-            "WebP Lossless (*.webp);;BMP (*.bmp);;"
+            "WebP Lossless (*.webp);;" + avif_filter + "BMP (*.bmp);;"
             "TIFF (*.tiff *.tif);;All Files (*)")
         if path:
             self.file_path = path
@@ -6631,6 +6636,18 @@ class ImageEditor(QMainWindow):
                 c = self.get_composite()
                 if c:
                     c.save(path, "WEBP", lossless=True, quality=100, method=6)
+                    self._status(f"Exported: {path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
+
+    def export_avif(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export AVIF", "", "AVIF (*.avif)")
+        if path:
+            try:
+                c = self.get_composite()
+                if c:
+                    c.save(path, "AVIF", quality=90)
                     self._status(f"Exported: {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")

@@ -44,3 +44,22 @@ def test_save_pixmap_writes_lossless_webp(qapp, tmp_path):
     assert saved.format == "WEBP"
     assert saved.size == (pixmap.width(), pixmap.height())
     assert webp_path.stat().st_size < png_path.stat().st_size
+
+
+def test_save_pixmap_writes_avif_when_supported(qapp, tmp_path):
+    import pytest
+    from utils import save_pixmap
+
+    if not features.check("avif"):
+        pytest.skip("Pillow built without AVIF")
+
+    from config import OUTPUT_FILE_FORMAT_CHOICES
+    assert "avif" in OUTPUT_FILE_FORMAT_CHOICES
+
+    pixmap = _sample_pixmap()
+    avif_path = tmp_path / "capture.avif"
+    assert save_pixmap(pixmap, str(avif_path), "avif")
+
+    saved = Image.open(avif_path)
+    assert saved.format == "AVIF"
+    assert saved.size == (pixmap.width(), pixmap.height())
