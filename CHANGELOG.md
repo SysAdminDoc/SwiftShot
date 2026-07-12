@@ -64,6 +64,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
 - Flood fill (paint-bucket) is vectorized (numpy colour-match + scanline
   region grow) instead of a per-pixel Python BFS, so large fills no longer
   freeze the UI for seconds.
+- Content-aware fill uses a vectorized diffusion inpaint (seed + iterative
+  blur-and-restore) instead of a per-pixel random-patch search, so filling a
+  large selection is fast and blends the surrounding colours in smoothly.
 
 ### Editor — polish
 - Off-canvas paint expansion also shifts guides and the clone-stamp source

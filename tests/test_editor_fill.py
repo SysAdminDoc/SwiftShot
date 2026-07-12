@@ -40,6 +40,60 @@ def test_flood_fill_fills_whole_solid_layer(qapp):
     assert (arr == (255, 0, 0, 255)).all()
 
 
+def test_content_aware_fill_diffuses_background_into_hole(qapp):
+    """Diffusion inpaint should fill a selected hole with the surrounding
+    uniform colour (fast, vectorized — AB-29)."""
+    from editor import CanvasWidget, Layer
+
+    layer = Layer("L", 24, 24)
+    layer.image = Image.new("RGBA", (24, 24), (30, 120, 200, 255))
+
+    class _Editor:
+        brush_size = 8
+
+        def active_layer(self):
+            return layer
+
+        def _status(self, *a):
+            pass
+
+    class _Canvas:
+        _content_aware_fill = CanvasWidget._content_aware_fill
+
+        def __init__(self):
+            self.editor = _Editor()
+            self.selection_mask = Image.new("L", (24, 24), 0)
+            # a small central hole to inpaint
+            for y in range(9, 15):
+                for x in range(9, 15):
+                    self.selection_mask.putpixel((x, y), 255)
+
+        def update(self):
+            pass
+
+        def set_selection_mask(self, m):
+            self.selection_mask = m
+
+        class _H:
+            @staticmethod
+            def save_state(*a):
+                pass
+        history = _H()
+        # editor.history is used, not canvas.history — patch on editor below
+
+    c = _Canvas()
+    c.editor.history = _Canvas._H()
+    c.editor.layers = [layer]
+    c.editor.active_layer_index = 0
+    c._content_aware_fill()
+
+    arr = np.array(layer.image)
+    # centre of the former hole should be close to the surrounding colour
+    r, g, b, a = arr[12, 12]
+    assert abs(int(r) - 30) < 25 and abs(int(g) - 120) < 25 and abs(int(b) - 200) < 25
+    assert a == 255
+
+
 def test_flood_fill_stops_at_color_boundary(qapp):
     from editor import Layer
 

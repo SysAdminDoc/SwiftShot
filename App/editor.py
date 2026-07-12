@@ -2936,53 +2936,35 @@ class CanvasWidget(QWidget):
         if self.selection_mask is None:
             self.editor._status("No selection — draw a selection first")
             return
-        img = np.array(layer.image, dtype=np.uint8)
+        img = np.array(layer.image, dtype=np.float32)
         mask = np.array(self.selection_mask, dtype=np.uint8)
-        h, w = img.shape[:2]
-        patch_sz = max(8, self.editor.brush_size // 2)
-        ys, xs = np.where(mask > 127)
-        if len(ys) == 0: return
+        hole = mask > 127
+        if not hole.any(): return
         self.editor.history.save_state(
             self.editor.layers, self.editor.active_layer_index, "Content-Aware Fill")
-        # This is an unavoidably heavy per-pixel search — show a busy cursor so
-        # the UI doesn't just appear frozen for the second-plus it can take.
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # Build list of valid source patches (outside mask with enough margin)
-            margin = patch_sz // 2
-            valid_src = []
-            step = max(1, patch_sz // 3)
-            for sy in range(margin, h - margin, step):
-                for sx in range(margin, w - margin, step):
-                    # Check that the entire patch is outside the mask
-                    patch_mask = mask[sy-margin:sy+margin+1, sx-margin:sx+margin+1]
-                    if patch_mask.max() == 0:
-                        valid_src.append((sy, sx))
-            if not valid_src:
-                # Fallback: sample average color from border of selection
-                border_ys, border_xs = np.where((mask == 0))
-                if len(border_ys) > 0:
-                    sample = img[border_ys, border_xs, :3].mean(axis=0).astype(np.uint8)
-                    for y, x in zip(ys, xs):
-                        img[y, x, :3] = sample
-                layer.image = Image.fromarray(img, "RGBA")
+            known = ~hole
+            if not known.any():
                 self.update(); return
-            # For each hole pixel, find best-matching source patch and copy center
-            rng = np.random.default_rng(42)
-            for y, x in zip(ys, xs):
-                # Sample a few candidates and pick the closest by color
-                candidates = [valid_src[i] for i in rng.integers(0, len(valid_src), size=min(20, len(valid_src)))]
-                best_diff = float('inf')
-                best_src = candidates[0]
-                for sy, sx in candidates:
-                    src_patch = img[sy-1:sy+2, sx-1:sx+2, :3].astype(np.float32)
-                    tgt_patch = img[y-1:y+2, x-1:x+2, :3].astype(np.float32) if (
-                        y > 0 and y < h-1 and x > 0 and x < w-1) else src_patch
-                    diff = float(np.mean(np.abs(src_patch - tgt_patch)))
-                    if diff < best_diff:
-                        best_diff = diff; best_src = (sy, sx)
-                img[y, x, :3] = img[best_src[0], best_src[1], :3]
-            layer.image = Image.fromarray(img, "RGBA")
+            # Vectorized diffusion inpaint: seed the hole with the mean known
+            # colour, then repeatedly blur and restore the known pixels so the
+            # surrounding colours flow inward. Replaces a per-pixel random-patch
+            # search that froze the UI for seconds on large selections.
+            rgb = img[:, :, :3]
+            orig_rgb = rgb.copy()
+            rgb[hole] = orig_rgb[known].mean(axis=0)
+            work = Image.fromarray(rgb.astype(np.uint8), "RGB")
+            radius = max(2, self.editor.brush_size // 4)
+            for _ in range(48):
+                blurred = np.array(work.filter(ImageFilter.GaussianBlur(radius)),
+                                   dtype=np.float32)
+                rgb[hole] = blurred[hole]
+                rgb[known] = orig_rgb[known]      # keep real pixels fixed
+                work = Image.fromarray(rgb.astype(np.uint8), "RGB")
+            img[:, :, :3] = rgb
+            img[hole, 3] = 255                    # fill removed area opaque
+            layer.image = Image.fromarray(img.astype(np.uint8), "RGBA")
             self.set_selection_mask(None)
             self.update()
             self.editor._status("Content-Aware Fill applied")
