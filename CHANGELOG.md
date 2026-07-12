@@ -54,6 +54,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   connection (and its file handle) open, leaking one per capture/history op
   over a long tray session.
 
+### Editor — performance
+- Flood fill (paint-bucket) is vectorized (numpy colour-match + scanline
+  region grow) instead of a per-pixel Python BFS, so large fills no longer
+  freeze the UI for seconds.
+
 ### Editor — polish
 - Reordering layers by drag keeps the same layer active (it followed the old
   slot number before, so the next stroke could land on a different layer).

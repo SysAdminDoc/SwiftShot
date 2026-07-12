@@ -1887,24 +1887,36 @@ class CanvasWidget(QWidget):
         if not layer or layer.locked: return
         w, h = layer.image.size
         if x < 0 or x >= w or y < 0 or y >= h: return
-        pixels = layer.image.load()
-        target = pixels[x, y]
         c = self.editor.fg_color
         fill_color = (c.red(), c.green(), c.blue(), self.editor.brush_opacity)
-        if target == fill_color: return
         tol = self.editor.magic_wand_tolerance
-
-        def match(c1, c2):
-            return all(abs(a - b) <= tol for a, b in zip(c1[:3], c2[:3]))
-
-        visited = set(); stack = [(x, y)]
+        # Vectorized colour-match test + scanline flood (the old per-pixel
+        # Python BFS froze the UI for seconds on large fills).
+        arr = np.array(layer.image)
+        if tuple(int(v) for v in arr[y, x]) == fill_color: return
+        target = arr[y, x, :3].astype(np.int16)
+        diff = np.abs(arr[:, :, :3].astype(np.int16) - target.reshape(1, 1, 3))
+        match_all = np.all(diff <= tol, axis=2)
+        if not match_all[y, x]: return
+        mask = np.zeros((h, w), dtype=bool)
+        mask[y, x] = True
+        stack = [(x, y)]
         while stack:
-            cx, cy = stack.pop()
-            if (cx, cy) in visited: continue
-            if cx < 0 or cx >= w or cy < 0 or cy >= h: continue
-            if not match(pixels[cx, cy], target): continue
-            visited.add((cx, cy)); pixels[cx, cy] = fill_color
-            stack.extend([(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)])
+            sx, sy = stack.pop(); lx = sx
+            while lx > 0 and match_all[sy, lx - 1] and not mask[sy, lx - 1]:
+                lx -= 1; mask[sy, lx] = True
+            rx = sx
+            while rx < w - 1 and match_all[sy, rx + 1] and not mask[sy, rx + 1]:
+                rx += 1; mask[sy, rx] = True
+            for ny in (sy - 1, sy + 1):
+                if ny < 0 or ny >= h: continue
+                ss = False
+                for nx in range(lx, rx + 1):
+                    if match_all[ny, nx] and not mask[ny, nx]:
+                        if not ss: stack.append((nx, ny)); mask[ny, nx] = True; ss = True
+                    else: ss = False
+        arr[mask] = fill_color
+        layer.image = Image.fromarray(arr, "RGBA")
 
     def _magic_wand_select(self, x, y):
         layer = self.editor.active_layer()
