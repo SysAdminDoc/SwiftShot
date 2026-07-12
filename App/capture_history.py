@@ -128,6 +128,12 @@ def _ensure_history_index(conn, history_dir):
     indexed = {
         row["path"] for row in conn.execute("SELECT path FROM captures")
     }
+    # Purge rows whose file was deleted outside the app. Otherwise they keep
+    # occupying LIMIT slots (the panel filtered missing files AFTER the query,
+    # so dead rows could starve the panel down to zero visible captures).
+    for path in indexed:
+        if not os.path.exists(path):
+            conn.execute("DELETE FROM captures WHERE path = ?", (path,))
     for filepath in _history_files(history_dir):
         if filepath not in indexed:
             _index_file(conn, filepath)

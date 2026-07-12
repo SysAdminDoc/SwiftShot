@@ -267,12 +267,26 @@ class SwiftShotApp:
     # Capture Delay Helper
     # -------------------------------------------------------------------
 
+    def _supersede_countdown(self):
+        """Cancel any in-flight countdown before starting a new one. The single
+        self._countdown slot holds the only reference, so overwriting it would
+        GC the widget mid-count and its capture would never fire, silently."""
+        prev = getattr(self, "_countdown", None)
+        if prev is not None:
+            try:
+                log.info("Superseding an in-flight countdown with a new capture")
+                prev._cancel()
+            except Exception:
+                pass
+            self._countdown = None
+
     def _capture_with_delay(self, callback):
         """Execute callback after configured delay (with countdown if >0)."""
         delay = config.CAPTURE_DELAY_MS
         if delay > 0:
             try:
                 from countdown_overlay import CountdownOverlay
+                self._supersede_countdown()
                 overlay = CountdownOverlay(delay)
                 overlay.countdown_finished.connect(callback)
                 overlay.cancelled.connect(lambda: None)
@@ -525,6 +539,7 @@ class SwiftShotApp:
 
         try:
             from countdown_overlay import CountdownOverlay
+            self._supersede_countdown()
             overlay = CountdownOverlay(total_ms)
             overlay.countdown_finished.connect(
                 lambda r=QRect(rect): self._timed_capture_fire(r, freehand_points)
@@ -985,6 +1000,16 @@ class SwiftShotApp:
             dialog = SettingsDialog()
             if dialog.exec_() == QDialog.Accepted:
                 self._reregister_hotkeys()
+                # Apply the clipboard-watcher setting live and keep the flag in
+                # sync with config — otherwise the next tray toggle flips a
+                # stale flag and writes the inverted value back.
+                desired = config.CLIPBOARD_WATCHER_ENABLED
+                if desired != self._clipboard_watcher_enabled:
+                    self._clipboard_watcher_enabled = desired
+                    if desired:
+                        self._start_clipboard_watcher()
+                    else:
+                        self._stop_clipboard_watcher()
                 if self.tray_icon:
                     menu = self.tray_icon.contextMenu()
                     if menu:

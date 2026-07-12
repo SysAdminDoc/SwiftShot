@@ -17,6 +17,19 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   unpatched history-DB engine unnoticed.
 
 ### Capture & history reliability
+- Starting a second capture while a countdown is running now cancels the
+  first countdown explicitly (and logs it) instead of dropping its only
+  reference, which garbage-collected the overlay so its capture never fired.
+- The clipboard-watcher setting applies immediately when Settings is
+  accepted, and the tray toggle stays in sync (it previously flipped a stale
+  flag and wrote the inverted value back to config).
+- Capture-history rows whose image file was deleted outside the app are
+  purged during indexing, so dead rows can no longer occupy the panel's
+  fixed slot budget and starve it down to zero visible captures.
+- Save-As no longer leaves the `.swiftshot` project path set, so a
+  subsequent Ctrl+S overwrites the file you just saved to, not the project.
+- Standalone editor (no tray app): "Pin to Desktop" windows are retained
+  instead of being garbage-collected the instant they open.
 - Freehand (transparent-outside) captures no longer get a rectangular
   background/border/shadow drawn over their bounding box — beautify and the
   post-capture frame are skipped when a capture intentionally carries an

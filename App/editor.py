@@ -5191,6 +5191,7 @@ class ImageEditor(QMainWindow):
         self._jpeg_quality = None            # remembered per document (ask once)
         self.selected_layer_indices = set()  # multi-select
         self.saved_paths = []               # list of path dicts for Paths panel
+        self._standalone_pins = []          # pins kept alive when app is None
         self.retouch_exposure = 50
         self.shape_stroke_width = 2
         self.shape_filled = False
@@ -6524,6 +6525,9 @@ class ImageEditor(QMainWindow):
             "TIFF (*.tiff *.tif);;All Files (*)")
         if path:
             self.file_path = path
+            # Clear the project path — otherwise Ctrl+S after Save-As-PNG from a
+            # loaded .swiftshot silently overwrites the project file, not the PNG.
+            self.saved_path = None
             self._jpeg_quality = None   # fresh Save As re-prompts for quality
             self._save_to(path)
             self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
@@ -8171,6 +8175,14 @@ class ImageEditor(QMainWindow):
                     pin.closed.connect(
                         lambda pw: self.swiftshot_app._pin_windows.remove(pw)
                         if pw in self.swiftshot_app._pin_windows else None
+                    )
+                else:
+                    # Standalone editor (no app): keep our own reference or the
+                    # window is garbage-collected the instant this returns.
+                    self._standalone_pins.append(pin)
+                    pin.closed.connect(
+                        lambda pw: self._standalone_pins.remove(pw)
+                        if pw in self._standalone_pins else None
                     )
         except Exception as e:
             self._status(f"Pin failed: {e}")
