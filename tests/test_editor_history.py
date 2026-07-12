@@ -45,6 +45,24 @@ def test_history_snapshot_preserves_group_children(qapp):
     assert [c.name for c in snap.children] == ["Child A", "Child B"]
 
 
+def test_history_snapshot_restores_nested_grandchild_names(qapp):
+    """Undo used to rename grandchildren of nested groups to 'X copy' —
+    _copy_layer restored names only one level deep (AB-22)."""
+    from editor import HistoryManager, Layer, LayerGroup
+
+    inner = LayerGroup("Inner", 10, 10)
+    inner.children.append(Layer("Grandchild", 10, 10))
+    outer = LayerGroup("Outer", 10, 10)
+    outer.children.append(inner)
+
+    (state, _) = HistoryManager()._snap([outer], 0)
+    snap_outer = state[0]
+
+    assert snap_outer.name == "Outer"
+    assert snap_outer.children[0].name == "Inner"
+    assert snap_outer.children[0].children[0].name == "Grandchild"
+
+
 def test_history_on_change_fires_for_mutations(qapp):
     from editor import HistoryManager, Layer
 

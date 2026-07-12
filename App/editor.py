@@ -554,8 +554,13 @@ _SVG_ICONS = {
     "redo":         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>',
 }
 
-def svg_icon(key, color=C.TEXT_SEC, size=None):
+def svg_icon(key, color=None, size=None):
     """Render an SVG icon from _SVG_ICONS dict to a QIcon."""
+    # Resolve the default at call time, not import time: a module-level
+    # default=C.TEXT_SEC would bind the dark-theme hex before
+    # apply_editor_theme rebinds C for the light theme.
+    if color is None:
+        color = C.TEXT_SEC
     sz = size or dp(18)
     raw = _SVG_ICONS.get(key, "")
     if not raw:
@@ -671,13 +676,18 @@ class HistoryManager:
     def _copy_layer(l):
         # Layer.copy()/LayerGroup.copy() preserve image, mask, mask_enabled,
         # effects and group children -- everything undo must restore.
-        # They append " copy" to names (duplicate-layer UX), so restore them.
+        # They append " copy" to names (duplicate-layer UX), so restore them
+        # recursively (grandchildren of nested groups were renamed too).
         s = l.copy()
-        s.name = l.name
-        if hasattr(s, "children") and hasattr(l, "children"):
-            for src_child, dst_child in zip(l.children, s.children):
-                dst_child.name = src_child.name
+        HistoryManager._restore_names(l, s)
         return s
+
+    @staticmethod
+    def _restore_names(src, dst):
+        dst.name = src.name
+        if hasattr(src, "children") and hasattr(dst, "children"):
+            for sc, dc in zip(src.children, dst.children):
+                HistoryManager._restore_names(sc, dc)
 
     def _snap(self, layers, idx):
         return ([self._copy_layer(l) for l in layers], idx)
@@ -900,8 +910,6 @@ class CanvasWidget(QWidget):
         # Grid
         self._show_grid = False
         self._grid_size = 32  # pixels
-        # Navigator callback
-        self._nav_update_cb = None
 
     def _march_tick(self):
         # No point animating marching ants when the editor isn't on screen.
@@ -1173,9 +1181,6 @@ class CanvasWidget(QWidget):
             painter.drawLine(QPointF(cp.x() - ch, cp.y()), QPointF(cp.x() + ch, cp.y()))
             painter.drawLine(QPointF(cp.x(), cp.y() - ch), QPointF(cp.x(), cp.y() + ch))
             painter.restore()
-        # Update navigator
-        if self._nav_update_cb:
-            self._nav_update_cb()
         painter.end()
 
     def mousePressEvent(self, event):
@@ -1435,6 +1440,9 @@ class CanvasWidget(QWidget):
             self.editor._ruler_v.set_mouse_pos(cp.y())
         if self.panning:
             self.pan_offset = QPointF(event.pos()) - self.pan_start
+            # Keep rulers/navigator in sync while panning (they only followed
+            # wheel zoom before, so they stayed stale during a pan drag).
+            self.zoom_changed.emit(self.zoom, self.pan_offset.x(), self.pan_offset.y())
             self.update()
             return
         tool = self.editor.current_tool
@@ -5682,7 +5690,8 @@ class ImageEditor(QMainWindow):
                         if c.isValid():
                             editor_ref.set_bg_color(c); self2.update()
                 elif e.button() == Qt.RightButton:
-                    editor_ref.fg_color, editor_ref.bg_color = editor_ref.bg_color, editor_ref.fg_color
+                    fg, bg = editor_ref.bg_color, editor_ref.fg_color
+                    editor_ref.set_fg_color(fg); editor_ref.set_bg_color(bg)
                     self2.update(); editor_ref.canvas.update()
 
         self._color_swatch = _Swatch()
@@ -5722,12 +5731,16 @@ class ImageEditor(QMainWindow):
             self._status("Mask edit mode — white=reveal, black=hide")
         else:
             self._status(f"Tool: {tool.replace('-', ' ').title()}")
-        # Set cursor
+        self._apply_tool_cursor()
+        self.canvas.update()
+
+    def _apply_tool_cursor(self):
+        """Set the canvas cursor for the current tool. Shared so space-pan
+        release restores the tool cursor instead of forcing an arrow."""
         cursors = {"eyedropper": Qt.CrossCursor, "pan": Qt.OpenHandCursor,
                    "zoom": Qt.SizeAllCursor, "text": Qt.IBeamCursor,
                    "crop": Qt.CrossCursor}
-        self.canvas.setCursor(cursors.get(tool, Qt.ArrowCursor))
-        self.canvas.update()
+        self.canvas.setCursor(cursors.get(self.current_tool, Qt.ArrowCursor))
 
     # ── Right Panel ───────────────────────────────────────────────────────────
     def _create_right_panel(self):
@@ -6130,9 +6143,17 @@ class ImageEditor(QMainWindow):
         self.fg_color = c
         if hasattr(self, "color_panel"):
             self.color_panel.sync_fg(c)
+        self._refresh_color_swatch()
 
     def set_bg_color(self, c):
         self.bg_color = c
+        self._refresh_color_swatch()
+
+    def _refresh_color_swatch(self):
+        """Repaint the toolbar fg/bg swatch after a color change (X swap and
+        eyedropper picks used to leave it stale)."""
+        if hasattr(self, "_color_swatch"):
+            self._color_swatch.update()
 
     def update_layer_panel(self):
         if hasattr(self, "layer_panel"):
@@ -7981,12 +8002,13 @@ class ImageEditor(QMainWindow):
         elif k == Qt.Key_BracketRight:
             self.brush_size = min(500, self.brush_size + 2)
         elif k == Qt.Key_X:
-            self.fg_color, self.bg_color = self.bg_color, self.fg_color
+            fg, bg = self.bg_color, self.fg_color
+            self.set_fg_color(fg); self.set_bg_color(bg)
         # Note: Ctrl+C handled by Edit > Copy QAction (smart: selection or full image)
         super().keyPressEvent(e)
 
     def keyReleaseEvent(self, e):
-        if e.key() == Qt.Key_Space: self.canvas.setCursor(Qt.ArrowCursor)
+        if e.key() == Qt.Key_Space: self._apply_tool_cursor()
         super().keyReleaseEvent(e)
 
     # ── SwiftShot Integration ─────────────────────────────────────────────────
@@ -8265,6 +8287,14 @@ class ImageEditor(QMainWindow):
             self.canvas.march_timer.stop()
         except Exception:
             pass
+        # Stop the repeating poll and the lazy panel-refresh timers too — in
+        # standalone mode nothing else owns them, so the 2 s poll would keep
+        # firing on a closed window forever.
+        for tname in ("_poll_timer", "_panel_refresh_timer"):
+            t = getattr(self, tname, None)
+            if t is not None:
+                try: t.stop()
+                except Exception: pass
         if self.swiftshot_app:
             try:
                 self.swiftshot_app.editor_closed(self)

@@ -54,6 +54,18 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   connection (and its file handle) open, leaking one per capture/history op
   over a long tray session.
 
+### Editor — polish
+- Undo no longer renames the grandchildren of nested groups to "… copy".
+- Releasing Space after a temporary pan restores the active tool's cursor
+  instead of forcing a plain arrow.
+- The X foreground/background swap, eyedropper picks, and the swatch's
+  right-click swap now repaint the toolbar color swatch immediately.
+- Panning with the mouse keeps the rulers and navigator in sync (they only
+  followed wheel zoom before).
+- The editor's poll and panel-refresh timers stop when the window closes, so
+  a standalone editor no longer ticks on a closed window.
+- Icon default color is resolved at draw time so it follows the active theme.
+
 ### Editor — correctness fixes
 - Layer groups composite children with proper source-over alpha, so a
   50%-opacity child no longer renders at 25% (and soft edges no longer
