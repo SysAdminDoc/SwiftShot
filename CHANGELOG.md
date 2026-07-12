@@ -26,6 +26,25 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   connection (and its file handle) open, leaking one per capture/history op
   over a long tray session.
 
+### Editor — correctness fixes
+- Layer groups composite children with proper source-over alpha, so a
+  50%-opacity child no longer renders at 25% (and soft edges no longer
+  darken) inside a group.
+- Translucent pencil and spray strokes composite over the layer instead of
+  replacing its alpha, so they no longer punch transparent holes.
+- Adjustments applied while editing a layer mask no longer crash (the mask
+  is handed to the adjustment as RGBA, not RGB).
+- Exporting a flattened PNG/WebP no longer clears the unsaved-changes flag —
+  export isn't the same as saving the layered `.swiftshot` project, so the
+  close prompt still fires.
+- Ctrl+C with an active selection now also places the bitmap on the OS
+  clipboard, matching the no-selection copy path.
+- Pasting into an empty document records history and marks it dirty, so the
+  pasted image is protected by the unsaved-changes prompt.
+- Layer lock is now enforced on delete/cut selection, adjustments/filters,
+  text, sticky notes, layer alignment, and the AI background-remove/upscale
+  tools (they previously modified locked layers).
+
 ### Editor — data-loss fixes
 - Move tool no longer destroys content dragged past the canvas edge: each
   drag step re-pastes from a pristine snapshot using the cumulative offset

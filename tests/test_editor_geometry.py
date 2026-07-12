@@ -72,3 +72,18 @@ def test_empty_group_size_updates_via_probe(qapp):
     _geo(qapp)._apply_geometry_to_layer(group, lambda img: img.resize((5, 6)))
 
     assert (group._w, group._h) == (5, 6)
+
+
+def test_group_composite_does_not_square_child_alpha(qapp):
+    """A 50%-opacity child used to render at 25% because the group composited
+    via paste(img, mask=img), multiplying alpha by itself (AB-05)."""
+    from editor import Layer, LayerGroup
+
+    group = LayerGroup("G", 4, 4)
+    child = Layer("C", 4, 4)
+    child.image = Image.new("RGBA", (4, 4), (255, 0, 0, 128))   # 50% alpha
+    group.children.append(child)
+
+    composited = group.image
+    assert composited.getpixel((0, 0))[3] == 128       # not ~64
+

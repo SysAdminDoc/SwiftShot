@@ -808,7 +808,10 @@ class LayerGroup(Layer):
                 r, g, b, a = img.split()
                 a = a.point(lambda x: int(x * child.opacity / 255))
                 img = Image.merge("RGBA", (r, g, b, a))
-            result.paste(img, (0, 0), img)
+            # alpha_composite, not paste(img, mask=img): pasting with the image
+            # as its own mask multiplies alpha by itself (a 50%-opacity child
+            # renders at 25% and soft edges darken). Proper source-over blend.
+            result = Image.alpha_composite(result, img)
         return result
 
     @image.setter
@@ -1806,8 +1809,17 @@ class CanvasWidget(QWidget):
         hardness = getattr(self.editor, "brush_hardness", 100)
         translucent = self.editor.brush_opacity < 255
         use_soft = (hardness < 100 or translucent) and (t not in ("spray", "pencil"))
+        # Translucent pencil/spray must composite (source-over) too — plain
+        # ImageDraw fills REPLACE destination alpha, punching transparent holes
+        # through the layer. Keep their hard edge but blend the dab over.
+        hard_comp = translucent and t in ("pencil", "spray")
         # Reuse one stamp for the whole segment when compositing.
         stamp = self._make_brush_stamp(sz, color) if use_soft else None
+        pencil_stamp = None
+        if hard_comp and t == "pencil":
+            d = max(1, sz)
+            pencil_stamp = Image.new("RGBA", (d, d), (0, 0, 0, 0))
+            ImageDraw.Draw(pencil_stamp).ellipse((0, 0, d - 1, d - 1), fill=color)
         # Step every brush_size/2 pixels for smooth stroke
         step = max(1, sz // 3)
         for i in range(0, dist + 1, step):
@@ -1815,12 +1827,23 @@ class CanvasWidget(QWidget):
             x, y = int(x1 + (x2 - x1) * tv), int(y1 + (y2 - y1) * tv)
             if t == "spray":
                 density = max(2, sz)
-                for _ in range(density):
-                    ox = random.randint(-sz, sz); oy = random.randint(-sz, sz)
-                    if ox * ox + oy * oy <= sz * sz:
-                        draw.point((x + ox, y + oy), fill=color)
+                if hard_comp:
+                    tile = Image.new("RGBA", (2 * sz + 1, 2 * sz + 1), (0, 0, 0, 0))
+                    tdraw = ImageDraw.Draw(tile)
+                    for _ in range(density):
+                        ox = random.randint(-sz, sz); oy = random.randint(-sz, sz)
+                        if ox * ox + oy * oy <= sz * sz:
+                            tdraw.point((sz + ox, sz + oy), fill=color)
+                    self._stamp_over(layer.image, tile, x - sz, y - sz)
+                else:
+                    for _ in range(density):
+                        ox = random.randint(-sz, sz); oy = random.randint(-sz, sz)
+                        if ox * ox + oy * oy <= sz * sz:
+                            draw.point((x + ox, y + oy), fill=color)
             elif use_soft:
                 self._stamp_over(layer.image, stamp, x - sz // 2, y - sz // 2)
+            elif hard_comp and t == "pencil":
+                self._stamp_over(layer.image, pencil_stamp, x - sz // 2, y - sz // 2)
             else:
                 r = sz // 2
                 draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
@@ -4442,6 +4465,8 @@ class AlignPanel(QWidget):
     def _align(self, action):
         layer = self.editor.active_layer()
         if not layer or not self.editor.layers: return
+        if layer.locked:
+            self.editor._status("Layer is locked"); return
         w, h = self.editor.layers[0].image.size
         img = layer.image if layer.image.mode == "RGBA" else layer.image.convert("RGBA")
         # Layers are canvas-sized, so aligning the bitmap is a no-op. Align the
@@ -6372,10 +6397,12 @@ class ImageEditor(QMainWindow):
                 and not (getattr(l, 'editing_mask', False) and l.mask is not None)):
             self._status(f"{label} applies to layers, not groups"); return
         self.history.save_state(self.layers, self.active_layer_index, label)
-        # If editing mask, route adjustments to mask
+        # If editing mask, route adjustments to mask. Feed the func an RGBA
+        # image (not RGB): several adjustments unpack r,g,b,a = img.split() and
+        # crash on a 3-channel image ("not enough values to unpack").
         if getattr(l, 'editing_mask', False) and l.mask is not None:
             try:
-                result = func(l.mask.convert("RGB"))
+                result = func(l.mask.convert("RGBA"))
                 if result is not None:
                     l.mask = result.convert("L")
             except Exception as e:
@@ -6540,7 +6567,6 @@ class ImageEditor(QMainWindow):
                 if c:
                     c.save(path, "PNG")
                     self._status(f"Exported: {path}")
-                    self._set_dirty(False)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
 
@@ -6553,7 +6579,6 @@ class ImageEditor(QMainWindow):
                 if c:
                     c.save(path, "WEBP", lossless=True, quality=100, method=6)
                     self._status(f"Exported: {path}")
-                    self._set_dirty(False)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
 
@@ -6588,6 +6613,8 @@ class ImageEditor(QMainWindow):
 
     def delete_selection(self):
         l = self.active_layer()
+        if l and l.locked:
+            self._status("Layer is locked"); return
         if l and self.canvas.selection_mask:
             self.history.save_state(self.layers, self.active_layer_index, "Delete")
             r, g, b, a = l.image.split()
@@ -6608,6 +6635,12 @@ class ImageEditor(QMainWindow):
             r, g, b, a = self._clipboard.split()
             a = ImageChops.darker(a, self.canvas.selection_mask)
             self._clipboard = Image.merge("RGBA", (r, g, b, a))
+            # Also place it on the OS clipboard so Ctrl+C works with other
+            # apps (the no-selection copy path already does this).
+            try:
+                QApplication.clipboard().setPixmap(pil_to_qpixmap(self._clipboard))
+            except Exception:
+                pass
 
     def cut_selection(self): self.copy_selection(); self.delete_selection()
 
@@ -6625,8 +6658,10 @@ class ImageEditor(QMainWindow):
             self._status("Nothing to paste")
             return
         if not self.layers:
+            self.history.save_state(self.layers, self.active_layer_index, "Paste")
             self.layers = [Layer("Background", image=pasted)]
             self.active_layer_index = 0
+            self._mark_dirty()
             self.update_layer_panel(); self.canvas.update()
             return
         self.history.save_state(self.layers, self.active_layer_index, "Paste")
@@ -6981,6 +7016,8 @@ class ImageEditor(QMainWindow):
             if not text: return
             l = self.active_layer()
             if not l: return
+            if l.locked:
+                self._status("Layer is locked"); return
             self.history.save_state(self.layers, self.active_layer_index, "Text")
             draw = ImageDraw.Draw(l.image)
             sz = fs.value()
@@ -7583,6 +7620,8 @@ class ImageEditor(QMainWindow):
         layer = self.active_layer()
         if not layer:
             QMessageBox.information(self, "AI Remove BG", "No active layer."); return
+        if layer.locked:
+            self._status("Layer is locked"); return
 
         try:
             import rembg
@@ -7629,6 +7668,8 @@ class ImageEditor(QMainWindow):
         layer = self.active_layer()
         if not layer:
             QMessageBox.information(self, "AI Upscale", "No active layer."); return
+        if layer.locked:
+            self._status("Layer is locked"); return
         w, h = layer.image.size
         new_w, new_h = w * factor, h * factor
         progress = AIProgressDialog(f"Smart Upscale {factor}x", self)
@@ -8075,6 +8116,8 @@ class ImageEditor(QMainWindow):
         """Insert a colored sticky note annotation on the canvas."""
         layer = self.active_layer()
         if not layer: return
+        if layer.locked:
+            self._status("Layer is locked"); return
         text, ok = QInputDialog.getMultiLineText(self, "Sticky Note", "Note text:")
         if not ok or not text.strip(): return
         self.history.save_state(self.layers, self.active_layer_index, "Note")
