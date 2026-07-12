@@ -16,6 +16,16 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   is below 3.50.2 (CVE-2025-6965), so a security release can't ship an
   unpatched history-DB engine unnoticed.
 
+### Capture & history reliability
+- Freehand (transparent-outside) captures no longer get a rectangular
+  background/border/shadow drawn over their bounding box — beautify and the
+  post-capture frame are skipped when a capture intentionally carries an
+  alpha shape, so the drawn outline is preserved.
+- Capture-history SQLite connections are now always closed. The previous
+  `with sqlite3.connect(...)` only committed the transaction and left the
+  connection (and its file handle) open, leaking one per capture/history op
+  over a long tray session.
+
 ### Editor — data-loss fixes
 - Move tool no longer destroys content dragged past the canvas edge: each
   drag step re-pastes from a pristine snapshot using the cumulative offset

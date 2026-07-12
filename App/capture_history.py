@@ -7,6 +7,7 @@ import os
 import glob
 import hashlib
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -68,6 +69,20 @@ def _connect_db(history_dir):
     return conn
 
 
+@contextmanager
+def _db(history_dir):
+    """Open a history-DB connection that is committed on success and ALWAYS
+    closed. ``with sqlite3.connect(...) as conn`` only manages the transaction
+    (commit/rollback) — it never closes the connection, so the tray process
+    leaked a connection + file handle on every capture and history op."""
+    conn = _connect_db(history_dir)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _pixmap_png_bytes(pixmap):
     data = QByteArray()
     buffer = QBuffer(data)
@@ -109,8 +124,7 @@ def _index_file(conn, filepath):
     )
 
 
-def _ensure_history_index(history_dir):
-    conn = _connect_db(history_dir)
+def _ensure_history_index(conn, history_dir):
     indexed = {
         row["path"] for row in conn.execute("SELECT path FROM captures")
     }
@@ -118,7 +132,6 @@ def _ensure_history_index(history_dir):
         if filepath not in indexed:
             _index_file(conn, filepath)
     conn.commit()
-    return conn
 
 
 def _escape_like(text):
@@ -129,7 +142,8 @@ def _escape_like(text):
 def _history_entries(history_dir, search_text=""):
     if not os.path.isdir(history_dir):
         return []
-    with _ensure_history_index(history_dir) as conn:
+    with _db(history_dir) as conn:
+        _ensure_history_index(conn, history_dir)
         params = []
         where = "WHERE 1=1"
         if search_text:
@@ -152,7 +166,7 @@ def _history_entries(history_dir, search_text=""):
 
 
 def _delete_history_entry(history_dir, filepath):
-    with _connect_db(history_dir) as conn:
+    with _db(history_dir) as conn:
         conn.execute("DELETE FROM captures WHERE path = ?", (filepath,))
 
 
@@ -455,7 +469,7 @@ class CaptureHistoryDialog(QDialog):
                 os.remove(f)
             except Exception:
                 pass
-        with _connect_db(history_dir) as conn:
+        with _db(history_dir) as conn:
             conn.execute("DELETE FROM captures")
         self._load_history()
 
@@ -470,7 +484,7 @@ def save_to_history(pixmap, ocr_text=""):
 
         png_bytes = _pixmap_png_bytes(pixmap)
         digest = hashlib.sha256(png_bytes).hexdigest()
-        with _connect_db(history_dir) as conn:
+        with _db(history_dir) as conn:
             existing = conn.execute(
                 "SELECT path FROM captures WHERE sha256 = ?",
                 (digest,),
@@ -498,7 +512,7 @@ def save_to_history(pixmap, ocr_text=""):
             f.write(png_bytes)
 
         created_at = datetime.now().isoformat(timespec="seconds")
-        with _connect_db(history_dir) as conn:
+        with _db(history_dir) as conn:
             conn.execute(
                 """
                 INSERT INTO captures

@@ -423,7 +423,8 @@ class SwiftShotApp:
             from utils import apply_freehand_mask
             cropped = CaptureManager.crop_image(full_screenshot, rect)
             if cropped:
-                self._handle_capture(apply_freehand_mask(cropped, points, rect))
+                self._handle_capture(
+                    apply_freehand_mask(cropped, points, rect), preserve_alpha=True)
         except Exception as e:
             log.error(f"Freehand selection failed: {e}")
 
@@ -549,7 +550,7 @@ class SwiftShotApp:
                         cropped = apply_freehand_mask(
                             cropped, freehand_points, rect)
                     log.info("Timed capture completed")
-                    self._handle_capture(cropped)
+                    self._handle_capture(cropped, preserve_alpha=bool(freehand_points))
                 else:
                     log.warning("Timed capture: crop returned None")
             else:
@@ -687,15 +688,19 @@ class SwiftShotApp:
     # Post-capture handling
     # -------------------------------------------------------------------
 
-    def _handle_capture(self, pixmap):
+    def _handle_capture(self, pixmap, preserve_alpha=False):
         if config.PLAY_CAMERA_SOUND:
             try:
                 from utils import play_camera_sound
                 play_camera_sound()
             except Exception:
                 pass
-        pixmap = self._apply_beautification(pixmap)
-        pixmap = self._apply_frame(pixmap)
+        # Beautify/frame draw a rectangular background+border over the whole
+        # bounding box; on a freehand (transparent-outside) capture that would
+        # fill in the shape and erase the drawn outline. Skip them there.
+        if not preserve_alpha:
+            pixmap = self._apply_beautification(pixmap)
+            pixmap = self._apply_frame(pixmap)
         actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
                  f"actions={actions}")
