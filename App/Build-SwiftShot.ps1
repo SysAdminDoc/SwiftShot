@@ -127,6 +127,7 @@ function Write-Step([string]$msg)    { Write-Host "  [-] $msg" -ForegroundColor 
 function Write-OK([string]$msg)      { Write-Host "  [+] $msg" -ForegroundColor Green  }
 function Write-Err([string]$msg)     { Write-Host "  [!] $msg" -ForegroundColor Red    }
 function Write-Info([string]$msg)    { Write-Host "      $msg" -ForegroundColor DarkGray }
+function Write-Warn([string]$msg)    { Write-Host "  [~] $msg" -ForegroundColor Yellow }
 function Write-FileSize([string]$label, [string]$path) {
     if (Test-Path $path) {
         $size = [math]::Round((Get-Item $path).Length / 1MB, 1)
@@ -278,6 +279,23 @@ if ($pyiVer -match '^(\d+)\.(\d+)') {
     exit 1
 }
 Write-OK "PyInstaller: $pyiVer"
+
+# --- Bundled SQLite version (history DB; CVE-2025-6965 fixed in 3.50.2) ---
+# PyInstaller freezes whatever SQLite the interpreter links, so the guard
+# runs against the build venv's interpreter.
+$ErrorActionPreference = 'Continue'
+$sqliteVer = (& $VenvPython -c "import sqlite3; print(sqlite3.sqlite_version)" 2>&1).ToString().Trim()
+$ErrorActionPreference = 'Stop'
+if ($sqliteVer -match '^(\d+)\.(\d+)\.(\d+)') {
+    $sv = [version]$sqliteVer
+    if ($sv -lt [version]'3.50.2') {
+        Write-Warn "Bundled SQLite is $sqliteVer (< 3.50.2, CVE-2025-6965). Upgrade the Python 3.12 runtime before a security release."
+    } else {
+        Write-OK "SQLite: $sqliteVer"
+    }
+} else {
+    Write-Warn "Could not parse SQLite version: $sqliteVer"
+}
 
 # ===================================================================
 # STEP 4: Generate Application Icon

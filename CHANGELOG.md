@@ -7,6 +7,15 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Security & dependencies
+- Pillow floor raised to `>=12.3.0`, clearing six 2026 CVEs including
+  CVE-2026-55798 (OS command injection), CVE-2026-55380 / CVE-2026-54060
+  (excessive memory allocation) and CVE-2026-42309 (heap overflow). 12.3.0
+  also bundles the native AVIF plugin.
+- The build script now reports the bundled SQLite version and warns when it
+  is below 3.50.2 (CVE-2025-6965), so a security release can't ship an
+  unpatched history-DB engine unnoticed.
+
 ### Editor — data-loss fixes
 - Move tool no longer destroys content dragged past the canvas edge: each
   drag step re-pastes from a pristine snapshot using the cumulative offset
