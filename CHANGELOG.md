@@ -60,6 +60,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   freeze the UI for seconds.
 
 ### Editor — polish
+- Off-canvas paint expansion also shifts guides and the clone-stamp source
+  into the grown canvas, so they no longer point at the wrong place.
+- "Clear Capture History" reports the number of captures the panel actually
+  shows (deduped) rather than a raw file count that could include hidden
+  duplicate-content files.
 - Undo/redo clear in-progress warp and move snapshots, so the next warp
   stroke records its own history entry and neither operates on stale layers.
 - The layer panel highlights the correct row for the active layer even when

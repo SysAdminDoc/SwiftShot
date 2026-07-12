@@ -472,10 +472,14 @@ class CaptureHistoryDialog(QDialog):
         if not files:
             return
 
+        # Count the entries the panel actually shows (deduped by content), not
+        # the raw file count — otherwise a duplicate-content file that the
+        # sha256 index hides makes "Delete all N" report more than is visible.
+        visible = len(_history_entries(history_dir))
         response = QMessageBox.question(
             self,
             "Clear Capture History",
-            f"Delete all {len(files)} capture history image(s)?",
+            f"Delete all {visible} capture history image(s)?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )

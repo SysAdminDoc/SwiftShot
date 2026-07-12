@@ -3002,6 +3002,13 @@ class CanvasWidget(QWidget):
             self.pan_offset = QPointF(
                 self.pan_offset.x() - ox * self.zoom,
                 self.pan_offset.y() - oy * self.zoom)
+            # Guides and the clone-stamp source live in image space too — shift
+            # them or they'd point at the wrong place after the canvas grows.
+            for g in self._guides:
+                g['pos'] += ox if g.get('orientation') == 'v' else oy
+            clone_src = getattr(self.editor, "clone_source", None)
+            if clone_src is not None:
+                self.editor.clone_source = (clone_src[0] + ox, clone_src[1] + oy)
             ix += ox; iy += oy
         return ix, iy
 
