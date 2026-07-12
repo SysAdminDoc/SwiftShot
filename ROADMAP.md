@@ -25,10 +25,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
   GDI BitBlt returns black for hardware-accelerated/protected/some UWP windows; WGC captures them and unlocks recording. `CAPTUREBLT` quick-win is DONE — this is the full backend. Touches `App/capture.py` (probe + fallback), optional dep `windows-capture` or `winrt-Windows.Graphics.Capture`. Complexity: L.
 - [ ] R-02 P2 — Split editor.py into modules
   8,200+ lines in one file. Start with zero-Qt-coupling units: `core.py` (scaling/PIL↔Qt/numpy/theme) and `layers.py` (`Layer`/`HistoryManager`/`LayerGroup`). Full suite must pass unchanged. Complexity: L (first two modules: M).
-- [ ] R-03 P2 — Editor accessibility: explicit tab order
-  Accessible names/descriptions and tool shortcuts are DONE (editor window,
-  canvas, toolbar buttons, layer-panel controls, covered by a test). Remaining:
-  a sensible `setTabOrder` chain across the toolbar → canvas → panels. Complexity: S.
 - [ ] R-04 P2 — Tests for the remaining untested capture surfaces
   `overlay.py` (region select / edge snap) and `window_picker.py` (window-hierarchy walk) still have no coverage. (DONE: `scrolling_capture` stitching, `pin_window` scaling, and the editor compositor now have tests.) Complexity: M.
 - [ ] R-09 P3 — OCR "copy as table" for structured captures
@@ -134,10 +130,4 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
   Acceptance: at least one window/browser frame preset renders around a capture; tested on a sample pixmap.
   Complexity: M
 
-- [ ] P2 — winget manifest + Scoop bucket for the unsigned Inno EXE / portable zip
-  Why: winget accepts unsigned EXE/MSI installers and Scoop accepts portable zips — both peers (ShareX, Greenshot) distribute this way, no signing needed. The existing "Admin-install MSIX with winget manifest" item mis-couples winget to MSIX/signing (rejected in RESEARCH.md). This decouples discoverability from a cert.
-  Evidence: https://github.com/microsoft/winget-pkgs ; https://bjansen.github.io/scoop-apps/extras/sharex/ .
-  Touches: new `manifests/` YAML (winget, with SHA256 + silent-install args), a Scoop `.json` pointing at the portable exe/zip, release checklist in CLAUDE.md.
-  Acceptance: `winget install SysAdminDoc.SwiftShot` and a Scoop manifest install validate locally (`winget validate`, `scoop install` from the manifest url).
-  Complexity: M
 

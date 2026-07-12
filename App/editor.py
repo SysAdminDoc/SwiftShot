@@ -3676,6 +3676,12 @@ class LayerPanel(QWidget):
         layout.addWidget(mask_row)
         self._mask_row = mask_row
 
+        # Explicit keyboard tab order through the layer controls.
+        QWidget.setTabOrder(self.blend_combo, self.opacity_slider)
+        QWidget.setTabOrder(self.opacity_slider, self.layer_list)
+        QWidget.setTabOrder(self.layer_list, self.vis_btn)
+        QWidget.setTabOrder(self.vis_btn, self.lock_btn)
+
     def _make_thumb(self, layer):
         try:
             tw, th = dp(40), dp(32)
