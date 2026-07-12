@@ -25,8 +25,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
   GDI BitBlt returns black for hardware-accelerated/protected/some UWP windows; WGC captures them and unlocks recording. `CAPTUREBLT` quick-win is DONE — this is the full backend. Touches `App/capture.py` (probe + fallback), optional dep `windows-capture` or `winrt-Windows.Graphics.Capture`. Complexity: L.
 - [ ] R-02 P2 — Split editor.py into modules
   8,200+ lines in one file. Start with zero-Qt-coupling units: `core.py` (scaling/PIL↔Qt/numpy/theme) and `layers.py` (`Layer`/`HistoryManager`/`LayerGroup`). Full suite must pass unchanged. Complexity: L (first two modules: M).
-- [ ] R-04 P2 — Tests for the remaining untested capture surfaces
-  `overlay.py` (region select / edge snap) and `window_picker.py` (window-hierarchy walk) still have no coverage. (DONE: `scrolling_capture` stitching, `pin_window` scaling, and the editor compositor now have tests.) Complexity: M.
 - [ ] R-09 P3 — OCR "copy as table" for structured captures
   Detect column/row structure from WinRT OCR word boxes; emit TSV/HTML to clipboard; fall back to flat text. Complexity: M.
 
