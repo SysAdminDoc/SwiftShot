@@ -92,6 +92,27 @@ def test_settings_filename_preview_updates(qapp):
     assert dialog.filename_preview.text() == "notepad_1920x1080_001.webp"
 
 
+def test_editor_primary_controls_have_accessible_names(qapp):
+    import editor
+
+    ed = editor.ImageEditor()
+    try:
+        assert ed.accessibleName() == "SwiftShot image editor"
+        assert ed.canvas.accessibleName() == "Image canvas"
+        assert ed.canvas.accessibleDescription()
+        lp = ed.layer_panel
+        assert lp.layer_list.accessibleName() == "Layers"
+        assert lp.opacity_slider.accessibleName() == "Layer opacity"
+        assert lp.blend_combo.accessibleName() == "Layer blend mode"
+        assert lp.vis_btn.accessibleName() == "Toggle layer visibility"
+        assert lp.lock_btn.accessibleName() == "Lock layer"
+        # Every toolbar tool button carries an accessible name.
+        named = [b for b in ed._tool_buttons.values() if b.accessibleName()]
+        assert len(named) == len(ed._tool_buttons)
+    finally:
+        ed.close()
+
+
 def test_hotkey_recorder_keyboard_start_updates_accessible_state(qapp):
     from settings_dialog import HotkeyRecorderWidget
 

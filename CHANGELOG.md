@@ -68,6 +68,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   blur-and-restore) instead of a per-pixel random-patch search, so filling a
   large selection is fast and blends the surrounding colours in smoothly.
 
+### Accessibility
+- The image editor, its canvas, every toolbar tool button, and the layer-panel
+  controls (layer list, opacity, blend mode, visibility, lock) now expose
+  accessible names/descriptions for screen readers.
+
 ### Editor — polish
 - Panning, zoom-to-cursor, and free-transform scaling now behave correctly
   when the canvas view is rotated (they used raw screen deltas before, so the

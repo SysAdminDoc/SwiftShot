@@ -894,6 +894,10 @@ class CanvasWidget(QWidget):
     def __init__(self, editor):
         super().__init__()
         self.editor = editor
+        self.setAccessibleName("Image canvas")
+        self.setAccessibleDescription(
+            "Drawing surface. Use the toolbar to pick a tool, then click and "
+            "drag here to paint, select or transform.")
         self.zoom = 1.0
         self.pan_offset = QPointF(0, 0)
         self.panning = False
@@ -3530,6 +3534,7 @@ class LayerPanel(QWidget):
         self.blend_combo = QComboBox()
         self.blend_combo.addItems(Layer.BLEND_MODES)
         self.blend_combo.currentTextChanged.connect(self.on_blend_change)
+        self.blend_combo.setAccessibleName("Layer blend mode")
         self.blend_combo.setFixedHeight(dp(24))
         br.addWidget(self.blend_combo)
         ol.addLayout(br)
@@ -3542,6 +3547,7 @@ class LayerPanel(QWidget):
         self.opacity_slider = QSlider(Qt.Horizontal)
         self.opacity_slider.setRange(0, 100); self.opacity_slider.setValue(100)
         self.opacity_slider.valueChanged.connect(self.on_opacity_change)
+        self.opacity_slider.setAccessibleName("Layer opacity")
         orow.addWidget(self.opacity_slider)
         self.opacity_label = QLabel("100%")
         self.opacity_label.setFixedWidth(dp(32))
@@ -3552,6 +3558,7 @@ class LayerPanel(QWidget):
 
         # Layer list
         self.layer_list = QListWidget()
+        self.layer_list.setAccessibleName("Layers")
         self.layer_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.layer_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.layer_list.setIconSize(QSize(dp(40), dp(32)))
@@ -3605,12 +3612,14 @@ class LayerPanel(QWidget):
         al.addStretch()
         self.vis_btn = QToolButton(); self.vis_btn.setCheckable(True); self.vis_btn.setChecked(True)
         self.vis_btn.setToolTip("Toggle Visibility")
+        self.vis_btn.setAccessibleName("Toggle layer visibility")
         self.vis_btn.setIcon(svg_icon("eye-open", C.TEXT_SEC, dp(15)))
         self.vis_btn.setFixedSize(dp(30), dp(30))
         self.vis_btn.toggled.connect(self.on_visibility_toggle)
         al.addWidget(self.vis_btn)
         self.lock_btn = QToolButton(); self.lock_btn.setCheckable(True)
         self.lock_btn.setToolTip("Lock Layer")
+        self.lock_btn.setAccessibleName("Lock layer")
         self.lock_btn.setIcon(svg_icon("lock-open", C.TEXT_SEC, dp(15)))
         self.lock_btn.setFixedSize(dp(30), dp(30))
         self.lock_btn.toggled.connect(self.on_lock_toggle)
@@ -5261,6 +5270,7 @@ class ImageEditor(QMainWindow):
         version = getattr(config, "APP_VERSION", "")
         version_str = f" v{version}" if version else ""
         self.setWindowTitle(f"SwiftShot Editor{version_str}{scale_str}")
+        self.setAccessibleName("SwiftShot image editor")
         self.setMinimumSize(dp(900), dp(600))
         self.swiftshot_app = swiftshot_app
 
@@ -5611,6 +5621,8 @@ class ImageEditor(QMainWindow):
             btn = QToolButton(); btn.setCheckable(True)
             btn.setFixedSize(sz, sz)
             btn.setToolTip(f"{tip}" + (f" ({shortcut})" if shortcut else ""))
+            btn.setAccessibleName(tip)
+            btn.setAccessibleDescription(f"{tip} tool" + (f", shortcut {shortcut}" if shortcut else ""))
             btn.setIcon(svg_icon(tool_id, C.TEXT_SEC, dp(18)))
             btn.clicked.connect(lambda: self._set_tool(tool_id, btn))
             if shortcut:
@@ -5625,6 +5637,7 @@ class ImageEditor(QMainWindow):
             """tools = [(tool_id, label), ...]"""
             btn = FlyoutToolButton(primary, tools, self)
             btn.tool_selected.connect(lambda t: self._set_tool(t, btn))
+            btn.setAccessibleName(primary.replace('-', ' ').title())
             if shortcut:
                 btn.setToolTip(f"{primary.replace('-',' ').title()} ({shortcut})")
                 sc = QShortcut(QKeySequence(shortcut), self)
