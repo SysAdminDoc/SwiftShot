@@ -113,7 +113,44 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 ### P1 — security / data safety
 
+- [ ] P1 — Auto-redact silently fails to redact on a group / mis-redacts on size-mismatched layers
+  Why: `auto_redact` OCRs `self.get_composite()` (canvas-sized, origin = layers[0]) but draws the black boxes on `self.active_layer().image`; a `LayerGroup` active layer has a no-op image setter so `ImageDraw.Draw` mutates a throwaway composite — nothing is redacted, yet history is pushed and the doc marked dirty, so the user believes the PII is hidden. A differently-sized active layer (pasted/diff-overlay) gets boxes at the wrong coordinates.
+  Evidence: `App/editor.py` `auto_redact` (draws on active layer) vs `LayerGroup.image` setter no-op (~848); RESEARCH.md "net-new bugs".
+  Touches: `App/editor.py` — bake redaction onto a fresh full-canvas layer or into the composite, and/or refuse when `active_layer()` is a group or its size != composite size.
+  Acceptance: redacting with a group (or a pasted smaller/larger layer) as the active layer actually blacks out the PII pixels; regression test on a group-active document.
+  Complexity: M
+
 ### P2 — capture correctness / reliability (net-new bugs)
+
+- [ ] P2 — Auto-redact over-matches numeric data and never asks for confirmation
+  Why: the phone pattern `\+?\d[\d().-]{6,}\d` matches any 8+ run of digits/`().-` — dates (2026-07-12), order/ID numbers, ISBNs, prices — and `auto_redact` blacks them out with no preview, silently defacing legitimate data on e.g. a spreadsheet screenshot.
+  Evidence: `App/ocr.py:_PII_PATTERNS` (phone entry); `App/editor.py:auto_redact` (no confirm step).
+  Touches: `App/ocr.py` (tighten the phone pattern to plausible phone groupings), `App/editor.py` (show the matched boxes and confirm before drawing).
+  Acceptance: a screenshot of a dates/prices table is not redacted; the user sees and confirms the matched regions first; unit test on `find_pii_words` false-positive cases.
+  Complexity: M
+
+- [ ] P2 — `get_composite` crashes on a size-mismatched layer with a non-Normal blend mode
+  Why: `_blend` non-Normal modes call `ImageChops.multiply(base.convert("RGB"), top.convert("RGB"))`; a pasted layer keeps its clipboard dimensions, so a larger/smaller pasted layer with any non-Normal blend raises `images do not match`. `get_composite` runs on every repaint/hover/save/export → repeated crash dialogs (Normal mode is safe — paste clips).
+  Evidence: `App/editor.py:_blend` (~6547); `paste_clipboard` keeps clipboard size (~6915).
+  Touches: `App/editor.py` — crop/pad `top` to `base.size` at the top of `_blend` (or normalize pasted layers to canvas size on paste).
+  Acceptance: pasting a larger image, setting Multiply, and repainting does not raise; regression test on `_blend` with mismatched sizes.
+  Complexity: S
+
+- [ ] P2 — CLI `--monitor` out-of-range silently writes a full-desktop image (exit 0)
+  Why: `cli._capture` → `capture.capture_monitor` falls through the `0 <= idx < len(screens)` guard to `capture_fullscreen()`; a script asking for monitor 99 gets a wrong full-desktop image with a success exit code.
+  Evidence: `App/capture.py:capture_monitor` (~327); `App/cli.py:_capture` (~63).
+  Touches: `App/cli.py` — validate the monitor index against `QApplication.screens()` and return a non-zero error for out-of-range values.
+  Acceptance: `swiftshot --monitor 99 --out x.png` errors with a non-zero exit and no file written; test covers it.
+  Complexity: S
+
+### P2 — observability
+
+- [ ] P2 — "Export Diagnostics" bundle command
+  Why: only a rotating logger + `crash.log` exist; there is no one-command bundle to attach to a bug report. Cheapest observability win for a local tool.
+  Evidence: RESEARCH.md observability; peers ship diagnostics export.
+  Touches: `App/app.py` (tray menu action) + `App/cli.py` (a `--diagnostics` verb); zip `crash.log` + rotated logs + `swiftshot.json`/editor `config.json` (secrets stripped) + OS/Qt/Pillow/SQLite versions + a WGC-availability probe.
+  Acceptance: the action writes a zip whose contents include the logs and a versions manifest; secrets are absent; verified on a sample run.
+  Complexity: S
 
 ### P2 — features (evidence-backed gaps)
 
@@ -123,5 +160,35 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
   Touches: `App/utils.py` (frame assets/drawing), `App/config.py`, `App/settings_dialog.py` Frame tab.
   Acceptance: at least one window/browser frame preset renders around a capture; tested on a sample pixmap.
   Complexity: M
+
+### P3 — polish / correctness
+
+- [ ] P3 — `words_to_table` row clustering drifts on slanted/variable-baseline text
+  Why: rows are grouped against the first word's `y` (never updated within a row, `row_y = ws[0]["y"]`), so a row whose baseline gradually rises/falls splits mid-row and scrambles the emitted TSV columns.
+  Evidence: `App/ocr.py:words_to_table` (~215-231).
+  Touches: `App/ocr.py` — cluster by a running row mean/median `y` (update as words are added).
+  Acceptance: a synthetic slanted-baseline row stays one row; unit test on `words_to_table`.
+  Complexity: S
+
+- [ ] P3 — `compute_image_diff` hard-overwrites changed pixels though the docstring says "tinted"
+  Why: `overlay[changed] = (255,0,0,255)` replaces changed regions with solid opaque red, discarding the underlying content; the docstring claims a tint, and near-identical images become large solid-red blocks.
+  Evidence: `App/editor.py:compute_image_diff` (~121-135).
+  Touches: `App/editor.py` — alpha-blend red over the base for changed pixels (or fix the docstring to match).
+  Acceptance: changed regions show a red tint over the original content; existing diff test updated.
+  Complexity: S
+
+- [ ] P3 — Structured crash context in the editor excepthook
+  Why: the editor's single excepthook logs the traceback but not the active tool / layer count / last history action, so crash reports lack the context to reproduce.
+  Evidence: `App/editor.py` editor excepthook (see CLAUDE.md note); RESEARCH.md observability.
+  Touches: `App/editor.py` — attach active tool, layer count, and last history label to the logged record.
+  Acceptance: a forced editor exception logs the extra context alongside the traceback.
+  Complexity: S
+
+- [ ] P3 — Async history-OCR can update an already-evicted row (lost OCR text under burst)
+  Why: `save_to_history` enforces `CAPTURE_HISTORY_MAX` immediately, so a rapid capture burst can delete the row/file before the background `_OcrWorker` finishes; `update_history_ocr` then no-ops and the computed OCR text is lost.
+  Evidence: `App/app.py:_start_history_ocr`; `App/capture_history.py:save_to_history` eviction + `update_history_ocr`.
+  Touches: `App/capture_history.py` — key the update by sha256 (survives rename) or skip if the row is gone; optionally defer eviction until OCR settles.
+  Acceptance: a capture that survives the burst ends up with its OCR text; no crash when the row was evicted.
+  Complexity: S
 
 
