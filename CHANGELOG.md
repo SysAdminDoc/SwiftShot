@@ -8,6 +8,9 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### Added
+- Packaging manifests for winget (`packaging/winget/`, validated with
+  `winget validate`) and Scoop (`packaging/scoop/swiftshot.json`), both
+  unsigned-friendly (Inno installer / portable exe). Release fills the SHA-256.
 - Backdrop beautification: place captures on a padded solid or vertical-gradient
   background (Settings ▸ Frame ▸ Backdrop), the most-requested gap versus paid
   tools. Applies after the border/shadow/rounded frame in the capture funnel.

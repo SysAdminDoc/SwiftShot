@@ -1,0 +1,25 @@
+PackageIdentifier: SysAdminDoc.SwiftShot
+PackageVersion: 2.8.0
+PackageLocale: en-US
+Publisher: SysAdminDoc
+PublisherUrl: https://github.com/SysAdminDoc
+PublisherSupportUrl: https://github.com/SysAdminDoc/SwiftShot/issues
+PackageName: SwiftShot
+PackageUrl: https://github.com/SysAdminDoc/SwiftShot
+License: GPL-3.0
+LicenseUrl: https://github.com/SysAdminDoc/SwiftShot/blob/main/LICENSE
+ShortDescription: A fast, bloat-free screenshot tool for Windows.
+Description: >-
+  A full-featured Greenshot replacement for Windows — region/window/monitor/
+  freehand/scrolling/OCR/timed capture, a layer-based image editor, pin to
+  desktop, and SQLite capture history. No plugins, no cloud, no telemetry.
+Moniker: swiftshot
+Tags:
+  - screenshot
+  - capture
+  - screen-capture
+  - ocr
+  - annotation
+  - editor
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
