@@ -117,6 +117,23 @@ def pil_to_qimage(pil_image):
 def pil_to_qpixmap(pil_image):
     return QPixmap.fromImage(pil_to_qimage(pil_image))
 
+
+def compute_image_diff(base, other, threshold=16):
+    """Compare two images. `other` is resized to `base`. Returns
+    (overlay, pct_changed): overlay is `base` with changed pixels tinted red,
+    pct_changed is the percentage of pixels differing beyond `threshold`."""
+    base = base.convert("RGBA")
+    other = other.convert("RGBA")
+    if other.size != base.size:
+        other = other.resize(base.size, Image.LANCZOS)
+    a = np.asarray(base, dtype=np.int16)
+    b = np.asarray(other, dtype=np.int16)
+    changed = np.abs(a[:, :, :3] - b[:, :, :3]).max(axis=2) > threshold
+    pct = float(changed.mean()) * 100.0
+    overlay = np.asarray(base).copy()
+    overlay[changed] = (255, 0, 0, 255)
+    return Image.fromarray(overlay, "RGBA"), pct
+
 # ── Numpy image helpers (scipy-free) ─────────────────────────────────────────
 # scipy is not a dependency and is excluded from the frozen build; these
 # replace the two scipy.ndimage operations the editor needs.
@@ -6197,6 +6214,7 @@ class ImageEditor(QMainWindow):
         self._act(tm, "Command Palette", "Ctrl+K", self.open_command_palette)
         tm.addSeparator()
         self._act(tm, "OCR – Extract Text", "Ctrl+Shift+O", self.run_ocr)
+        self._act(tm, "Compare With Image...", "", self.compare_with_image)
 
     def _set_ui_scale(self, scale_val):
         """Change UI scale and restart editor to apply."""
@@ -6756,6 +6774,27 @@ class ImageEditor(QMainWindow):
                     self._status(f"Exported: {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
+
+    def compare_with_image(self):
+        """Overlay a pixel diff against another image as a new red-tinted layer."""
+        if not self.layers:
+            self._status("Nothing to compare"); return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Compare With Image", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff);;All Files (*)")
+        if not path: return
+        try:
+            other = Image.open(path)
+            overlay, pct = compute_image_diff(self.get_composite(), other)
+        except Exception as e:
+            QMessageBox.critical(self, "Compare Error", f"Failed to compare:\n{e}")
+            return
+        self.history.save_state(self.layers, self.active_layer_index, "Diff Overlay")
+        nl = Layer(f"Diff vs {os.path.basename(path)}"); nl.image = overlay
+        self.layers.append(nl); self.active_layer_index = len(self.layers) - 1
+        self._mark_dirty()
+        self.update_layer_panel(); self.canvas.update()
+        self._status(f"Image diff: {pct:.2f}% of pixels changed")
 
     def export_avif(self):
         path, _ = QFileDialog.getSaveFileName(

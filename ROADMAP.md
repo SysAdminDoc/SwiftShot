@@ -141,11 +141,3 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
   Acceptance: `winget install SysAdminDoc.SwiftShot` and a Scoop manifest install validate locally (`winget validate`, `scoop install` from the manifest url).
   Complexity: M
 
-### P3 — hardening / polish
-
-- [ ] P3 — Image Comparer / diff panel
-  Why: ShareX 21 shipped an image-diff tool; useful for QA/design regressions and cheap as a NumPy pixel-diff over two loaded images.
-  Evidence: RESEARCH.md (ShareX 21.0.0, 2026-07-03).
-  Touches: `App/editor.py` (small compare panel / dialog), menu entry.
-  Acceptance: load two images, see a highlighted diff (and % changed); works headless in a unit test on two arrays.
-  Complexity: M

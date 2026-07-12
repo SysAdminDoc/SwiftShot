@@ -8,6 +8,8 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### Added
+- Tools ▸ Compare With Image: overlays a pixel diff against another image as a
+  new red-tinted layer and reports the percentage of pixels changed.
 - Scriptable headless CLI: `swiftshot --region X,Y,W,H --out shot.png`,
   `--fullscreen`, `--monitor N`, and `--ocr` (prints recognized text to
   stdout). Runs and exits without the tray; a bare image path and
