@@ -1465,19 +1465,24 @@ class CanvasWidget(QWidget):
                     self._draw_eraser_line(self.last_pos, img_pos)
                 self.last_pos = img_pos; self.update()
             elif tool == "move":
-                dx = img_pos.x() - self.last_pos.x()
-                dy = img_pos.y() - self.last_pos.y()
                 layer = self.editor.active_layer()
-                if layer and not layer.locked:
-                    # Accumulate offset to avoid rounding drift per step
-                    if not hasattr(self, "_move_accum"):
-                        self._move_accum = [0.0, 0.0]
-                    self._move_accum[0] += dx; self._move_accum[1] += dy
-                    ix, iy = int(self._move_accum[0]), int(self._move_accum[1])
-                    if ix != 0 or iy != 0:
-                        ni = Image.new("RGBA", layer.image.size, (0, 0, 0, 0))
-                        ni.paste(layer.image, (ix, iy)); layer.image = ni
-                        self._move_accum[0] -= ix; self._move_accum[1] -= iy
+                orig = getattr(self, "_move_orig_img", None)
+                start = getattr(self, "_move_start", None)
+                if layer and not layer.locked and orig is not None and start is not None:
+                    # Cumulative offset from the press point, always re-pasting
+                    # from the pristine snapshot so content dragged past the
+                    # canvas edge and back is preserved (re-pasting from the
+                    # already-clipped layer.image each step destroys it), and
+                    # the mask is shifted identically so masked layers stay in
+                    # sync.
+                    tdx = int(round(img_pos.x() - start.x()))
+                    tdy = int(round(img_pos.y() - start.y()))
+                    ni = Image.new("RGBA", orig.size, (0, 0, 0, 0))
+                    ni.paste(orig, (tdx, tdy)); layer.image = ni
+                    omask = getattr(self, "_move_orig_mask", None)
+                    if omask is not None:
+                        nm = Image.new("L", omask.size, 0)
+                        nm.paste(omask, (tdx, tdy)); layer.mask = nm
                     self.last_pos = img_pos; self.update()
             elif tool in ("marquee-rect", "marquee-ellipse") and self.selection_start:
                 x1, y1 = self.selection_start.x(), self.selection_start.y()
@@ -1633,6 +1638,12 @@ class CanvasWidget(QWidget):
                 self._xform_drag_wp = None
             elif tool == "perspective":
                 self._persp_drag_i = -1
+            elif tool == "move":
+                # Drop the move snapshots so the next drag starts fresh and
+                # they cannot leak into an unrelated layer.
+                self._move_orig_img = None
+                self._move_orig_mask = None
+                self._move_start = None
             elif tool == "warp":
                 # Done with this warp stroke; keep _warp_orig so user can keep painting
                 pass
@@ -5810,9 +5821,12 @@ class ImageEditor(QMainWindow):
         self._act(em, "&Paste", "Ctrl+V", self.paste_clipboard)
         self._act(em, "&Delete", "Delete", self.delete_selection)
         em.addSeparator()
-        self._act(em, "Select &All", "Ctrl+A", self.select_all)
-        self._act(em, "&Deselect", "Ctrl+D", self.deselect)
-        self._act(em, "&Invert Selection", "Ctrl+Shift+I", self.invert_selection)
+        # These three actions are also shown in the Select menu; the SAME
+        # QAction objects are reused there (not re-created) so the shortcuts
+        # bind once. Two actions sharing a shortcut make Qt fire neither.
+        self._sel_all_act = self._act(em, "Select &All", "Ctrl+A", self.select_all)
+        self._deselect_act = self._act(em, "&Deselect", "Ctrl+D", self.deselect)
+        self._invert_sel_act = self._act(em, "&Invert Selection", "Ctrl+Shift+I", self.invert_selection)
         em.addSeparator()
         sel_m = em.addMenu("Modify Selection")
         self._act(sel_m, "&Expand...", "", self.selection_expand)
@@ -5933,9 +5947,9 @@ class ImageEditor(QMainWindow):
 
         # Select
         selm = mb.addMenu("&Select")
-        self._act(selm, "Select All", "Ctrl+A", self.select_all)
-        self._act(selm, "Deselect", "Ctrl+D", self.deselect)
-        self._act(selm, "Invert Selection", "Ctrl+Shift+I", self.invert_selection)
+        selm.addAction(self._sel_all_act)
+        selm.addAction(self._deselect_act)
+        selm.addAction(self._invert_sel_act)
         selm.addSeparator()
         self._act(selm, "Expand...", "", self.selection_expand)
         self._act(selm, "Contract...", "", self.selection_contract)
@@ -6349,6 +6363,14 @@ class ImageEditor(QMainWindow):
     def _apply_to_active(self, func, label="Adjustment"):
         l = self.active_layer()
         if not l: return
+        if l.locked:
+            self._status("Layer is locked"); return
+        # A group's image setter is a no-op, so applying a pixel op to one
+        # would push an undo state and mark dirty while changing nothing.
+        # Editing the group's own mask is fine.
+        if (isinstance(l, LayerGroup)
+                and not (getattr(l, 'editing_mask', False) and l.mask is not None)):
+            self._status(f"{label} applies to layers, not groups"); return
         self.history.save_state(self.layers, self.active_layer_index, label)
         # If editing mask, route adjustments to mask
         if getattr(l, 'editing_mask', False) and l.mask is not None:
@@ -6674,6 +6696,27 @@ class ImageEditor(QMainWindow):
         self._status(f"Color Range: {item} ({np.count_nonzero(mask_arr)} px)")
 
     # ── Image Ops ─────────────────────────────────────────────────────────────
+    def _apply_geometry_to_layer(self, layer, fn):
+        """Apply a geometry op ``fn(PIL)->PIL`` to a layer's image AND its mask,
+        recursing into groups. Without this, whole-image crop/resize/rotate/flip
+        leave layer masks at the old size and get_composite raises
+        'images do not match' on the next repaint; groups (whose image setter is
+        a no-op) would keep stale children entirely."""
+        if isinstance(layer, LayerGroup):
+            for child in layer.children:
+                self._apply_geometry_to_layer(child, fn)
+            if layer.children:
+                layer._w, layer._h = layer.children[0].image.size
+            else:
+                probe = fn(Image.new("RGBA", (layer._w, layer._h), (0, 0, 0, 0)))
+                layer._w, layer._h = probe.size
+            if layer.mask is not None:
+                layer.mask = fn(layer.mask)
+        else:
+            layer.image = fn(layer.image)
+            if layer.mask is not None:
+                layer.mask = fn(layer.mask)
+
     def resize_canvas(self):
         if not self.layers: return
         w, h = self.layers[0].image.size
@@ -6686,8 +6729,12 @@ class ImageEditor(QMainWindow):
         if dlg.exec_() == QDialog.Accepted:
             nw, nh = ws.value(), hs.value()
             self.history.save_state(self.layers, self.active_layer_index, "Resize Canvas")
+
+            def _expand(img):
+                mode, fill = (img.mode, (0, 0, 0, 0) if img.mode == "RGBA" else 0)
+                ni = Image.new(mode, (nw, nh), fill); ni.paste(img, (0, 0)); return ni
             for l in self.layers:
-                ni = Image.new("RGBA", (nw, nh), (0, 0, 0, 0)); ni.paste(l.image, (0, 0)); l.image = ni
+                self._apply_geometry_to_layer(l, _expand)
             self.canvas.clear_selection(); self.canvas.fit_in_view(); self.update_layer_panel()
 
     def resize_image(self):
@@ -6705,20 +6752,29 @@ class ImageEditor(QMainWindow):
             rs = {"Lanczos": Image.LANCZOS, "Bilinear": Image.BILINEAR,
                   "Bicubic": Image.BICUBIC, "Nearest": Image.NEAREST}[mt.currentText()]
             self.history.save_state(self.layers, self.active_layer_index, "Resize Image")
-            for l in self.layers: l.image = l.image.resize((nw, nh), rs)
+            for l in self.layers:
+                self._apply_geometry_to_layer(l, lambda img: img.resize((nw, nh), rs))
             self.canvas.clear_selection(); self.canvas.fit_in_view(); self.update_layer_panel()
 
     def rotate_image(self, deg):
         if not self.layers: return
         self.history.save_state(self.layers, self.active_layer_index, f"Rotate {deg}°")
-        for l in self.layers: l.image = l.image.rotate(-deg, expand=True, fillcolor=(0, 0, 0, 0))
+
+        def _rot(img):
+            fill = (0, 0, 0, 0) if img.mode == "RGBA" else 0
+            return img.rotate(-deg, expand=True, fillcolor=fill)
+        for l in self.layers:
+            self._apply_geometry_to_layer(l, _rot)
         self.canvas.clear_selection(); self.canvas.fit_in_view(); self.update_layer_panel()
 
     def flip_image(self, d):
         if not self.layers: return
         self.history.save_state(self.layers, self.active_layer_index, "Flip")
+
+        def _flip(img):
+            return ImageOps.mirror(img) if d == "h" else ImageOps.flip(img)
         for l in self.layers:
-            l.image = ImageOps.mirror(l.image) if d == "h" else ImageOps.flip(l.image)
+            self._apply_geometry_to_layer(l, _flip)
         self.canvas.update()
 
     def flatten_image(self):
@@ -6730,8 +6786,13 @@ class ImageEditor(QMainWindow):
     def merge_down(self):
         idx = self.active_layer_index
         if idx <= 0 or idx >= len(self.layers): return
-        self.history.save_state(self.layers, self.active_layer_index, "Merge Down")
         top, bot = self.layers[idx], self.layers[idx - 1]
+        # bot receives the merged pixels via bot.image = result; a group's image
+        # setter is a no-op, so merging onto a group would discard the blend and
+        # then delete the top layer — pure data loss. Refuse before save_state.
+        if isinstance(bot, LayerGroup):
+            self._status("Can't merge onto a group — ungroup it first"); return
+        self.history.save_state(self.layers, self.active_layer_index, "Merge Down")
         result = bot.image.copy()
         if top.visible:
             img = top.image.copy()
@@ -6833,10 +6894,8 @@ class ImageEditor(QMainWindow):
         layer = self.active_layer()
         if not layer or layer.locked: return
         self.history.save_state(self.layers, self.active_layer_index, "Flip Layer")
-        if direction == "h":
-            layer.image = layer.image.transpose(Image.FLIP_LEFT_RIGHT)
-        else:
-            layer.image = layer.image.transpose(Image.FLIP_TOP_BOTTOM)
+        op = Image.FLIP_LEFT_RIGHT if direction == "h" else Image.FLIP_TOP_BOTTOM
+        self._apply_geometry_to_layer(layer, lambda img: img.transpose(op))
         self.canvas.update(); self.update_layer_panel()
 
     def rotate_layer(self, degrees):
@@ -6844,8 +6903,8 @@ class ImageEditor(QMainWindow):
         layer = self.active_layer()
         if not layer or layer.locked: return
         self.history.save_state(self.layers, self.active_layer_index, f"Rotate {degrees}°")
-        rotated = layer.image.rotate(-degrees, expand=False, resample=Image.BICUBIC)
-        layer.image = rotated
+        self._apply_geometry_to_layer(
+            layer, lambda img: img.rotate(-degrees, expand=False, resample=Image.BICUBIC))
         self.canvas.update(); self.update_layer_panel()
 
     def apply_crop(self):
@@ -6866,7 +6925,8 @@ class ImageEditor(QMainWindow):
         if x2 - x1 < 1 or y2 - y1 < 1:
             self._status("Crop area too small"); return
         self.history.save_state(self.layers, self.active_layer_index, "Crop")
-        for l in self.layers: l.image = l.image.crop((x1, y1, x2, y2))
+        for l in self.layers:
+            self._apply_geometry_to_layer(l, lambda img: img.crop((x1, y1, x2, y2)))
         self.canvas.clear_selection(); self.canvas.fit_in_view(); self.update_layer_panel()
 
     # ── Text ──────────────────────────────────────────────────────────────────

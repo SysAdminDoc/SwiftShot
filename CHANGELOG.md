@@ -7,6 +7,25 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Editor — data-loss fixes
+- Move tool no longer destroys content dragged past the canvas edge: each
+  drag step re-pastes from a pristine snapshot using the cumulative offset
+  from the press point, and the layer mask is shifted with the image so
+  masked layers stay in sync.
+- Crop/Resize/Resize-Canvas/Rotate/Flip (whole-image and per-layer) now
+  transform layer masks alongside the image and recurse into groups
+  (updating group size). Previously masks were left at the old size and the
+  editor crashed with 'images do not match' on the next repaint after
+  cropping a masked document; groups kept stale children.
+- Adjustments/filters and Merge Down refuse to run on a layer group instead
+  of silently discarding the result (a group's image buffer is computed from
+  its children and can't be written to): applying an adjustment no longer
+  marks the document dirty while changing nothing, and merging onto a group
+  no longer deletes the top layer after throwing the blend away.
+- Select All / Deselect / Invert Selection shortcuts (Ctrl+A / Ctrl+D /
+  Ctrl+Shift+I) work again — they were bound to two menu actions each, which
+  Qt treats as ambiguous and fires neither.
+
 ### Capture & display scaling
 - The process is now per-monitor DPI-aware with Qt scaling off, so widget
   coordinates equal physical screen pixels at every display scale factor.
