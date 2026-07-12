@@ -28,6 +28,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   unpatched history-DB engine unnoticed.
 
 ### Capture & history reliability
+- Scrolling capture detects a fixed footer / sticky scrollbar (a bottom band
+  identical across frames) and trims it from all but the last frame, so it is
+  no longer stitched into the tall image once per scroll step.
 - OCR now runs off the GUI thread. Auto-OCR indexing saves the history row
   immediately with no text and fills it in asynchronously, and interactive
   region OCR shows its result when the worker finishes — the 2-5 s WinRT

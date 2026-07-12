@@ -288,12 +288,51 @@ class ScrollingCaptureDialog(QDialog):
         self._capturing = False
         self._finish()
 
+    def _static_bottom_height(self):
+        """Height of a bottom band that stays identical between consecutive
+        frames — a fixed footer or sticky scrollbar that would otherwise be
+        stitched into the output once per frame (ShareX 17's auto-ignore-edge).
+        Returns 0 unless a clear static band is found."""
+        if len(self._frames) < 2:
+            return 0
+        runs = []
+        for a, b in zip(self._frames, self._frames[1:]):
+            ia, ib = a.toImage(), b.toImage()
+            h = min(ia.height(), ib.height())
+            w = min(ia.width(), ib.width())
+            if h == 0 or w == 0:
+                return 0
+            run = 0
+            for dy in range(1, h + 1):
+                y = h - dy
+                same = all(ia.pixel(sx, y) == ib.pixel(sx, y)
+                           for sx in range(0, w, max(1, w // 10)))
+                if not same:
+                    break
+                run = dy
+            runs.append(run)
+        static = min(runs) if runs else 0
+        if static < 8:                       # ignore trivial/no footer
+            return 0
+        return min(static, self._frames[0].height() // 3)   # never eat real content
+
     def _stitch_frames(self):
         """Stitch frames together by detecting overlap."""
         if not self._frames:
             return None
 
-        base = self._frames[0]
+        # Trim a detected static footer from every frame but the last, so a
+        # fixed footer/scrollbar appears once instead of being repeated.
+        static_h = self._static_bottom_height()
+        frames = list(self._frames)
+        if static_h > 0:
+            frames = [
+                (f.copy(0, 0, f.width(), f.height() - static_h)
+                 if i < len(frames) - 1 else f)
+                for i, f in enumerate(frames)
+            ]
+
+        base = frames[0]
         w = base.width()
 
         # Simple stitching: find overlap between consecutive frames
@@ -301,9 +340,9 @@ class ScrollingCaptureDialog(QDialog):
         result_height = base.height()
         offsets = [0]
 
-        for i in range(1, len(self._frames)):
-            overlap = self._find_overlap(self._frames[i - 1], self._frames[i])
-            new_content = self._frames[i].height() - overlap
+        for i in range(1, len(frames)):
+            overlap = self._find_overlap(frames[i - 1], frames[i])
+            new_content = frames[i].height() - overlap
             if new_content <= 5:
                 # No new content, stop here
                 break
@@ -316,9 +355,9 @@ class ScrollingCaptureDialog(QDialog):
 
         painter = QPainter(result)
         for i, offset in enumerate(offsets):
-            if i >= len(self._frames):
+            if i >= len(frames):
                 break
-            painter.drawPixmap(0, offset, self._frames[i])
+            painter.drawPixmap(0, offset, frames[i])
         painter.end()
 
         return result
