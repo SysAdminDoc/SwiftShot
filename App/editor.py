@@ -6220,6 +6220,7 @@ class ImageEditor(QMainWindow):
         self._act(tm, "Command Palette", "Ctrl+K", self.open_command_palette)
         tm.addSeparator()
         self._act(tm, "OCR – Extract Text", "Ctrl+Shift+O", self.run_ocr)
+        self._act(tm, "OCR – Copy as Table", "", self.run_ocr_table)
         self._act(tm, "Compare With Image...", "", self.compare_with_image)
 
     def _set_ui_scale(self, scale_val):
@@ -8405,6 +8406,27 @@ class ImageEditor(QMainWindow):
         except Exception as e:
             QMessageBox.warning(
                 self, "OCR Error", f"Could not extract text:\n\n{e}")
+
+    def run_ocr_table(self):
+        """Detect table structure from OCR word boxes and copy it as TSV."""
+        try:
+            from ocr import ocr_words_pixmap, words_to_table
+            from ocr_dialog import OcrResultDialog
+            px = self.get_final_pixmap()
+            if not px or px.isNull():
+                return
+            table = words_to_table(ocr_words_pixmap(px))
+            if table:
+                QApplication.clipboard().setText(table)
+                OcrResultDialog(table, self).exec_()
+                self._status("OCR table copied to clipboard (TSV)")
+            else:
+                self._status("OCR: no text detected")
+        except ImportError:
+            self._status("OCR module not available")
+        except Exception as e:
+            QMessageBox.warning(
+                self, "OCR Error", f"Could not extract table:\n\n{e}")
 
     # ── SwiftShot App Integration ─────────────────────────────────────────────
 

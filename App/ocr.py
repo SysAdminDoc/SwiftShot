@@ -68,7 +68,18 @@ try {
     $ocrResult = Await ($ocrEngine.RecognizeAsync($bitmap)) `
                        ([Windows.Media.Ocr.OcrResult])
 
-    Write-Output $ocrResult.Text
+    if ($env:SWIFTSHOT_OCR_MODE -eq 'words') {
+        # One word per line: X<TAB>Y<TAB>W<TAB>H<TAB>Text (for table detection).
+        foreach ($line in $ocrResult.Lines) {
+            foreach ($word in $line.Words) {
+                $r = $word.BoundingRect
+                Write-Output ("{0}`t{1}`t{2}`t{3}`t{4}" -f `
+                    [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height, $word.Text)
+            }
+        }
+    } else {
+        Write-Output $ocrResult.Text
+    }
 
     $stream.Dispose()
 }
@@ -131,8 +142,81 @@ def ocr_file(image_path):
     )
 
 
-def _ocr_windows(image_path):
-    """Use Windows 10/11 WinRT OcrEngine via PowerShell."""
+def ocr_words_pixmap(pixmap):
+    """Run word-box OCR on a QPixmap. Returns list of {x,y,w,h,text}."""
+    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        pixmap.save(tmp_path, 'PNG')
+        return ocr_words_file(tmp_path)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def ocr_words_file(image_path):
+    """Word-box OCR (Windows WinRT only). Returns list of {x,y,w,h,text};
+    empty list if unavailable."""
+    if sys.platform != 'win32':
+        return []
+    raw = _ocr_windows(os.path.abspath(image_path), mode="words")
+    words = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        try:
+            x, y, w, h = (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+        except ValueError:
+            continue
+        text = "\t".join(parts[4:])
+        if text:
+            words.append({"x": x, "y": y, "w": w, "h": h, "text": text})
+    return words
+
+
+def words_to_table(words):
+    """Cluster OCR word boxes into rows/columns and emit a TSV table string.
+    Rows are grouped by vertical position; a tab is inserted between words with
+    a wide horizontal gap, a space otherwise. Falls back to '' for no words."""
+    if not words:
+        return ""
+    ws = sorted(words, key=lambda d: (d["y"], d["x"]))
+    heights = sorted(d["h"] for d in ws)
+    med_h = heights[len(heights) // 2] or 1
+    row_tol = med_h * 0.6
+    col_gap = med_h * 1.2
+
+    rows = []
+    cur = [ws[0]]
+    row_y = ws[0]["y"]
+    for wd in ws[1:]:
+        if abs(wd["y"] - row_y) <= row_tol:
+            cur.append(wd)
+        else:
+            rows.append(cur)
+            cur = [wd]
+            row_y = wd["y"]
+    rows.append(cur)
+
+    lines = []
+    for row in rows:
+        row = sorted(row, key=lambda d: d["x"])
+        parts = [row[0]["text"]]
+        for prev, wd in zip(row, row[1:]):
+            gap = wd["x"] - (prev["x"] + prev["w"])
+            parts.append("\t" if gap > col_gap else " ")
+            parts.append(wd["text"])
+        lines.append("".join(parts))
+    return "\n".join(lines)
+
+
+def _ocr_windows(image_path, mode="text"):
+    """Use Windows 10/11 WinRT OcrEngine via PowerShell. mode 'words' emits
+    per-word bounding boxes (X\\tY\\tW\\tH\\tText) for table detection."""
     script_tmp = tempfile.NamedTemporaryFile(
         suffix='.ps1', mode='w', delete=False, encoding='utf-8'
     )
@@ -146,6 +230,7 @@ def _ocr_windows(image_path):
             creation_flags = subprocess.CREATE_NO_WINDOW
         run_env = dict(os.environ)
         run_env['SWIFTSHOT_OCR_PATH'] = os.path.abspath(image_path)
+        run_env['SWIFTSHOT_OCR_MODE'] = mode
         result = subprocess.run(
             [
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
