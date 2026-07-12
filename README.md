@@ -159,7 +159,7 @@ Both outputs are fully self-contained — no Python or runtime needed on end-use
 
 Settings are stored in `%APPDATA%\SwiftShot\swiftshot.json`. Access them from the tray icon menu or within the editor.
 
-Available tabs: **General**, **Capture**, **Hotkeys**, **Output**, **Editor**, **Frame**, **Advanced**.
+Available tabs: **General**, **Capture**, **Hotkeys**, **Output**, **Editor**, **Frame**, **Advanced**. The **Frame** tab adds a border, drop shadow, rounded corners, and an optional padded solid/gradient backdrop behind every capture.
 
 Notable settings include an ordered post-capture workflow (editor / save / clipboard), dark/light theme, beautification presets, output format (PNG, JPEG, BMP, GIF, TIFF, lossless WebP, or AVIF where supported), filename pattern, timed capture duration, clipboard watcher, and launch-at-startup.
 Filename patterns support `{YYYY}`, `{MM}`, `{DD}`, `{hh}`, `{mm}`, `{ss}`, `{app}`, `{title}`, `{user}`, `{counter}`, `{w}`, and `{h}`.

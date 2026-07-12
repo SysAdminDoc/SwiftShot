@@ -572,6 +572,39 @@ class SettingsDialog(QDialog):
         self.rounded_radius.setValue(config.ROUNDED_CORNERS_RADIUS)
         layout.addRow("Corner radius:", self.rounded_radius)
 
+        layout.addRow(QLabel(""))
+        layout.addRow(QLabel("Backdrop"))
+
+        self.backdrop_enabled = QCheckBox("Place captures on a padded backdrop")
+        self.backdrop_enabled.setChecked(config.BACKDROP_ENABLED)
+        layout.addRow(self.backdrop_enabled)
+
+        self.backdrop_type = QComboBox()
+        self.backdrop_type.addItems(["solid", "gradient"])
+        self.backdrop_type.setCurrentText(config.BACKDROP_TYPE)
+        layout.addRow("Backdrop type:", self.backdrop_type)
+
+        self.backdrop_padding = QSpinBox()
+        self.backdrop_padding.setRange(0, 400)
+        self.backdrop_padding.setValue(config.BACKDROP_PADDING)
+        layout.addRow("Backdrop padding:", self.backdrop_padding)
+
+        bd_row = QHBoxLayout()
+        self._backdrop_color = QColor(config.BACKDROP_COLOR)
+        self.backdrop_color_btn = QPushButton()
+        self.backdrop_color_btn.setFixedSize(28, 28)
+        self._update_color_btn(self.backdrop_color_btn, self._backdrop_color)
+        self.backdrop_color_btn.clicked.connect(self._pick_backdrop_color)
+        bd_row.addWidget(self.backdrop_color_btn)
+        self._backdrop_color2 = QColor(config.BACKDROP_COLOR2)
+        self.backdrop_color2_btn = QPushButton()
+        self.backdrop_color2_btn.setFixedSize(28, 28)
+        self._update_color_btn(self.backdrop_color2_btn, self._backdrop_color2)
+        self.backdrop_color2_btn.clicked.connect(self._pick_backdrop_color2)
+        bd_row.addWidget(self.backdrop_color2_btn)
+        bd_row.addStretch()
+        layout.addRow("Backdrop colors:", bd_row)
+
         return w
 
     # --- Tab: Advanced ---
@@ -682,6 +715,19 @@ class SettingsDialog(QDialog):
         if color.isValid():
             self._border_color = color
             self._update_color_btn(self.border_color_btn, color)
+
+    def _pick_backdrop_color(self):
+        color = QColorDialog.getColor(self._backdrop_color, self, "Backdrop Color")
+        if color.isValid():
+            self._backdrop_color = color
+            self._update_color_btn(self.backdrop_color_btn, color)
+
+    def _pick_backdrop_color2(self):
+        color = QColorDialog.getColor(
+            self._backdrop_color2, self, "Backdrop Gradient End Color")
+        if color.isValid():
+            self._backdrop_color2 = color
+            self._update_color_btn(self.backdrop_color2_btn, color)
 
     def _browse_output_dir(self):
         path = QFileDialog.getExistingDirectory(
@@ -835,6 +881,11 @@ class SettingsDialog(QDialog):
         config.SHADOW_OPACITY = self.shadow_opacity.value()
         config.ROUNDED_CORNERS_ENABLED = self.rounded_enabled.isChecked()
         config.ROUNDED_CORNERS_RADIUS = self.rounded_radius.value()
+        config.BACKDROP_ENABLED = self.backdrop_enabled.isChecked()
+        config.BACKDROP_TYPE = self.backdrop_type.currentText()
+        config.BACKDROP_PADDING = self.backdrop_padding.value()
+        config.BACKDROP_COLOR = self._backdrop_color.name()
+        config.BACKDROP_COLOR2 = self._backdrop_color2.name()
 
         # Advanced
         config.CAPTURE_HISTORY_ENABLED = self.history_enabled.isChecked()

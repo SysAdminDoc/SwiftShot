@@ -187,6 +187,39 @@ def apply_frame(pixmap):
     return pil_to_qpixmap(image)
 
 
+def apply_backdrop(pixmap):
+    """Place the (already framed) capture on a padded solid or gradient
+    backdrop. No-op unless BACKDROP_ENABLED. Runs after apply_frame so a
+    rounded/shadowed screenshot sits on the coloured padding."""
+    from PIL import Image, ImageColor
+    import config as _cfg
+    import numpy as np
+    cfg = _cfg.config if hasattr(_cfg, "config") else _cfg
+
+    if not getattr(cfg, "BACKDROP_ENABLED", False):
+        return pixmap
+
+    pad = max(0, int(getattr(cfg, "BACKDROP_PADDING", 48)))
+    img = qpixmap_to_pil(pixmap)
+    w, h = img.size
+    cw, ch = w + pad * 2, h + pad * 2
+    c1 = ImageColor.getrgb(getattr(cfg, "BACKDROP_COLOR", "#1e1e2e"))
+
+    if getattr(cfg, "BACKDROP_TYPE", "solid") == "gradient":
+        c2 = ImageColor.getrgb(getattr(cfg, "BACKDROP_COLOR2", "#45475a"))
+        t = np.linspace(0.0, 1.0, ch).reshape(ch, 1, 1)
+        row = (np.array(c1).reshape(1, 1, 3) * (1 - t)
+               + np.array(c2).reshape(1, 1, 3) * t)
+        arr = np.repeat(row, cw, axis=1).astype(np.uint8)
+        alpha = np.full((ch, cw, 1), 255, dtype=np.uint8)
+        canvas = Image.fromarray(np.concatenate([arr, alpha], axis=2), "RGBA")
+    else:
+        canvas = Image.new("RGBA", (cw, ch), c1 + (255,))
+
+    canvas.alpha_composite(img, (pad, pad))
+    return pil_to_qpixmap(canvas)
+
+
 def apply_freehand_mask(pixmap, points, bounding_rect):
     """Mask a cropped pixmap to a freehand polygon (transparent outside).
 

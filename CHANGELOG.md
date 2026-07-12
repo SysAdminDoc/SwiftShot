@@ -8,6 +8,9 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### Added
+- Backdrop beautification: place captures on a padded solid or vertical-gradient
+  background (Settings ▸ Frame ▸ Backdrop), the most-requested gap versus paid
+  tools. Applies after the border/shadow/rounded frame in the capture funnel.
 - Tools ▸ Compare With Image: overlays a pixel diff against another image as a
   new red-tinted layer and reports the percentage of pixels changed.
 - Scriptable headless CLI: `swiftshot --region X,Y,W,H --out shot.png`,

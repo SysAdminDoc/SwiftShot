@@ -127,11 +127,11 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 ### P2 — features (evidence-backed gaps)
 
-- [ ] P2 — Beautify backgrounds + device/window/browser frames + padding + aspect presets
-  Why: every 2026 review names gradient/solid backgrounds and device/OS-window frames as THE gap in free Windows tools (even ShareX beautify is "border yes, gradient background / frame no"); it's the highest differentiation-per-effort and needs zero new native deps (pure Pillow/NumPy). Extends the existing Frame step (border/shadow/rounded only).
-  Evidence: RESEARCH.md Competitive Landscape (CleanShot X, screensnap.pro, screenhance.com); `App/utils.py:81-187` (beautify/frame funnel).
-  Touches: `App/utils.py` (add background fill/gradient, padding, framed presets), `App/config.py` (settings keys), `App/settings_dialog.py` Frame tab, editor export preview.
-  Acceptance: capture funnel can render a screenshot on a padded gradient/solid background and inside at least one window/browser frame; settings expose presets; tested on a sample pixmap.
+- [ ] P2 — Device/window/browser frames for the backdrop (extends the shipped solid/gradient backdrop)
+  Why: the padded solid/gradient backdrop shipped; the remaining gap vs CleanShot X is a "framed inside a macOS/Windows window or browser chrome" preset. Pure Pillow (compose the capture inside a frame PNG or drawn chrome).
+  Evidence: RESEARCH.md Competitive Landscape (CleanShot X); `App/utils.py` `apply_backdrop`.
+  Touches: `App/utils.py` (frame assets/drawing), `App/config.py`, `App/settings_dialog.py` Frame tab.
+  Acceptance: at least one window/browser frame preset renders around a capture; tested on a sample pixmap.
   Complexity: M
 
 - [ ] P2 — winget manifest + Scoop bucket for the unsigned Inno EXE / portable zip

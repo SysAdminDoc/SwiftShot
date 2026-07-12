@@ -120,6 +120,13 @@ class Config:
     ROUNDED_CORNERS_RADIUS = 12
     BEAUTIFY_PRESET = "none"
 
+    # --- Backdrop (padded solid/gradient background behind the capture) ---
+    BACKDROP_ENABLED = False
+    BACKDROP_TYPE = "solid"          # "solid" | "gradient"
+    BACKDROP_COLOR = "#1e1e2e"
+    BACKDROP_COLOR2 = "#45475a"      # gradient end colour
+    BACKDROP_PADDING = 48
+
     # --- Pin Window ---
     PIN_OPACITY = 95
     PIN_BORDER_COLOR = "#89b4fa"

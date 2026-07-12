@@ -766,6 +766,7 @@ class SwiftShotApp:
         if not preserve_alpha:
             pixmap = self._apply_beautification(pixmap)
             pixmap = self._apply_frame(pixmap)
+            pixmap = self._apply_backdrop(pixmap)
         actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
                  f"actions={actions}")
@@ -804,6 +805,14 @@ class SwiftShotApp:
             return apply_frame(pixmap)
         except Exception as e:
             log.warning(f"Could not apply frame: {e}")
+            return pixmap
+
+    def _apply_backdrop(self, pixmap):
+        try:
+            from utils import apply_backdrop
+            return apply_backdrop(pixmap)
+        except Exception as e:
+            log.warning(f"Could not apply backdrop: {e}")
             return pixmap
 
     def _start_history_ocr(self, filepath):
