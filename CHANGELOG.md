@@ -7,6 +7,12 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Added
+- Scriptable headless CLI: `swiftshot --region X,Y,W,H --out shot.png`,
+  `--fullscreen`, `--monitor N`, and `--ocr` (prints recognized text to
+  stdout). Runs and exits without the tray; a bare image path and
+  `--minimized` still launch the GUI as before.
+
 ### Formats
 - AVIF export is offered wherever WebP is (capture auto-save, Settings output
   format, editor Save-As and a new Export AVIF menu entry) — enabled only when

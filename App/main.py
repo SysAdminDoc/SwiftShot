@@ -80,13 +80,21 @@ def main():
     from logger import setup_logger, log
     setup_logger()
     _install_excepthook()
+
+    # Headless scriptable capture (swiftshot --region/--fullscreen/--monitor).
+    # Runs and exits without the tray; DPI awareness must be set first so
+    # region coordinates are physical pixels. Returns None for the GUI path.
+    _set_dpi_awareness()
+    import cli
+    cli_code = cli.run(sys.argv[1:])
+    if cli_code is not None:
+        sys.exit(cli_code)
+
     log.info("SwiftShot starting up")
 
     if not _acquire_single_instance():
         log.info("Another SwiftShot instance is running; exiting")
         return
-
-    _set_dpi_awareness()
 
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtCore import Qt

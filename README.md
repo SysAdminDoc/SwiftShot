@@ -179,10 +179,27 @@ This is designed for capturing UI elements that require manual interaction, like
 
 ---
 
+## Command-Line Interface
+
+SwiftShot doubles as a scriptable capture tool. With any capture flag it runs
+headless and exits without the tray:
+
+```bash
+swiftshot --region 0,0,800,600 --out shot.png   # region to file
+swiftshot --fullscreen --out desktop.png         # whole virtual desktop
+swiftshot --monitor 1 --out screen1.png          # one monitor (0-based)
+swiftshot --region 0,0,800,600 --ocr             # print recognized text
+```
+
+`--out` picks the format from the file extension (png/jpg/webp/avif/bmp/tiff).
+`--ocr` can be combined with `--out`. Without capture flags — or with a bare
+image path — SwiftShot launches its tray application as usual.
+
 ## Project Structure
 
 ```
 main.py                 Entry point, logging, crash handler
+cli.py                  Scriptable headless capture (argparse)
 app.py                  System tray, hotkey management, capture orchestration
 capture.py              Screenshot engine (Win32 GDI + Qt fallback)
 overlay.py              Region selector with edge snapping
