@@ -74,6 +74,18 @@ def test_empty_group_size_updates_via_probe(qapp):
     assert (group._w, group._h) == (5, 6)
 
 
+def test_pil_to_qimage_is_detached_and_correct_size(qapp):
+    """Shared helper must return a QImage that owns its buffer (survives the
+    source bytes being dropped) with the right dimensions (R-06)."""
+    from editor import pil_to_qimage
+
+    src = Image.new("RGBA", (7, 5), (10, 20, 30, 255))
+    qimg = pil_to_qimage(src)
+    del src
+    assert (qimg.width(), qimg.height()) == (7, 5)
+    assert not qimg.isNull()
+
+
 def test_group_composite_does_not_square_child_alpha(qapp):
     """A 50%-opacity child used to render at 25% because the group composited
     via paste(img, mask=img), multiplying alpha by itself (AB-05)."""

@@ -104,11 +104,18 @@ def qpixmap_to_pil(pixmap):
     ptr = qimg.bits(); ptr.setsize(h * qimg.bytesPerLine())
     return Image.frombuffer("RGBA", (w, h), bytes(ptr), "raw", "RGBA", qimg.bytesPerLine(), 1).copy()
 
-def pil_to_qpixmap(pil_image):
+def pil_to_qimage(pil_image):
+    """Convert a PIL image to a DETACHED QImage: explicit stride and a .copy()
+    so the QImage owns its buffer. Callers need not keep the source bytes
+    alive (the paint path used to rely on a local staying referenced until
+    drawImage — one wrong refactor from a use-after-free)."""
     img = pil_image.convert("RGBA")
     data = img.tobytes("raw", "RGBA")
-    qimg = QImage(data, img.width, img.height, 4 * img.width, QImage.Format_RGBA8888)
-    return QPixmap.fromImage(qimg.copy())
+    return QImage(data, img.width, img.height, 4 * img.width,
+                  QImage.Format_RGBA8888).copy()
+
+def pil_to_qpixmap(pil_image):
+    return QPixmap.fromImage(pil_to_qimage(pil_image))
 
 # ── Numpy image helpers (scipy-free) ─────────────────────────────────────────
 # scipy is not a dependency and is excluded from the frozen build; these
@@ -992,8 +999,7 @@ class CanvasWidget(QWidget):
         if composite is None:
             painter.end()
             return
-        data = composite.tobytes("raw", "RGBA")
-        qimg = QImage(data, composite.width, composite.height, QImage.Format_RGBA8888)
+        qimg = pil_to_qimage(composite)
         painter.save()
         # Rotate view around canvas center; view_transform() is the single
         # source of truth shared with canvas_to_image/image_to_canvas.
@@ -5279,6 +5285,45 @@ class ImageEditor(QMainWindow):
         self.history.on_change = self._mark_dirty
         self._set_dirty(False)
 
+    def _confirm_discard(self):
+        """Prompt to save before replacing the current document. Returns True
+        if it is safe to proceed, False to abort (Cancel, or a failed/cancelled
+        save). Every document-replacing path must call this — closeEvent used
+        to be the only gate, so New/Open/paste silently dropped unsaved work."""
+        if not self._dirty:
+            return True
+        reply = QMessageBox.question(
+            self, "Unsaved Changes",
+            "This image has unsaved changes.\n\nSave before continuing?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if reply == QMessageBox.Cancel:
+            return False
+        if reply == QMessageBox.Save:
+            self.save_image()
+            if self._dirty:      # save cancelled or failed
+                return False
+        return True
+
+    def _reset_document_state(self):
+        """Clear per-document state that must not leak into a freshly loaded
+        document: the project path (stale value silently overwrote the old
+        project on Ctrl+S), remembered JPEG quality (re-saved a new document at
+        the previous quality with no prompt), saved paths, guides and an active
+        quick mask."""
+        self.saved_path = None
+        self._jpeg_quality = None
+        self.saved_paths = []
+        try:
+            self.canvas._guides = []
+        except Exception:
+            pass
+        if getattr(self, "quick_mask_active", False):
+            try:
+                self.canvas.quick_mask_exit()
+            except Exception:
+                pass
+
     # ── Config / Recent Files ─────────────────────────────────────────────────
     @staticmethod
     def _config_dir():
@@ -6428,6 +6473,7 @@ class ImageEditor(QMainWindow):
 
     # ── File Operations ───────────────────────────────────────────────────────
     def new_image(self):
+        if not self._confirm_discard(): return
         dlg = QDialog(self); dlg.setWindowTitle("New Image")
         form = QFormLayout(dlg)
         ws = QSpinBox(); ws.setRange(1, 10000); ws.setValue(1920)
@@ -6442,7 +6488,8 @@ class ImageEditor(QMainWindow):
             self.layers = [Layer("Background", w, h)]
             self.layers[0].image = Image.new("RGBA", (w, h), bgc)
             self.active_layer_index = 0
-            self.file_path = None; self.saved_path = None
+            self.file_path = None
+            self._reset_document_state()
             self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
             self.setWindowTitle("SwiftShot Editor — Untitled")
             self._reset_history()
@@ -6479,13 +6526,14 @@ class ImageEditor(QMainWindow):
             # Use the full project loader: the old inline loader here
             # silently dropped masks, effects and groups, and the next
             # Ctrl+S baked that loss into the file.
-            self._load_project_from(path)
+            self._load_project_from(path)   # confirms discard itself
         else:
+            if not self._confirm_discard(): return
             try:
                 img = Image.open(path).convert("RGBA")
                 self.layers = [Layer("Background", image=img)]
                 self.active_layer_index = 0
-                self.file_path = path; self.saved_path = None
+                self.file_path = path; self._reset_document_state()
                 self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
                 self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
                 self._add_recent(path)
@@ -6497,11 +6545,12 @@ class ImageEditor(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Open Image", "",
             "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.webp);;All Files (*)")
         if path:
+            if not self._confirm_discard(): return
             try:
                 img = Image.open(path).convert("RGBA")
                 self.layers = [Layer("Background", image=img)]
                 self.active_layer_index = 0
-                self.file_path = path; self.saved_path = None
+                self.file_path = path; self._reset_document_state()
                 self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
                 self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
                 self._add_recent(path)
@@ -7929,10 +7978,12 @@ class ImageEditor(QMainWindow):
         return pil_to_qpixmap(comp) if comp else QPixmap()
 
     def load_pixmap(self, pixmap):
+        if not self._confirm_discard(): return
         pil_img = qpixmap_to_pil(pixmap)
         self.layers = [Layer("Background", image=pil_img)]
         self.active_layer_index = 0
-        self.file_path = None; self.saved_path = None
+        self.file_path = None
+        self._reset_document_state()
         self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
         self.setWindowTitle(f"SwiftShot Editor — {pil_img.width}×{pil_img.height}")
         self._reset_history()
@@ -8089,6 +8140,7 @@ class ImageEditor(QMainWindow):
         return layers
 
     def _load_project_from(self, path):
+        if not self._confirm_discard(): return
         import zipfile
         try:
             with zipfile.ZipFile(path) as zf:
@@ -8107,6 +8159,7 @@ class ImageEditor(QMainWindow):
             idx = meta.get("active_index", 0)
             self.active_layer_index = min(max(0, idx if isinstance(idx, int) else 0), len(layers) - 1)
             self.file_path = None          # not an image file
+            self._reset_document_state()
             self.saved_path = path
             self.canvas.clear_selection(); self.update_layer_panel(); self.canvas.fit_in_view()
             self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
@@ -8188,22 +8241,9 @@ class ImageEditor(QMainWindow):
             self._status(f"Pin failed: {e}")
 
     def closeEvent(self, event):
-        if self._dirty:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "This image has unsaved changes.\n\nSave before closing?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save
-            )
-            if reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-            if reply == QMessageBox.Save:
-                self.save_image()
-                if self._dirty:
-                    # Save was cancelled or failed -- keep the editor open.
-                    event.ignore()
-                    return
+        if not self._confirm_discard():
+            event.ignore()
+            return
         try:
             self.canvas.march_timer.stop()
         except Exception:

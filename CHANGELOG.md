@@ -58,6 +58,18 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   text, sticky notes, layer alignment, and the AI background-remove/upscale
   tools (they previously modified locked layers).
 
+### Editor — unsaved-work protection
+- New / Open / Open-Recent / Open-Project / paste-from-clipboard now prompt
+  to save unsaved changes before replacing the document (previously the only
+  gate was closing the window, so these paths silently discarded work).
+- Loading a new document resets per-document state: the `.swiftshot` project
+  path, remembered JPEG quality, saved paths, guides, and any active quick
+  mask no longer leak from the previous document (a stale project path could
+  make Ctrl+S overwrite the wrong file; stale JPEG quality re-saved silently).
+- Internal: a single `pil_to_qimage` helper builds detached QImages with an
+  explicit stride for both the paint path and pixmap conversion, removing a
+  latent use-after-free footgun in the canvas paint event.
+
 ### Editor — data-loss fixes
 - Move tool no longer destroys content dragged past the canvas edge: each
   drag step re-pastes from a pristine snapshot using the cumulative offset
