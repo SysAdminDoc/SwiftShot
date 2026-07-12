@@ -63,6 +63,21 @@ def test_history_snapshot_restores_nested_grandchild_names(qapp):
     assert snap_outer.children[0].children[0].name == "Grandchild"
 
 
+def test_history_evicts_oldest_when_over_byte_budget(qapp):
+    """A small byte budget must drop the oldest undo snapshots instead of
+    pinning unbounded memory (AB-16)."""
+    from editor import HistoryManager, Layer
+
+    # Each 100x100 RGBA layer ≈ 40 KB; budget for ~2 snapshots.
+    mgr = HistoryManager(max_states=30, max_bytes=100 * 100 * 4 * 2)
+    layers = [Layer("L", 100, 100)]
+    for _ in range(6):
+        mgr.save_state(layers, 0, "Edit")
+
+    assert len(mgr.undo_stack) <= 3          # bounded by bytes, not the count cap
+    assert len(mgr.undo_stack) >= 1          # never evicts the last one
+
+
 def test_history_on_change_fires_for_mutations(qapp):
     from editor import HistoryManager, Layer
 

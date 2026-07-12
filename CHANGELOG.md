@@ -58,6 +58,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   over a long tray session.
 
 ### Editor — performance
+- Undo history is now capped by an estimated memory budget (512 MB) in
+  addition to the state count, so a long painting session on a large,
+  multi-layer document no longer pins gigabytes of snapshots.
 - Flood fill (paint-bucket) is vectorized (numpy colour-match + scanline
   region grow) instead of a per-pixel Python BFS, so large fills no longer
   freeze the UI for seconds.

@@ -639,9 +639,15 @@ class Layer:
 
 # ── History ───────────────────────────────────────────────────────────────────
 class HistoryManager:
-    def __init__(self, max_states=30):
+    # Default byte budget for the undo stack. A count cap alone let a few 4K
+    # multi-layer snapshots pin gigabytes; this evicts the oldest history once
+    # the estimated memory exceeds the budget.
+    DEFAULT_MAX_BYTES = 512 * 1024 * 1024
+
+    def __init__(self, max_states=30, max_bytes=None):
         self.undo_stack = deque(maxlen=max_states)
         self.redo_stack = deque(maxlen=max_states)
+        self.max_bytes = max_bytes or self.DEFAULT_MAX_BYTES
         # Invoked on every mutation -- the editor uses it for dirty tracking.
         self.on_change = None
 
@@ -652,10 +658,40 @@ class HistoryManager:
             except Exception:
                 pass
 
+    @staticmethod
+    def _layer_bytes(l):
+        # Estimate without compositing a group (accessing group.image flattens
+        # its children -- expensive): use the group's own dimensions + children.
+        total = 0
+        if hasattr(l, "children"):
+            total += getattr(l, "_w", 0) * getattr(l, "_h", 0) * 4
+            for c in l.children:
+                total += HistoryManager._layer_bytes(c)
+        else:
+            img = getattr(l, "image", None)
+            if img is not None:
+                total += img.width * img.height * 4
+        m = getattr(l, "mask", None)
+        if m is not None:
+            total += m.width * m.height
+        return total
+
+    @staticmethod
+    def _state_bytes(entry):
+        (state, _label) = entry
+        layers = state[0]
+        return sum(HistoryManager._layer_bytes(l) for l in layers)
+
+    def _enforce_budget(self):
+        total = sum(self._state_bytes(e) for e in self.undo_stack)
+        while len(self.undo_stack) > 1 and total > self.max_bytes:
+            total -= self._state_bytes(self.undo_stack.popleft())
+
     def save_state(self, layers, active_index, label="Edit"):
         state = self._snap(layers, active_index)
         self.undo_stack.append((state, label))
         self.redo_stack.clear()
+        self._enforce_budget()
         self._notify()
 
     def undo(self, current_layers, current_index):
