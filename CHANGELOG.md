@@ -60,6 +60,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   freeze the UI for seconds.
 
 ### Editor — polish
+- Undo/redo clear in-progress warp and move snapshots, so the next warp
+  stroke records its own history entry and neither operates on stale layers.
+- The layer panel highlights the correct row for the active layer even when
+  groups above it are expanded.
 - Reordering layers by drag keeps the same layer active (it followed the old
   slot number before, so the next stroke could land on a different layer).
 - Gradients drawn on transparent pixels keep full color instead of being

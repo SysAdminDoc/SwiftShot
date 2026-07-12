@@ -3674,10 +3674,14 @@ class LayerPanel(QWidget):
                     if not child.visible:
                         citem.setForeground(QColor(C.TEXT_MUT))
                     self.layer_list.addItem(citem)
+        # Highlight the row whose UserRole is the active layer index. Expanded
+        # groups insert extra child rows, so the old "one row per layer" math
+        # (len - 1 - active) highlighted the wrong row once a group was open.
         active = self.editor.active_layer_index
-        di = len(self.editor.layers) - 1 - active
-        if 0 <= di < self.layer_list.count():
-            self.layer_list.setCurrentRow(di)
+        for r in range(self.layer_list.count()):
+            if self.layer_list.item(r).data(Qt.UserRole) == active:
+                self.layer_list.setCurrentRow(r)
+                break
         layer = self.editor.active_layer()
         if layer:
             self.opacity_slider.blockSignals(True)
@@ -6707,6 +6711,7 @@ class ImageEditor(QMainWindow):
         s, i, lbl = self.history.undo(self.layers, self.active_layer_index)
         if s:
             self.layers = s; self.active_layer_index = i
+            self._invalidate_interaction_snapshots()
             self.update_layer_panel(); self.canvas.update()
             self.update_history_panel(); self._status(f"Undo: {lbl}")
 
@@ -6714,8 +6719,20 @@ class ImageEditor(QMainWindow):
         s, i, lbl = self.history.redo(self.layers, self.active_layer_index)
         if s:
             self.layers = s; self.active_layer_index = i
+            self._invalidate_interaction_snapshots()
             self.update_layer_panel(); self.canvas.update()
             self.update_history_panel(); self._status(f"Redo: {lbl}")
+
+    def _invalidate_interaction_snapshots(self):
+        """Undo/redo swap self.layers for fresh objects, so any in-progress
+        interaction snapshot that referenced the old layers is stale. Clearing
+        _warp_orig also lets the next warp stroke record its own history entry
+        (it was kept across strokes and skipped save_state while set)."""
+        c = self.canvas
+        c._warp_orig = None
+        for attr in ("_move_orig_img", "_move_orig_mask", "_move_start"):
+            if hasattr(c, attr):
+                setattr(c, attr, None)
 
     def select_all(self):
         l = self.active_layer()
