@@ -276,6 +276,9 @@ class SwiftShotApp:
             if config.CAPTURE_SCROLLING_HOTKEY:
                 self._hotkey_listener.register(
                     config.CAPTURE_SCROLLING_HOTKEY, self.capture_scrolling)
+            if config.CAPTURE_COLOR_PICKER_HOTKEY:
+                self._hotkey_listener.register(
+                    config.CAPTURE_COLOR_PICKER_HOTKEY, self.pick_color)
 
             self._hotkey_listener.start()
             log.info("Hotkeys registered successfully")
@@ -689,6 +692,24 @@ class SwiftShotApp:
 
     def capture_ocr(self):
         self._capture_with_delay(self._do_ocr_capture)
+
+    def pick_color(self):
+        """Global color picker: copy the pixel under the cursor as hex."""
+        try:
+            from PyQt5.QtGui import QCursor
+            pos = QCursor.pos()
+            screen = QApplication.screenAt(pos) or QApplication.primaryScreen()
+            if screen is None:
+                return
+            img = screen.grabWindow(0, pos.x(), pos.y(), 1, 1).toImage()
+            hexs = img.pixelColor(0, 0).name().upper()
+            QApplication.clipboard().setText(hexs)
+            if self.tray_icon:
+                self.tray_icon.showMessage(
+                    "SwiftShot Color Picker", f"{hexs} copied to clipboard",
+                    QSystemTrayIcon.Information, 2000)
+        except Exception as e:
+            log.error(f"Color picker failed: {e}")
 
     def _do_ocr_capture(self):
         self._start_region_overlay("rectangle", ocr_mode=True)

@@ -33,7 +33,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 - Scrolling capture for web apps using DevTools protocol where available (Chromium-only enhancement)
 - Camera overlay and green-screen keying for "me + screen" tutorial captures
 - GIF / MP4 short-recording with edit-after-capture frame picker
-- Color-picker global hotkey that captures color under cursor to clipboard as hex
 
 ### Editor
 - Magic wand / heal tool (LaMa ONNX) for object removal

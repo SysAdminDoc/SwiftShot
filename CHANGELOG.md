@@ -8,6 +8,8 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### Added
+- Global color picker: bind a hotkey (Settings ▸ Hotkeys ▸ Color Picker) to
+  copy the pixel under the cursor as a hex code to the clipboard.
 - Tools ▸ OCR – Copy as Table: clusters WinRT OCR word boxes into rows/columns
   and copies the result as TSV (paste straight into a spreadsheet), matching
   the Windows 11 Snipping Tool's table extraction.

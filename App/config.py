@@ -78,6 +78,7 @@ class Config:
     CAPTURE_OCR_HOTKEY = ""
     CAPTURE_FREEHAND_HOTKEY = ""
     CAPTURE_SCROLLING_HOTKEY = ""
+    CAPTURE_COLOR_PICKER_HOTKEY = ""   # grab the pixel under the cursor as hex
 
     # --- Timed Capture ---
     CAPTURE_TIMER_ENABLED = False

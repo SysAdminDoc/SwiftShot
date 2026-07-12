@@ -406,6 +406,9 @@ class SettingsDialog(QDialog):
         self.hk_scrolling = HotkeyRecorderWidget(config.CAPTURE_SCROLLING_HOTKEY)
         form.addRow("Scrolling Capture:", self.hk_scrolling)
 
+        self.hk_color_picker = HotkeyRecorderWidget(config.CAPTURE_COLOR_PICKER_HOTKEY)
+        form.addRow("Color Picker:", self.hk_color_picker)
+
         form.addRow(QLabel(""))
 
         # Reset hotkeys button
@@ -426,6 +429,7 @@ class SettingsDialog(QDialog):
         self.hk_ocr.set_combo("")
         self.hk_freehand.set_combo("")
         self.hk_scrolling.set_combo("")
+        self.hk_color_picker.set_combo("")
 
     # --- Tab: Output ---
 
@@ -836,6 +840,7 @@ class SettingsDialog(QDialog):
         config.CAPTURE_OCR_HOTKEY = self.hk_ocr.get_combo()
         config.CAPTURE_FREEHAND_HOTKEY = self.hk_freehand.get_combo()
         config.CAPTURE_SCROLLING_HOTKEY = self.hk_scrolling.get_combo()
+        config.CAPTURE_COLOR_PICKER_HOTKEY = self.hk_color_picker.get_combo()
 
         # Output
         config.OUTPUT_FILE_FORMAT = self.file_format.currentText()
