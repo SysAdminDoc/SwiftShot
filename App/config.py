@@ -367,7 +367,10 @@ class Config:
             try:
                 import ctypes.wintypes
                 buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
-                ctypes.windll.shell32.SHGetFolderPathW(None, 0x0000, None, 0, buf)
+                # 0x0010 = CSIDL_DESKTOPDIRECTORY (the on-disk Desktop folder).
+                # 0x0000 = CSIDL_DESKTOP is the virtual namespace root and can
+                # resolve to an empty/namespace path.
+                ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0, buf)
                 desktop = buf.value
                 if os.path.isdir(desktop):
                     return desktop

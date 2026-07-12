@@ -19,6 +19,15 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   the installed Pillow was built with libavif (the 12.3.0+ wheels are).
 
 ### Security & dependencies
+- The update checker only surfaces a genuine GitHub release URL for this
+  repository; any other `html_url` in the API response is ignored and
+  replaced with the releases page, so a tampered response can't hand a
+  `file://`/`javascript:` URL to the browser.
+- OCR passes the image path to the WinRT PowerShell helper via an environment
+  variable instead of a `-File` positional, so a path beginning with `-`
+  can't be reinterpreted as a switch.
+- The default save directory resolves via `CSIDL_DESKTOPDIRECTORY` (the
+  on-disk Desktop folder) instead of the virtual `CSIDL_DESKTOP` root.
 - Pillow floor raised to `>=12.3.0`, clearing six 2026 CVEs including
   CVE-2026-55798 (OS command injection), CVE-2026-55380 / CVE-2026-54060
   (excessive memory allocation) and CVE-2026-42309 (heap overflow). 12.3.0

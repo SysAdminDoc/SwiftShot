@@ -17,7 +17,9 @@ from logger import log
 
 
 _WIN_OCR_SCRIPT = r'''
-param([string]$ImagePath)
+# The image path arrives via an environment variable, not a -File parameter,
+# so a path that begins with '-' can never be reinterpreted as a switch.
+$ImagePath = $env:SWIFTSHOT_OCR_PATH
 
 # Windows PowerShell 5.1 encodes redirected stdout in the OEM code page by
 # default; Python decodes it as UTF-8. Force UTF-8 so non-ASCII OCR text
@@ -142,14 +144,16 @@ def _ocr_windows(image_path):
         creation_flags = 0
         if sys.platform == 'win32':
             creation_flags = subprocess.CREATE_NO_WINDOW
+        run_env = dict(os.environ)
+        run_env['SWIFTSHOT_OCR_PATH'] = os.path.abspath(image_path)
         result = subprocess.run(
             [
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                '-File', script_path, '-ImagePath', image_path
+                '-File', script_path
             ],
             capture_output=True, text=True, timeout=30,
             encoding='utf-8', errors='replace',
-            creationflags=creation_flags
+            creationflags=creation_flags, env=run_env
         )
     finally:
         try:

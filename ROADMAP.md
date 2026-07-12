@@ -143,27 +143,6 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 ### P3 — hardening / polish
 
-- [ ] P3 — Validate the update URL scheme/host before opening it
-  Why: `updater.py` takes `html_url` verbatim from the GitHub JSON and `app._open_update_page` passes it to `webbrowser.open`; a compromised/MITM'd response could hand a `file://`/`javascript:` URL to the shell. Low exploitability (HTTPS to GitHub) but cheap defense-in-depth.
-  Evidence: `App/updater.py:53,60`; `App/app.py:112-114`.
-  Touches: `App/updater.py` or `App/app.py` — reject unless `html_url.startswith("https://github.com/SysAdminDoc/SwiftShot/")`.
-  Acceptance: a crafted non-GitHub `html_url` is ignored (logged), not opened; test covers it.
-  Complexity: S
-
-- [ ] P3 — Default save directory uses the wrong CSIDL
-  Why: `get_output_directory` calls `SHGetFolderPathW(None, 0x0000, ...)` = `CSIDL_DESKTOP` (virtual namespace root) instead of `CSIDL_DESKTOPDIRECTORY` (`0x0010`, the on-disk folder); guarded by `isdir` + `~/Desktop` fallback so impact is low, but it can silently mis-resolve.
-  Evidence: `App/config.py:357`.
-  Touches: `App/config.py` — change constant to `0x0010`.
-  Acceptance: default output dir resolves to the real Desktop folder path on a standard profile.
-  Complexity: S
-
-- [ ] P3 — Harden the OCR PowerShell invocation
-  Why: `_ocr_windows` passes the image path as a `powershell -File <script> -ImagePath <path>` positional; low real risk (subprocess uses an argv list, no shell) but a user-chosen/history path beginning with `-` is ambiguous. Pass the path via env var or stdin.
-  Evidence: `App/ocr.py:145-153`.
-  Touches: `App/ocr.py` (and `_WIN_OCR_SCRIPT` to read `$env:SWIFTSHOT_OCR_PATH`).
-  Acceptance: OCR still works; a path starting with `-` OCRs correctly; no `-File` positional path.
-  Complexity: S
-
 - [ ] P3 — Image Comparer / diff panel
   Why: ShareX 21 shipped an image-diff tool; useful for QA/design regressions and cheap as a NumPy pixel-diff over two loaded images.
   Evidence: RESEARCH.md (ShareX 21.0.0, 2026-07-03).

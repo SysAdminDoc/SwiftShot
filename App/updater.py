@@ -52,6 +52,13 @@ class UpdateChecker(QThread):
             tag = data.get("tag_name", "")
             html_url = data.get("html_url", "")
 
+            # Only ever hand a real GitHub release URL for this repo to the
+            # shell — a compromised/MITM'd response must not deliver a
+            # file://, javascript: or arbitrary URL to webbrowser.open.
+            if not html_url.startswith(f"https://github.com/{GITHUB_REPO}/"):
+                log.warning(f"Ignoring untrusted update URL: {html_url!r}")
+                html_url = f"https://github.com/{GITHUB_REPO}/releases"
+
             remote = _parse_version(tag)
             local = _parse_version(config.APP_VERSION)
 
