@@ -38,7 +38,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 - Magic wand / heal tool (LaMa ONNX) for object removal
 - Speech bubble tool
 - Badge / number-sequence tool with custom shape presets
-- Auto-redact patterns (emails, phone numbers, IP/MAC)
 - Vector export to SVG alongside PNG
 
 ### Pin & workflow

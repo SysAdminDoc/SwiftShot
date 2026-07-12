@@ -9,11 +9,28 @@ Strategy (zero-dependency first):
 """
 
 import os
+import re
 import sys
 import subprocess
 import tempfile
 
 from logger import log
+
+
+_PII_PATTERNS = [
+    re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),   # email
+    re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),                       # IPv4
+    re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b"),      # MAC
+    re.compile(r"\+?\d[\d().-]{6,}\d"),                               # phone-ish
+]
+
+
+def find_pii_words(words):
+    """Return the OCR word boxes whose text matches an email/IP/MAC/phone
+    pattern — used to auto-redact personal data. Word-level (multi-token
+    phone numbers OCR'd as separate words may only partly match)."""
+    return [wd for wd in words
+            if any(p.search(wd.get("text", "")) for p in _PII_PATTERNS)]
 
 
 _WIN_OCR_SCRIPT = r'''

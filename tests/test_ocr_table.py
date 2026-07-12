@@ -41,3 +41,24 @@ def test_words_to_table_sorts_out_of_order_input():
     ]
     table = words_to_table(words)
     assert table.split("\n")[0] == "Name\tAge"
+
+
+def test_find_pii_words_matches_email_ip_mac():
+    from ocr import find_pii_words
+    words = [
+        _word(0, 0, "hello"),
+        _word(0, 20, "bob@example.com"),
+        _word(0, 40, "192.168.1.10"),
+        _word(0, 60, "de:ad:be:ef:00:11"),
+        _word(0, 80, "world"),
+    ]
+    hits = {w["text"] for w in find_pii_words(words)}
+    assert "bob@example.com" in hits
+    assert "192.168.1.10" in hits
+    assert "de:ad:be:ef:00:11" in hits
+    assert "hello" not in hits and "world" not in hits
+
+
+def test_find_pii_words_empty():
+    from ocr import find_pii_words
+    assert find_pii_words([]) == []

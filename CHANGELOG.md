@@ -8,6 +8,8 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### Added
+- Tools ▸ Auto-Redact Personal Data: OCRs the image and blacks out emails,
+  IP/MAC addresses, and phone numbers automatically.
 - Global color picker: bind a hotkey (Settings ▸ Hotkeys ▸ Color Picker) to
   copy the pixel under the cursor as a hex code to the clipboard.
 - Tools ▸ OCR – Copy as Table: clusters WinRT OCR word boxes into rows/columns

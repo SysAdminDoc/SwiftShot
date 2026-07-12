@@ -6221,6 +6221,7 @@ class ImageEditor(QMainWindow):
         tm.addSeparator()
         self._act(tm, "OCR – Extract Text", "Ctrl+Shift+O", self.run_ocr)
         self._act(tm, "OCR – Copy as Table", "", self.run_ocr_table)
+        self._act(tm, "Auto-Redact Personal Data", "", self.auto_redact)
         self._act(tm, "Compare With Image...", "", self.compare_with_image)
 
     def _set_ui_scale(self, scale_val):
@@ -8406,6 +8407,34 @@ class ImageEditor(QMainWindow):
         except Exception as e:
             QMessageBox.warning(
                 self, "OCR Error", f"Could not extract text:\n\n{e}")
+
+    def auto_redact(self):
+        """Detect emails/IPs/MACs/phone numbers via OCR and black them out."""
+        layer = self.active_layer()
+        if not layer:
+            return
+        if layer.locked:
+            self._status("Layer is locked"); return
+        try:
+            from ocr import ocr_words_pixmap, find_pii_words
+        except ImportError:
+            self._status("OCR module not available"); return
+        try:
+            comp = self.get_composite()
+            boxes = find_pii_words(ocr_words_pixmap(pil_to_qpixmap(comp)))
+        except Exception as e:
+            QMessageBox.warning(self, "Auto-Redact", f"OCR failed:\n\n{e}")
+            return
+        if not boxes:
+            self._status("Auto-redact: no personal data detected"); return
+        self.history.save_state(self.layers, self.active_layer_index, "Auto-Redact")
+        draw = ImageDraw.Draw(layer.image)
+        for b in boxes:
+            draw.rectangle([b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]],
+                           fill=(0, 0, 0, 255))
+        self._mark_dirty()
+        self.canvas.update(); self.update_layer_panel()
+        self._status(f"Auto-redacted {len(boxes)} item(s)")
 
     def run_ocr_table(self):
         """Detect table structure from OCR word boxes and copy it as TSV."""
