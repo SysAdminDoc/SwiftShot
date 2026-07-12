@@ -176,6 +176,18 @@ def _delete_history_entry(history_dir, filepath):
         conn.execute("DELETE FROM captures WHERE path = ?", (filepath,))
 
 
+def update_history_ocr(history_dir, filepath, ocr_text):
+    """Set the OCR text for an already-saved capture (used when auto-OCR runs
+    asynchronously after the row is inserted, so it never blocks capture)."""
+    try:
+        with _db(history_dir) as conn:
+            conn.execute(
+                "UPDATE captures SET ocr_text = ? WHERE path = ?",
+                (ocr_text or "", filepath))
+    except Exception as e:
+        log.warning(f"Failed to update history OCR text: {e}")
+
+
 class HistoryThumbnail(QFrame):
     """Clickable thumbnail card for a captured image."""
 

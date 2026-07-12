@@ -17,11 +17,39 @@ from PyQt5.QtWidgets import (
     QSystemTrayIcon, QMenu, QApplication, QMessageBox, QDialog, QAction
 )
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
-from PyQt5.QtCore import Qt, QTimer, QRect
+from PyQt5.QtCore import Qt, QTimer, QRect, QThread, pyqtSignal
 
 from config import config
 from logger import log
 from ocr_dialog import OcrResultDialog
+
+
+class _OcrWorker(QThread):
+    """Run OCR off the GUI thread. The WinRT OCR PowerShell subprocess has a
+    2-5 s cold start, so doing it synchronously froze the tray/editor on every
+    capture (interactive OCR too). The pixmap is encoded to a temp file on the
+    main thread first; only the subprocess runs here."""
+
+    done = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, image_path, cleanup=False, parent=None):
+        super().__init__(parent)
+        self._path = image_path
+        self._cleanup = cleanup
+
+    def run(self):
+        try:
+            from ocr import ocr_file
+            self.done.emit(ocr_file(self._path) or "")
+        except Exception as e:
+            self.failed.emit(str(e))
+        finally:
+            if self._cleanup:
+                try:
+                    os.unlink(self._path)
+                except OSError:
+                    pass
 
 
 class SwiftShotApp:
@@ -45,6 +73,7 @@ class SwiftShotApp:
         self._update_action = None
         self._tray_menu = None
         self._exit_action = None
+        self._ocr_workers = []      # keep async OCR threads alive until done
 
     def start(self):
         # Set app-wide icon so every QWidget/QDialog inherits it
@@ -664,25 +693,46 @@ class SwiftShotApp:
     def _do_ocr_capture(self):
         self._start_region_overlay("rectangle", ocr_mode=True)
 
+    def _spawn_ocr_worker(self, image_path, cleanup, on_done, on_failed=None):
+        """Start an OCR worker, keeping a reference so it isn't GC'd mid-run."""
+        worker = _OcrWorker(image_path, cleanup=cleanup, parent=self)
+        worker.done.connect(on_done)
+        if on_failed:
+            worker.failed.connect(on_failed)
+        worker.finished.connect(
+            lambda w=worker: self._ocr_workers.remove(w)
+            if w in self._ocr_workers else None)
+        self._ocr_workers.append(worker)
+        worker.start()
+
     def _do_ocr(self, pixmap):
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        tmp_path = tmp.name; tmp.close()
         try:
-            from ocr import ocr_pixmap
-            text = ocr_pixmap(pixmap)
-            if text:
-                QApplication.clipboard().setText(text)
-                dlg = OcrResultDialog(text)
-                dlg.exec_()
-            else:
-                self.tray_icon.showMessage(
-                    "SwiftShot OCR", "No text detected in the selected region.",
-                    QSystemTrayIcon.Warning, 3000
-                )
+            pixmap.save(tmp_path, 'PNG')
         except Exception as e:
-            log.error(f"OCR failed: {e}")
-            QMessageBox.warning(
-                None, "OCR Error",
-                f"Could not extract text:\n\n{str(e)}"
-            )
+            log.error(f"OCR image save failed: {e}")
+            try: os.unlink(tmp_path)
+            except OSError: pass
+            return
+        self._spawn_ocr_worker(
+            tmp_path, cleanup=True,
+            on_done=self._on_ocr_done, on_failed=self._on_ocr_failed)
+
+    def _on_ocr_done(self, text):
+        if text:
+            QApplication.clipboard().setText(text)
+            OcrResultDialog(text).exec_()
+        else:
+            self.tray_icon.showMessage(
+                "SwiftShot OCR", "No text detected in the selected region.",
+                QSystemTrayIcon.Warning, 3000)
+
+    def _on_ocr_failed(self, message):
+        log.error(f"OCR failed: {message}")
+        QMessageBox.warning(
+            None, "OCR Error", f"Could not extract text:\n\n{message}")
 
     # -------------------------------------------------------------------
     # Scrolling Capture
@@ -719,10 +769,14 @@ class SwiftShotApp:
         actions = config.get_after_capture_actions()
         log.info(f"Capture received: {pixmap.width()}x{pixmap.height()} "
                  f"actions={actions}")
-        # Save to history
+        # Save to history immediately with no OCR text; if auto-OCR is on, run
+        # it asynchronously and UPDATE the row when it finishes so the slow
+        # WinRT subprocess never blocks the capture.
         try:
             from capture_history import save_to_history
-            save_to_history(pixmap, self._history_ocr_text(pixmap))
+            saved_path = save_to_history(pixmap, "")
+            if saved_path and config.CAPTURE_HISTORY_AUTO_OCR:
+                self._start_history_ocr(saved_path)
         except Exception as e:
             log.warning(f"Could not save to history: {e}")
 
@@ -752,15 +806,15 @@ class SwiftShotApp:
             log.warning(f"Could not apply frame: {e}")
             return pixmap
 
-    def _history_ocr_text(self, pixmap):
-        if not config.CAPTURE_HISTORY_AUTO_OCR:
-            return ""
-        try:
-            from ocr import ocr_pixmap
-            return ocr_pixmap(pixmap)
-        except Exception as e:
-            log.warning(f"History OCR skipped: {e}")
-            return ""
+    def _start_history_ocr(self, filepath):
+        """Run OCR on a saved history file in the background and write the
+        result back to its row (the file already exists, so no cleanup)."""
+        def _done(text, fp=filepath):
+            from capture_history import update_history_ocr
+            update_history_ocr(config.CAPTURE_HISTORY_DIR, fp, text)
+        self._spawn_ocr_worker(
+            filepath, cleanup=False, on_done=_done,
+            on_failed=lambda msg: log.warning(f"History OCR failed: {msg}"))
 
     def open_image_file(self, path):
         """Open an image file in the editor (file-association / CLI entry)."""
@@ -1058,6 +1112,13 @@ class SwiftShotApp:
             except Exception:
                 pass
         self._stop_clipboard_watcher()
+        # Wait briefly for any in-flight OCR workers so we don't tear down the
+        # process while a QThread is still running.
+        for worker in list(self._ocr_workers):
+            try:
+                worker.wait(3000)
+            except Exception:
+                pass
         # Close all pin windows
         for pin in list(self._pin_windows):
             try:

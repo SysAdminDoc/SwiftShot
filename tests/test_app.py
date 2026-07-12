@@ -47,15 +47,33 @@ def test_handle_capture_applies_beautification_before_workflow(qapp, monkeypatch
     assert sizes[0][1] > pixmap.height()
 
 
-def test_history_ocr_text_runs_when_enabled(qapp, monkeypatch):
+def test_ocr_worker_emits_ocr_file_result(qapp, monkeypatch):
+    """OCR now runs off the GUI thread; the worker returns ocr_file's text."""
     import ocr
-    from app import SwiftShotApp
+    from app import _OcrWorker
+
+    monkeypatch.setattr(ocr, "ocr_file", lambda path: "searchable text")
+    worker = _OcrWorker("does-not-matter.png", cleanup=False)
+    results = []
+    worker.done.connect(results.append)
+    worker.run()   # execute synchronously on this thread
+
+    assert results == ["searchable text"]
+
+
+def test_update_history_ocr_writes_row(qapp, tmp_path, monkeypatch):
     from config import config
+    import capture_history
 
-    monkeypatch.setattr(config, "CAPTURE_HISTORY_AUTO_OCR", True)
-    monkeypatch.setattr(ocr, "ocr_pixmap", lambda pixmap: "searchable text")
+    monkeypatch.setattr(config, "CAPTURE_HISTORY_ENABLED", True)
+    monkeypatch.setattr(config, "CAPTURE_HISTORY_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "CAPTURE_HISTORY_MAX", 50)
 
-    controller = SwiftShotApp(qapp)
-    pixmap = QPixmap(4, 4)
+    px = QPixmap(4, 4)
+    px.fill(QColor(1, 2, 3))
+    path = capture_history.save_to_history(px, "")
+    assert path
 
-    assert controller._history_ocr_text(pixmap) == "searchable text"
+    capture_history.update_history_ocr(str(tmp_path), path, "hello world")
+    entries = capture_history._history_entries(str(tmp_path))
+    assert any(e["ocr_text"] == "hello world" for e in entries)
