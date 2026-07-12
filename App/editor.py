@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QMenu,
     QFrame, QInputDialog, QMessageBox, QSizePolicy,
     QToolButton, QGridLayout, QLineEdit, QTextEdit,
-    QAbstractItemView, QTabWidget
+    QAbstractItemView, QTabWidget, QShortcut
 )
 from PyQt5.QtCore import (
     Qt, QPoint, QRect, QSize, QTimer, pyqtSignal, QPointF, QRectF,
@@ -5535,6 +5535,9 @@ class ImageEditor(QMainWindow):
             btn.setToolTip(f"{tip}" + (f" ({shortcut})" if shortcut else ""))
             btn.setIcon(svg_icon(tool_id, C.TEXT_SEC, dp(18)))
             btn.clicked.connect(lambda: self._set_tool(tool_id, btn))
+            if shortcut:
+                sc = QShortcut(QKeySequence(shortcut), self)
+                sc.activated.connect(lambda tid=tool_id, b=btn: self._set_tool(tid, b))
             self.tool_group.addAction(btn.defaultAction() if btn.defaultAction() else QAction(self))
             tb.addWidget(btn)
             self._tool_buttons[tool_id] = btn
@@ -5546,6 +5549,8 @@ class ImageEditor(QMainWindow):
             btn.tool_selected.connect(lambda t: self._set_tool(t, btn))
             if shortcut:
                 btn.setToolTip(f"{primary.replace('-',' ').title()} ({shortcut})")
+                sc = QShortcut(QKeySequence(shortcut), self)
+                sc.activated.connect(lambda p=primary, b=btn: self._set_tool(p, b))
             tb.addWidget(btn)
             self._flyout_buttons[primary] = btn
             for tid, _ in tools:

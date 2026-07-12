@@ -55,6 +55,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   over a long tray session.
 
 ### Editor — polish
+- Single-key tool shortcuts advertised in the toolbar tooltips (e.g. V, E, T,
+  P, N, I) are now actually registered and switch tools.
+- The Settings save-folder field is validated on apply: a nonexistent path
+  offers to create the folder instead of silently falling back to Desktop.
 - Undo no longer renames the grandchildren of nested groups to "… copy".
 - Releasing Space after a temporary pan restores the active tool's cursor
   instead of forcing a plain arrow.

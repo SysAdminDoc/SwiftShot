@@ -795,8 +795,27 @@ class SettingsDialog(QDialog):
         config.OUTPUT_FILE_FORMAT = self.file_format.currentText()
         config.OUTPUT_JPEG_QUALITY = self.jpeg_quality.value()
         config.OUTPUT_FILENAME_PATTERN = self.filename_pattern.text()
-        out_dir = self.output_dir.text()
-        config.OUTPUT_FILE_PATH = "" if out_dir == "(Desktop)" else out_dir
+        out_dir = self.output_dir.text().strip()
+        if out_dir and out_dir != "(Desktop)" and not os.path.isdir(out_dir):
+            # A nonexistent save folder silently fell back to Desktop, losing
+            # captures where the user expected them. Offer to create it; on
+            # decline/failure keep the previous location instead of the bad path.
+            resp = QMessageBox.question(
+                self, "Create Folder?",
+                f"The save folder does not exist:\n{out_dir}\n\nCreate it?",
+                QMessageBox.Yes | QMessageBox.No)
+            if resp == QMessageBox.Yes:
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                except Exception as e:
+                    QMessageBox.warning(
+                        self, "Invalid Folder",
+                        f"Could not create the folder:\n{e}\n\n"
+                        "Keeping the previous save location.")
+                    out_dir = config.OUTPUT_FILE_PATH
+            else:
+                out_dir = config.OUTPUT_FILE_PATH
+        config.OUTPUT_FILE_PATH = "" if out_dir in ("", "(Desktop)") else out_dir
         config.OUTPUT_FILE_INCREMENT = self.auto_increment.isChecked()
 
         # Editor
