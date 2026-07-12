@@ -69,6 +69,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   large selection is fast and blends the surrounding colours in smoothly.
 
 ### Editor — polish
+- Panning, zoom-to-cursor, and free-transform scaling now behave correctly
+  when the canvas view is rotated (they used raw screen deltas before, so the
+  canvas moved the wrong way and zoom drifted under a rotated view).
 - Off-canvas paint expansion also shifts guides and the clone-stamp source
   into the grown canvas, so they no longer point at the wrong place.
 - "Clear Capture History" reports the number of captures the panel actually

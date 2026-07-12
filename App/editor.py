@@ -898,6 +898,8 @@ class CanvasWidget(QWidget):
         self.pan_offset = QPointF(0, 0)
         self.panning = False
         self.pan_start = QPointF()
+        self._pan_mouse0 = QPointF()
+        self._pan_offset0 = QPointF()
         self.last_pos = None
         self._cursor_pos = None
         self.drawing = False
@@ -982,6 +984,16 @@ class CanvasWidget(QWidget):
         t.translate(self.pan_offset.x(), self.pan_offset.y())
         t.scale(self.zoom, self.zoom)
         return t
+
+    def _unrotate_delta(self, d):
+        """Rotate a screen-space delta by -canvas_angle. Pan/zoom act in the
+        un-rotated frame (the view transform rotates by +canvas_angle), so a
+        raw screen delta would move the canvas the wrong way once rotated."""
+        if not self.canvas_angle:
+            return QPointF(d)
+        rad = math.radians(-self.canvas_angle)
+        ca, sa = math.cos(rad), math.sin(rad)
+        return QPointF(d.x() * ca - d.y() * sa, d.x() * sa + d.y() * ca)
 
     def canvas_to_image(self, pos):
         if not self.canvas_angle:
@@ -1228,6 +1240,8 @@ class CanvasWidget(QWidget):
                  tool not in ("clone", "healing", "magic-wand"))):
             self.panning = True
             self.pan_start = QPointF(event.pos()) - self.pan_offset
+            self._pan_mouse0 = QPointF(event.pos())
+            self._pan_offset0 = QPointF(self.pan_offset)
             self.setCursor(Qt.ClosedHandCursor)
             return
         if event.button() == Qt.LeftButton:
@@ -1475,7 +1489,10 @@ class CanvasWidget(QWidget):
         if hasattr(self.editor, "_ruler_v") and self.editor._ruler_v.isVisible():
             self.editor._ruler_v.set_mouse_pos(cp.y())
         if self.panning:
-            self.pan_offset = QPointF(event.pos()) - self.pan_start
+            # Un-rotate the screen drag into pan (V-)space so the canvas follows
+            # the cursor even when the view is rotated.
+            d = self._unrotate_delta(QPointF(event.pos()) - self._pan_mouse0)
+            self.pan_offset = self._pan_offset0 + d
             # Keep rulers/navigator in sync while panning (they only followed
             # wheel zoom before, so they stayed stale during a pan drag).
             self.zoom_changed.emit(self.zoom, self.pan_offset.x(), self.pan_offset.y())
@@ -1773,10 +1790,16 @@ class CanvasWidget(QWidget):
 
     def wheelEvent(self, event):
         old_zoom = self.zoom
+        cp = QPointF(event.pos())
+        # Image point under the cursor BEFORE zooming — canvas_to_image inverts
+        # the full transform including view rotation, so anchoring on it keeps
+        # zoom-to-cursor correct at any canvas_angle.
+        p_img = self.canvas_to_image(cp)
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
         self.zoom = max(0.05, min(32.0, self.zoom * factor))
-        cp = QPointF(event.pos())
-        self.pan_offset = cp - (cp - self.pan_offset) * (self.zoom / old_zoom)
+        dz = old_zoom - self.zoom
+        self.pan_offset = QPointF(self.pan_offset.x() + dz * p_img.x(),
+                                  self.pan_offset.y() + dz * p_img.y())
         self.zoom_changed.emit(self.zoom, self.pan_offset.x(), self.pan_offset.y())
         self.update()
 
@@ -2790,7 +2813,9 @@ class CanvasWidget(QWidget):
         if self._xform_start is None or self._xform_drag_wp is None: return
         cx0, cy0, w0, h0, a0 = self._xform_start
         handle = self._xform_handle
-        delta_w = QPointF(wp - self._xform_drag_wp)
+        # Un-rotate the screen delta by the VIEW angle first (used by the scale
+        # branch); the object-angle un-rotation below then lands in object space.
+        delta_w = self._unrotate_delta(QPointF(wp - self._xform_drag_wp))
 
         if handle == 'body':
             # Translate in image coords

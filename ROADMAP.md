@@ -15,10 +15,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 ### P2 — editor correctness
 
-- [ ] AB-07 P2 — Rotated-view interactions ignore `canvas_angle`
-  Why: `view_transform()` is `s = R(pan + zoom·p)` but (a) pan drag adds the raw screen delta (~1404), (b) wheel zoom-to-cursor anchors on the un-rotated cursor point (~1692), (c) `_xform_drag` scale un-rotates only by the object angle (~2681). With a rotated view, panning moves the canvas the wrong way and zoom drifts.
-  Fix: helper that un-rotates a screen-space delta/point by `canvas_angle`; use in all three sites.
-
 - [ ] AB-17 P2 — Full PIL recomposite on every hover repaint
   Why: `mouseMoveEvent` calls `update()` unconditionally (~1388) and every `paintEvent` calls `get_composite()` — a full Python flatten of all layers/masks/fx per mouse event.
   Fix: cache the composite, invalidate on actual edits; also rebuild quick-mask/rubylith pixmaps only when their source changes (~2179, ~2357).
