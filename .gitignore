@@ -8,6 +8,7 @@ CODEX_CHANGELOG.md
 LOGO_PROMPTS.md
 ROADMAP.md
 RESEARCH.md
+Roadmap_Blocked.md
 .claude/
 __pycache__/
 *.py[cod]
