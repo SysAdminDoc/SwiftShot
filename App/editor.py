@@ -2136,12 +2136,18 @@ class CanvasWidget(QWidget):
         else:
             t = np.zeros((h, w))
         grad_a = from_c[3] * (1 - t) + to_c[3] * t
-        alpha = grad_a / 255.0
+        # Proper straight-alpha source-over. The old blend used
+        # dst*(1-αs)+src*αs for RGB but wrote source-over alpha, so on
+        # transparent pixels (αd≈0) the colour came out as src*αs — darkened,
+        # then darkened again by the small output alpha (double attenuation).
+        src_a = grad_a / 255.0
+        dst_a = arr[:, :, 3] / 255.0
+        out_a = src_a + dst_a * (1 - src_a)
+        safe = np.where(out_a > 1e-6, out_a, 1.0)
         for ch in range(3):
-            color_ch = from_c[ch] * (1 - t) + to_c[ch] * t
-            arr[:, :, ch] = arr[:, :, ch] * (1 - alpha) + color_ch * alpha
-        # Composite alpha too, or the gradient is invisible on transparent layers
-        arr[:, :, 3] = grad_a + arr[:, :, 3] * (1 - alpha)
+            src_ch = from_c[ch] * (1 - t) + to_c[ch] * t
+            arr[:, :, ch] = (src_ch * src_a + arr[:, :, ch] * dst_a * (1 - src_a)) / safe
+        arr[:, :, 3] = out_a * 255.0
         layer.image = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
         self.update()
 
@@ -3764,9 +3770,15 @@ class LayerPanel(QWidget):
             return
         self.editor.history.save_state(
             self.editor.layers, self.editor.active_layer_index, "Reorder Layers")
+        active_obj = self.editor.active_layer()
         new = [self.editor.layers[idx] for idx in indices]
         new.reverse(); self.editor.layers = new
-        self.editor.active_layer_index = max(0, min(self.editor.active_layer_index, len(self.editor.layers) - 1))
+        # Follow the active LAYER, not its old slot number — clamping the
+        # numeric index alone made the next stroke land on a different layer.
+        if active_obj in new:
+            self.editor.active_layer_index = new.index(active_obj)
+        else:
+            self.editor.active_layer_index = max(0, min(self.editor.active_layer_index, len(new) - 1))
         self.refresh(); self.editor.canvas.update()
 
     def on_opacity_change(self, v):

@@ -55,6 +55,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   over a long tray session.
 
 ### Editor — polish
+- Reordering layers by drag keeps the same layer active (it followed the old
+  slot number before, so the next stroke could land on a different layer).
+- Gradients drawn on transparent pixels keep full color instead of being
+  darkened twice (proper straight-alpha source-over compositing).
 - Single-key tool shortcuts advertised in the toolbar tooltips (e.g. V, E, T,
   P, N, I) are now actually registered and switch tools.
 - The Settings save-folder field is validated on apply: a nonexistent path
