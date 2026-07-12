@@ -232,3 +232,92 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 - DPI-aware capture path; on multi-monitor with mixed DPI, enumerate via Win32 `EnumDisplayMonitors` + per-monitor-v2 context
 - File-naming template system (`{app}_{yyyy-MM-dd_HH-mm-ss}`) with variable registry — ShareX's template engine is a good reference
 - Clipboard-history integration for "paste as markdown image link" (Obsidian/Notion workflow)
+
+## Research-Driven Additions
+
+New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate the AB/R backlog above — these are net-new and code-verified or evidence-backed. When done, DELETE the item (no `[x]` checkmarks).
+
+### P1 — security / data safety
+
+- [ ] P1 — Bump Pillow floor to `>=12.3.0`
+  Why: current `Pillow>=12.2.0` is behind six 2026 CVEs incl. CVE-2026-55798 (OS command injection, CWE-78), CVE-2026-55380 / CVE-2026-54060 (memory allocation, CWE-789), CVE-2026-42309 (heap overflow) — all fixed in 12.3.0; free side-benefit is native AVIF (unblocks R-08).
+  Evidence: radar.offseq / o3.security / sentinelone advisory DBs (RESEARCH.md Sources); `App/requirements.txt`, `requirements.txt`.
+  Touches: `requirements.txt`, `App/requirements.txt`, build venv pin.
+  Acceptance: pinned `Pillow>=12.3.0`; `py -3.12 -m pip install -r requirements.txt` resolves; suite green; portable build launches.
+  Complexity: S
+
+- [ ] P1 — Verify the frozen build ships SQLite ≥ 3.50.2
+  Why: CVE-2025-6965 affects libsqlite < 3.50.2; the PyInstaller runtime bundles whatever the Python build links. History is SQLite-backed, so this is in the trust path.
+  Evidence: https://www.sqlite.org/cves.html ; `App/capture_history.py`.
+  Touches: build verification step in `App/Build-SwiftShot.ps1` (assert `sqlite3.sqlite_version`), CLAUDE.md note.
+  Acceptance: built exe reports `sqlite3.sqlite_version >= 3.50.2`; if not, Python runtime is upgraded before release.
+  Complexity: S
+
+### P2 — capture correctness / reliability (net-new bugs)
+
+- [ ] P2 — Scrolling capture grabs the primary screen, not the target monitor
+  Why: `_capture_frame` calls `QApplication.primaryScreen().grabWindow(0, rect.x, rect.y, ...)` with virtual-desktop coords, though `_scroll_window` already computed the correct `screenAt(target_rect.center())` at ~line 88. On a secondary or mixed-DPI monitor the grab pulls the wrong region — contradicts the CLAUDE.md gotcha "always `screen.grabWindow(0)` on that QScreen, never primary.grabWindow."
+  Evidence: `App/scrolling_capture.py:175` (grab) vs `:88` (correct screen).
+  Touches: `App/scrolling_capture.py` (store the target QScreen, translate rect to its origin). Optional: post `WM_MOUSEWHEEL` to `WindowFromPoint(center)` instead of the top-level hwnd (~:231) so child scroll areas actually scroll.
+  Acceptance: scrolling capture on a non-primary and a 150%-scaled monitor stitches the correct content; add a synthetic frame-set test for the coordinate math.
+  Complexity: M
+
+- [ ] P2 — History DB connections are never closed (file-handle leak)
+  Why: `with _connect_db(...) as conn` commits the transaction but sqlite3's context manager does NOT close the connection; every capture-save and history op leaks a connection + open handle to `history.sqlite3` over a long tray session. The DDL (`CREATE TABLE`/`ALTER`/index) also re-runs on every call, including the capture hot path.
+  Evidence: `App/capture_history.py:113,155,458,473,501`.
+  Touches: `App/capture_history.py` — wrap in `contextlib.closing` (or explicit `conn.close()`); run schema DDL once (cached/lazy), not per-op.
+  Acceptance: no connection leak across N captures (test asserts handles/`gc` stable); DDL executes once per process.
+  Complexity: S
+
+- [ ] P2 — Frame/beautify rectangularly destroys freehand (transparent) captures
+  Why: `_handle_capture` runs `_apply_beautification` then `_apply_frame` on every capture; `utils.apply_frame` draws a border over the full bounding box (`box=(0,0,w-1,h-1)`) and rounded-rect-clips, so a freehand polygon capture with border/rounded/shadow enabled gets a rectangular opaque frame that erases the polygon shape.
+  Evidence: `App/app.py:697-698`; `App/utils.py:135` (`apply_frame`), `:81` (`apply_beautification_preset`).
+  Touches: `App/app.py` and/or `App/utils.py` — skip (or alpha-mask) frame/beautify when the pixmap has non-trivial transparency.
+  Acceptance: a freehand capture with border+shadow enabled keeps its polygon edge; regression test on a masked RGBA pixmap.
+  Complexity: S
+
+### P2 — features (evidence-backed gaps)
+
+- [ ] P2 — Beautify backgrounds + device/window/browser frames + padding + aspect presets
+  Why: every 2026 review names gradient/solid backgrounds and device/OS-window frames as THE gap in free Windows tools (even ShareX beautify is "border yes, gradient background / frame no"); it's the highest differentiation-per-effort and needs zero new native deps (pure Pillow/NumPy). Extends the existing Frame step (border/shadow/rounded only).
+  Evidence: RESEARCH.md Competitive Landscape (CleanShot X, screensnap.pro, screenhance.com); `App/utils.py:81-187` (beautify/frame funnel).
+  Touches: `App/utils.py` (add background fill/gradient, padding, framed presets), `App/config.py` (settings keys), `App/settings_dialog.py` Frame tab, editor export preview.
+  Acceptance: capture funnel can render a screenshot on a padded gradient/solid background and inside at least one window/browser frame; settings expose presets; tested on a sample pixmap.
+  Complexity: M
+
+- [ ] P2 — winget manifest + Scoop bucket for the unsigned Inno EXE / portable zip
+  Why: winget accepts unsigned EXE/MSI installers and Scoop accepts portable zips — both peers (ShareX, Greenshot) distribute this way, no signing needed. The existing "Admin-install MSIX with winget manifest" item mis-couples winget to MSIX/signing (rejected in RESEARCH.md). This decouples discoverability from a cert.
+  Evidence: https://github.com/microsoft/winget-pkgs ; https://bjansen.github.io/scoop-apps/extras/sharex/ .
+  Touches: new `manifests/` YAML (winget, with SHA256 + silent-install args), a Scoop `.json` pointing at the portable exe/zip, release checklist in CLAUDE.md.
+  Acceptance: `winget install SysAdminDoc.SwiftShot` and a Scoop manifest install validate locally (`winget validate`, `scoop install` from the manifest url).
+  Complexity: M
+
+### P3 — hardening / polish
+
+- [ ] P3 — Validate the update URL scheme/host before opening it
+  Why: `updater.py` takes `html_url` verbatim from the GitHub JSON and `app._open_update_page` passes it to `webbrowser.open`; a compromised/MITM'd response could hand a `file://`/`javascript:` URL to the shell. Low exploitability (HTTPS to GitHub) but cheap defense-in-depth.
+  Evidence: `App/updater.py:53,60`; `App/app.py:112-114`.
+  Touches: `App/updater.py` or `App/app.py` — reject unless `html_url.startswith("https://github.com/SysAdminDoc/SwiftShot/")`.
+  Acceptance: a crafted non-GitHub `html_url` is ignored (logged), not opened; test covers it.
+  Complexity: S
+
+- [ ] P3 — Default save directory uses the wrong CSIDL
+  Why: `get_output_directory` calls `SHGetFolderPathW(None, 0x0000, ...)` = `CSIDL_DESKTOP` (virtual namespace root) instead of `CSIDL_DESKTOPDIRECTORY` (`0x0010`, the on-disk folder); guarded by `isdir` + `~/Desktop` fallback so impact is low, but it can silently mis-resolve.
+  Evidence: `App/config.py:357`.
+  Touches: `App/config.py` — change constant to `0x0010`.
+  Acceptance: default output dir resolves to the real Desktop folder path on a standard profile.
+  Complexity: S
+
+- [ ] P3 — Harden the OCR PowerShell invocation
+  Why: `_ocr_windows` passes the image path as a `powershell -File <script> -ImagePath <path>` positional; low real risk (subprocess uses an argv list, no shell) but a user-chosen/history path beginning with `-` is ambiguous. Pass the path via env var or stdin.
+  Evidence: `App/ocr.py:145-153`.
+  Touches: `App/ocr.py` (and `_WIN_OCR_SCRIPT` to read `$env:SWIFTSHOT_OCR_PATH`).
+  Acceptance: OCR still works; a path starting with `-` OCRs correctly; no `-File` positional path.
+  Complexity: S
+
+- [ ] P3 — Image Comparer / diff panel
+  Why: ShareX 21 shipped an image-diff tool; useful for QA/design regressions and cheap as a NumPy pixel-diff over two loaded images.
+  Evidence: RESEARCH.md (ShareX 21.0.0, 2026-07-03).
+  Touches: `App/editor.py` (small compare panel / dialog), menu entry.
+  Acceptance: load two images, see a highlighted diff (and % changed); works headless in a unit test on two arrays.
+  Complexity: M
