@@ -167,27 +167,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
 
 ### P3 — reliability / correctness (support modules)
 
-- [ ] P3 — Config downgrade silently drops newer keys (upgrade round-trip data loss)
-  Why: `save()` rewrites `swiftshot.json` using only `_get_saveable_keys()` (the running build's key set), so an older build erases newer keys (`BACKDROP_*`, `CAPTURE_COLOR_PICKER_HOTKEY`, …); on re-upgrade those settings revert to defaults.
-  Evidence: `App/config.py:270` (`save()`), `:251` (unknown-key skip on load).
-  Touches: `App/config.py` — capture unknown keys read from the file into a passthrough dict and re-emit them in `save()`.
-  Acceptance: loading a config with an unknown key and saving preserves that key in the file; downgrade→upgrade round-trip keeps new-build settings.
-  Complexity: S
-
-- [ ] P3 — `UpdateChecker` QThread never joined on shutdown
-  Why: the update-check QThread runs an up-to-10 s `urlopen`; quitting during it can emit "QThread: Destroyed while thread is still running" and deliver a queued signal to a torn-down object.
-  Evidence: `App/app.py:118-120` (started, never `wait()`ed); `App/updater.py:33-76`.
-  Touches: `App/app.py` `exit_app` — `self._update_checker.wait(...)` (or a cancel flag + short socket timeout) before teardown.
-  Acceptance: quitting immediately after launch logs no QThread-destroyed warning; no crash.
-  Complexity: S
-
-- [ ] P3 — `monitor_picker` has no zero-display empty state
-  Why: with `QApplication.screens()` empty (headless/RDP-no-console), the picker shows an "All Monitors (0)" button that emits `-1` (capture-all → empty capture) and a dead "press 1-9" subtitle.
-  Evidence: `App/monitor_picker.py:195-216`.
-  Touches: `App/monitor_picker.py` — if no screens, show "No displays detected" and disable/hide the capture buttons (or auto-reject).
-  Acceptance: a no-display session shows the empty-state message and offers no invalid capture action.
-  Complexity: S
-
 - [ ] P3 — History panel re-hashes content-duplicate files on every open
   Why: `_index_file` uses `INSERT OR IGNORE` on the UNIQUE `sha256`, so a second file with identical content is never path-indexed and `_ensure_history_index` re-reads + re-hashes it on every panel open/search (repeated full-file SHA-256 on large dirs).
   Evidence: `App/capture_history.py:100-124` (`_index_file`), `~138` (`_ensure_history_index` "not in indexed").

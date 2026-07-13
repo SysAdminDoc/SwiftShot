@@ -184,6 +184,10 @@ class Config:
         # reset_to_defaults() reads back).
         self.EDITOR_RECENT_COLORS = list(Config.EDITOR_RECENT_COLORS)
         self.AFTER_CAPTURE_ACTIONS = list(Config.AFTER_CAPTURE_ACTIONS)
+        # Keys written by a newer build that this build doesn't know — kept
+        # verbatim so saving here doesn't erase the user's newer settings on a
+        # downgrade/upgrade round-trip.
+        self._unknown_keys = {}
         self._ensure_history_dir()
         self._load()
 
@@ -248,8 +252,12 @@ class Config:
             with open(self._config_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             for key, value in data.items():
-                if hasattr(self, key) and key.isupper():
+                if not key.isupper() or key in self._IDENTITY_KEYS:
+                    continue
+                if hasattr(self, key):
                     self._apply_value(key, value)
+                else:
+                    self._unknown_keys[key] = value   # newer-build key
             if "AFTER_CAPTURE_ACTIONS" not in data:
                 self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
             self._normalize_after_capture_actions()
@@ -267,7 +275,8 @@ class Config:
             self._log_warning(f"Could not load config: {e}")
 
     def save(self):
-        data = {k: getattr(self, k) for k in self._get_saveable_keys()}
+        data = dict(self._unknown_keys)   # preserve newer-build keys first
+        data.update({k: getattr(self, k) for k in self._get_saveable_keys()})
         try:
             tmp_path = self._config_file + ".tmp"
             with open(tmp_path, 'w', encoding='utf-8') as f:

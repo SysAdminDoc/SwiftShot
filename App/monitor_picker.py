@@ -182,6 +182,20 @@ class MonitorPicker(QDialog):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
+        screens = QApplication.screens()
+
+        # Empty state: no displays enumerated (e.g. a headless/console session).
+        if not screens:
+            subtitle = QLabel("No displays detected.")
+            subtitle.setFont(QFont("Segoe UI", 10))
+            subtitle.setStyleSheet(f"color: {colors['TEXT_SEC']};")
+            subtitle.setAlignment(Qt.AlignCenter)
+            layout.addWidget(subtitle)
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(self.reject)
+            layout.addWidget(close_btn)
+            return
+
         subtitle = QLabel("Click a monitor to capture it, or press 1-9")
         subtitle.setFont(QFont("Segoe UI", 9))
         subtitle.setStyleSheet(f"color: {colors['TEXT_SEC']};")
@@ -192,7 +206,6 @@ class MonitorPicker(QDialog):
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
 
-        screens = QApplication.screens()
         for i, screen in enumerate(screens):
             thumbnail = self._capture_monitor_thumbnail(screen)
             card = MonitorCard(i, screen, thumbnail)

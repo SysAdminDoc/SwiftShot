@@ -7,6 +7,16 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Reliability
+- Configuration written by a newer build is preserved when an older build
+  saves, so a downgrade→upgrade round-trip no longer silently resets settings
+  the older build didn't recognize.
+- The update-check thread is joined on shutdown, preventing a "QThread
+  destroyed while running" warning (and a signal delivered to a torn-down app)
+  when you quit during the network check.
+- The monitor picker shows a "No displays detected" empty state instead of an
+  "All Monitors (0)" button that would produce an empty capture.
+
 ### Hotkeys & CLI
 - `swiftshot --monitor N` now errors (non-zero exit, no file written) when N is
   out of range, instead of silently writing a full-desktop image and reporting

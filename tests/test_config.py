@@ -20,6 +20,25 @@ def test_config_save_and_reload_round_trip(fresh_config):
     assert reloaded.CAPTURE_HISTORY_AUTO_OCR is True
 
 
+def test_config_preserves_unknown_newer_keys_on_save(fresh_config):
+    """An older build must not erase keys written by a newer build when it
+    saves — otherwise a downgrade/upgrade round-trip silently resets them."""
+    cfg = fresh_config.Config()
+    # Simulate a config file that already contains a key this build doesn't know.
+    path = Path(cfg._config_file)
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    data["FUTURE_FEATURE_ENABLED"] = True
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    reloaded = fresh_config.Config()          # loads, stashes the unknown key
+    reloaded.THEME = "light"
+    reloaded.save()                            # must not drop the unknown key
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved.get("FUTURE_FEATURE_ENABLED") is True
+    assert saved.get("THEME") == "light"
+
+
 def test_after_capture_actions_normalize_and_sync_legacy_value(fresh_config):
     cfg = fresh_config.Config()
     cfg.AFTER_CAPTURE_ACTION = "clipboard"

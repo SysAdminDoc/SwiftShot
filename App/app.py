@@ -1142,6 +1142,13 @@ class SwiftShotApp:
             except Exception:
                 pass
         self._stop_clipboard_watcher()
+        # Join the update-check thread so it can't emit into a torn-down app
+        # ("QThread: Destroyed while thread is still running").
+        if self._update_checker is not None:
+            try:
+                self._update_checker.wait(3000)
+            except Exception:
+                pass
         # Wait briefly for any in-flight OCR workers so we don't tear down the
         # process while a QThread is still running.
         for worker in list(self._ocr_workers):
