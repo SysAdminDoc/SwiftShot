@@ -192,3 +192,62 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
   Complexity: S
 
 
+
+## Research-Driven Additions — support-module depth pass (2026-07-12)
+
+Net-new, code-verified findings from auditing the less-examined support modules (build script, hotkeys, config, updater, pickers). Not duplicated above. Delete when done (no `[x]`).
+
+### P1 — distribution (root-cause: breaks a shipped feature)
+
+- [ ] P1 — `cli.py` missing from `Build-SwiftShot.ps1` file manifest → frozen CLI crashes
+  Why: `main.py` does `import cli`, but `cli.py` is in neither `$SourceFiles` nor `$HiddenImports`; the space/paren-path (`$UnsafePath`) build copies only `$SourceFiles`, so the frozen exe crashes with `ModuleNotFoundError: cli`, and the "all source files present" prereq gate never checks it (false confidence).
+  Evidence: `App/Build-SwiftShot.ps1` `$SourceFiles` (~96-102), safe-path copy (~435), prereq loop (~224); `App/main.py:88` `import cli`.
+  Touches: `App/Build-SwiftShot.ps1` — add `"cli.py"` to `$SourceFiles` and `"cli"` to `$HiddenImports`.
+  Acceptance: a clean `-Clean` build (including from a path containing a space) launches `--region 0,0,10,10 --out x.png` from the frozen exe without a module error.
+  Complexity: S
+
+### P2 — reliability (support modules)
+
+- [ ] P2 — Hotkey recorder saves combos that silently never fire
+  Why: for a key absent from `_VK_NAMES` and not A-Z/0-9, the recorder falls back to `QKeySequence(key).toString()`, producing names (`F13`, `+`, `[`, media keys) that `HotkeyManager._parse_combo` can't resolve against `VK_MAP`; `register()` then binds nothing while Settings shows the combo as saved.
+  Evidence: `App/settings_dialog.py:170-174` (fallback) vs `App/hotkeys.py` `VK_MAP` / `_parse_combo` (~115-143).
+  Touches: `App/settings_dialog.py` — only accept a recorded key whose resulting name is a `VK_MAP` key (or A-Z/0-9); otherwise reject the recording and keep the field unchanged.
+  Acceptance: recording an unmappable key (e.g. F13) does not overwrite the field; every combo the recorder accepts actually fires; test asserts recorder output ⊆ VK_MAP-resolvable names.
+  Complexity: S
+
+- [ ] P2 — `PostThreadMessageW` undeclared argtypes → hook leak risk on live re-bind
+  Why: `stop()` calls the shared `windll.user32.PostThreadMessageW(self._thread.ident, 0x0012, 0, 0)` with no `argtypes`, so the thread id is marshaled as signed 32-bit; a large thread id could target the wrong thread, the WM_QUIT never lands, and the old LL keyboard hook stays installed alongside the new one after a settings re-bind.
+  Evidence: `App/hotkeys.py:295` (`stop()`).
+  Touches: `App/hotkeys.py` — declare `PostThreadMessageW.argtypes = [DWORD, UINT, WPARAM, LPARAM]` and pass `wintypes.DWORD(self._thread.ident)`.
+  Acceptance: repeated live hotkey re-binds leave exactly one keyboard hook installed; unit/manual check that `stop()` joins the hook thread each time.
+  Complexity: S
+
+### P3 — reliability / correctness (support modules)
+
+- [ ] P3 — Config downgrade silently drops newer keys (upgrade round-trip data loss)
+  Why: `save()` rewrites `swiftshot.json` using only `_get_saveable_keys()` (the running build's key set), so an older build erases newer keys (`BACKDROP_*`, `CAPTURE_COLOR_PICKER_HOTKEY`, …); on re-upgrade those settings revert to defaults.
+  Evidence: `App/config.py:270` (`save()`), `:251` (unknown-key skip on load).
+  Touches: `App/config.py` — capture unknown keys read from the file into a passthrough dict and re-emit them in `save()`.
+  Acceptance: loading a config with an unknown key and saving preserves that key in the file; downgrade→upgrade round-trip keeps new-build settings.
+  Complexity: S
+
+- [ ] P3 — `UpdateChecker` QThread never joined on shutdown
+  Why: the update-check QThread runs an up-to-10 s `urlopen`; quitting during it can emit "QThread: Destroyed while thread is still running" and deliver a queued signal to a torn-down object.
+  Evidence: `App/app.py:118-120` (started, never `wait()`ed); `App/updater.py:33-76`.
+  Touches: `App/app.py` `exit_app` — `self._update_checker.wait(...)` (or a cancel flag + short socket timeout) before teardown.
+  Acceptance: quitting immediately after launch logs no QThread-destroyed warning; no crash.
+  Complexity: S
+
+- [ ] P3 — `monitor_picker` has no zero-display empty state
+  Why: with `QApplication.screens()` empty (headless/RDP-no-console), the picker shows an "All Monitors (0)" button that emits `-1` (capture-all → empty capture) and a dead "press 1-9" subtitle.
+  Evidence: `App/monitor_picker.py:195-216`.
+  Touches: `App/monitor_picker.py` — if no screens, show "No displays detected" and disable/hide the capture buttons (or auto-reject).
+  Acceptance: a no-display session shows the empty-state message and offers no invalid capture action.
+  Complexity: S
+
+- [ ] P3 — History panel re-hashes content-duplicate files on every open
+  Why: `_index_file` uses `INSERT OR IGNORE` on the UNIQUE `sha256`, so a second file with identical content is never path-indexed and `_ensure_history_index` re-reads + re-hashes it on every panel open/search (repeated full-file SHA-256 on large dirs).
+  Evidence: `App/capture_history.py:100-124` (`_index_file`), `~138` (`_ensure_history_index` "not in indexed").
+  Touches: `App/capture_history.py` — record attempted-but-ignored paths (side table or path-keyed index) and dedupe visible entries at query time.
+  Acceptance: opening the history panel twice does not re-hash already-seen content-duplicate files; verified via a hash-call counter in a test.
+  Complexity: M
