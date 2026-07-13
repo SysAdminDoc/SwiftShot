@@ -64,6 +64,26 @@ def test_settings_controls_have_accessible_names(qapp):
     assert unnamed == []
 
 
+def test_settings_duplicate_hotkey_check_covers_color_picker(qapp, monkeypatch):
+    """The color-picker hotkey must be part of the duplicate-shortcut guard,
+    or it could silently collide with another capture hotkey."""
+    from settings_dialog import SettingsDialog, QMessageBox
+
+    dialog = SettingsDialog()
+    dialog.hk_region.set_combo("Ctrl+Shift+K")
+    dialog.hk_color_picker.set_combo("Ctrl+Shift+K")   # deliberate collision
+
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        lambda *a, **k: warned.append(a[2] if len(a) > 2 else ""))
+    accepted = []
+    monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
+    dialog._apply_and_close()
+
+    assert warned and "Ctrl+Shift+K" in warned[0]      # conflict was reported
+    assert not accepted                                # dialog did not apply
+
+
 def test_settings_after_capture_workflow_ordering(qapp):
     from PyQt5.QtCore import Qt
     from settings_dialog import SettingsDialog

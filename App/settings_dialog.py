@@ -815,7 +815,7 @@ class SettingsDialog(QDialog):
             self.hk_region.get_combo(), self.hk_window.get_combo(),
             self.hk_fullscreen.get_combo(), self.hk_last_region.get_combo(),
             self.hk_ocr.get_combo(), self.hk_freehand.get_combo(),
-            self.hk_scrolling.get_combo(),
+            self.hk_scrolling.get_combo(), self.hk_color_picker.get_combo(),
         ) if c]
         duplicates = sorted({c for c in combos if combos.count(c) > 1})
         if duplicates:

@@ -8,6 +8,9 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### UX & feedback
+- The Settings duplicate-shortcut check now covers the color-picker hotkey, so
+  it can no longer be silently assigned the same combo as another capture
+  action (which would make two hotkeys fight over one key).
 - Capture failures now surface a tray notification instead of failing
   silently: if the screen grab or the capture overlay can't start (or a
   scrolling capture errors out), you get a clear "Capture failed" message
