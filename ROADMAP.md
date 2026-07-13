@@ -15,8 +15,12 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 ### Carried research items (from RESEARCH.md, still open)
 
-- [ ] R-02 P2 — Split editor.py into modules
-  8,200+ lines in one file. Start with zero-Qt-coupling units: `core.py` (scaling/PIL↔Qt/numpy/theme) and `layers.py` (`Layer`/`HistoryManager`/`LayerGroup`). Full suite must pass unchanged. Complexity: L (first two modules: M).
+- [ ] R-02b P3 — Continue the editor.py split (optional follow-on)
+  `layers.py` (`Layer`/`HistoryManager`/`LayerGroup`) is extracted. A further
+  `core.py` (scaling/DPI, PIL↔Qt helpers `pil_to_qimage`/`qpixmap_to_pil`,
+  numpy `np_*` helpers, theme `class C`/`apply_editor_theme`) could follow, but
+  those helpers are Qt/theme-coupled and used pervasively, so the risk/reward is
+  lower than the layer-model extraction. Only if editor.py churn warrants it.
 
 ## Planned Features
 

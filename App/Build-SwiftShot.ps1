@@ -95,7 +95,7 @@ $IconGenScript = Join-Path $ProjectDir "generate_icon.py"
 # Every .py file that ships with SwiftShot
 $SourceFiles = @(
     "main.py", "app.py", "capture.py", "capture_menu.py", "config.py",
-    "editor.py", "hotkeys.py", "monitor_picker.py", "ocr.py", "ocr_dialog.py",
+    "editor.py", "layers.py", "hotkeys.py", "monitor_picker.py", "ocr.py", "ocr_dialog.py",
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
     "scrolling_capture.py", "utils.py", "logger.py", "updater.py",
@@ -105,7 +105,7 @@ $SourceFiles = @(
 # Hidden imports for PyInstaller (lazy imports it can't detect)
 $HiddenImports = @(
     "app", "config", "theme", "hotkeys", "capture", "capture_menu",
-    "overlay", "window_picker", "monitor_picker", "editor",
+    "overlay", "window_picker", "monitor_picker", "editor", "layers",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
     "capture_history", "countdown_overlay", "scrolling_capture", "utils",
     "logger", "updater", "cli", "diagnostics",

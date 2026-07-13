@@ -7,6 +7,12 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Internal
+- The layer data model (`Layer`, `LayerGroup`, `HistoryManager`) now lives in a
+  standalone `layers.py` — pure PIL/collections, no Qt or editor coupling —
+  extracted from the 8,600-line `editor.py` so the model can be reasoned about
+  and tested independently. No behaviour change (re-exported from `editor`).
+
 ### Performance
 - The editor caches the flattened composite and only rebuilds it when layer
   content, order, visibility, opacity, blend, effects or masks actually change.
