@@ -79,6 +79,25 @@ def test_duplicate_content_file_not_rehashed_every_open(fresh_config, qapp, tmp_
         capture_history._index_file = real
 
 
+def test_update_history_ocr_survivor_gets_text_evicted_is_noop(fresh_config, qapp, tmp_path):
+    """Async OCR keys by path: a surviving capture receives its text, and an
+    update against an evicted row is a safe no-op (no crash, no wrong row)."""
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+
+    pixmap = QPixmap(12, 12)
+    pixmap.fill(QColor(3, 4, 5))
+    survivor = capture_history.save_to_history(pixmap)
+
+    capture_history.update_history_ocr(str(tmp_path), survivor, "receipt total")
+    entries = capture_history._history_entries(str(tmp_path))
+    assert entries[0]["ocr_text"] == "receipt total"
+
+    # An update for a path that no longer has a row must not raise or corrupt.
+    capture_history.update_history_ocr(str(tmp_path), str(tmp_path / "gone.png"), "x")
+    still = capture_history._history_entries(str(tmp_path))
+    assert len(still) == 1 and still[0]["ocr_text"] == "receipt total"
+
+
 def test_save_to_history_prunes_sqlite_and_files(fresh_config, qapp, tmp_path):
     capture_history = _load_capture_history(fresh_config, tmp_path)
     capture_history.config.CAPTURE_HISTORY_MAX = 1

@@ -120,14 +120,6 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
   Acceptance: at least one window/browser frame preset renders around a capture; tested on a sample pixmap.
   Complexity: M
 
-### P3 — polish / correctness
-
-- [ ] P3 — Async history-OCR can update an already-evicted row (lost OCR text under burst)
-  Why: `save_to_history` enforces `CAPTURE_HISTORY_MAX` immediately, so a rapid capture burst can delete the row/file before the background `_OcrWorker` finishes; `update_history_ocr` then no-ops and the computed OCR text is lost.
-  Evidence: `App/app.py:_start_history_ocr`; `App/capture_history.py:save_to_history` eviction + `update_history_ocr`.
-  Touches: `App/capture_history.py` — key the update by sha256 (survives rename) or skip if the row is gone; optionally defer eviction until OCR settles.
-  Acceptance: a capture that survives the burst ends up with its OCR text; no crash when the row was evicted.
-  Complexity: S
 
 
 
