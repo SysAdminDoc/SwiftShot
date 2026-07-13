@@ -394,6 +394,9 @@ class SwiftShotApp:
             full = CaptureManager.capture_fullscreen()
             if full is None:
                 log.warning("capture_fullscreen returned None")
+                self._notify("Capture failed",
+                             "SwiftShot could not capture the screen.",
+                             warning=True)
                 return
 
             self._overlay = RegionSelector(full, mode=mode)
@@ -412,6 +415,9 @@ class SwiftShotApp:
             self._overlay.show_spanning()
         except Exception as e:
             log.error(f"Region overlay failed: {e}")
+            self._notify("Capture failed",
+                         "SwiftShot could not start the capture overlay.",
+                         warning=True)
 
     def _on_region_selected(self, full_screenshot, rect, ocr_mode=False):
         self._close_overlay()
@@ -693,6 +699,12 @@ class SwiftShotApp:
     def capture_ocr(self):
         self._capture_with_delay(self._do_ocr_capture)
 
+    def _notify(self, title, message, warning=False):
+        """Show a tray balloon (no-op if the tray isn't available yet)."""
+        if self.tray_icon:
+            icon = QSystemTrayIcon.Warning if warning else QSystemTrayIcon.Information
+            self.tray_icon.showMessage(title, message, icon, 3000)
+
     def pick_color(self):
         """Global color picker: copy the pixel under the cursor as hex."""
         try:
@@ -769,6 +781,9 @@ class SwiftShotApp:
                     self._handle_capture(result)
         except Exception as e:
             log.error(f"Scrolling capture failed: {e}")
+            self._notify("Scrolling capture failed",
+                         "Something went wrong during the scrolling capture.",
+                         warning=True)
 
     # -------------------------------------------------------------------
     # Post-capture handling

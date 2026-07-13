@@ -7,6 +7,14 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### UX & feedback
+- Capture failures now surface a tray notification instead of failing
+  silently: if the screen grab or the capture overlay can't start (or a
+  scrolling capture errors out), you get a clear "Capture failed" message
+  rather than a hotkey that appears to do nothing.
+- The capture-history panel shows its "No captures yet" guidance even before
+  the history folder has been created, instead of a blank panel.
+
 ### Editor & OCR polish
 - OCR "Copy as Table" keeps a slightly slanted or drifting text row as one row
   (running-mean baseline clustering) instead of splitting it and scrambling the

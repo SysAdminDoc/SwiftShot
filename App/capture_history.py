@@ -433,12 +433,11 @@ class CaptureHistoryDialog(QDialog):
         self.grid.setContentsMargins(8, 8, 8, 8)
 
         history_dir = config.CAPTURE_HISTORY_DIR
-        if not os.path.isdir(history_dir):
-            self.scroll.setWidget(container)
-            return
-
         search = self.search_box.text().strip()
-        entries = _history_entries(history_dir, search)
+        if os.path.isdir(history_dir):
+            entries = _history_entries(history_dir, search)
+        else:
+            entries = []   # dir not created yet — show the same empty guidance
 
         if not entries:
             if search:
