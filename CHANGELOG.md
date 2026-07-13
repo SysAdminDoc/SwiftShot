@@ -7,6 +7,13 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Build & distribution
+- `cli.py` is now in the build manifest (`$SourceFiles` + `$HiddenImports`)
+  and the prerequisite check. It was missing, so the space/paren "safe build
+  path" produced a frozen exe that crashed on launch with
+  `ModuleNotFoundError: cli` — the entire headless CLI was unshippable that
+  way, and the "all source files present" gate reported success anyway.
+
 ### Added
 - Tools ▸ Auto-Redact Personal Data: OCRs the image and blacks out emails,
   IP/MAC addresses, and phone numbers automatically.

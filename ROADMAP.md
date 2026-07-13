@@ -197,15 +197,6 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 Net-new, code-verified findings from auditing the less-examined support modules (build script, hotkeys, config, updater, pickers). Not duplicated above. Delete when done (no `[x]`).
 
-### P1 — distribution (root-cause: breaks a shipped feature)
-
-- [ ] P1 — `cli.py` missing from `Build-SwiftShot.ps1` file manifest → frozen CLI crashes
-  Why: `main.py` does `import cli`, but `cli.py` is in neither `$SourceFiles` nor `$HiddenImports`; the space/paren-path (`$UnsafePath`) build copies only `$SourceFiles`, so the frozen exe crashes with `ModuleNotFoundError: cli`, and the "all source files present" prereq gate never checks it (false confidence).
-  Evidence: `App/Build-SwiftShot.ps1` `$SourceFiles` (~96-102), safe-path copy (~435), prereq loop (~224); `App/main.py:88` `import cli`.
-  Touches: `App/Build-SwiftShot.ps1` — add `"cli.py"` to `$SourceFiles` and `"cli"` to `$HiddenImports`.
-  Acceptance: a clean `-Clean` build (including from a path containing a space) launches `--region 0,0,10,10 --out x.png` from the frozen exe without a module error.
-  Complexity: S
-
 ### P2 — reliability (support modules)
 
 - [ ] P2 — Hotkey recorder saves combos that silently never fire
