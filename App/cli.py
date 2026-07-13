@@ -4,6 +4,7 @@
     swiftshot --fullscreen --out shot.png
     swiftshot --monitor 1 --out shot.png
     swiftshot --region X,Y,W,H --ocr          # prints recognized text to stdout
+    swiftshot --diagnostics [--out bundle.zip] # write a diagnostics zip
 
 Coordinates are virtual-desktop physical pixels (the process is per-monitor
 DPI-aware). With no capture flags SwiftShot launches its tray application, so
@@ -17,7 +18,7 @@ import argparse
 # Flags that mean "run headless"; anything else (bare image path, --minimized)
 # falls through to the GUI.
 _CLI_FLAGS = {"--region", "--fullscreen", "--monitor", "--ocr", "--out",
-              "-h", "--help"}
+              "--diagnostics", "-h", "--help"}
 
 # Holds the QApplication so its Python wrapper is not garbage-collected before
 # process exit (a collected wrapper fast-fails the interpreter on teardown).
@@ -44,6 +45,9 @@ def _build_parser():
                    help="Write the capture to FILE (format from extension).")
     p.add_argument("--ocr", action="store_true",
                    help="Run OCR on the capture and print the text to stdout.")
+    p.add_argument("--diagnostics", action="store_true",
+                   help="Write a diagnostics zip (logs, config, versions) and "
+                        "print its path. Use --out to choose the destination.")
     return p
 
 
@@ -88,6 +92,17 @@ def run(argv):
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    # Diagnostics is a standalone verb — no capture source or QApplication.
+    if args.diagnostics:
+        from diagnostics import build_diagnostics_zip
+        try:
+            path = build_diagnostics_zip(dest_path=args.out)
+            print(path)
+            return 0
+        except Exception as e:
+            print(f"swiftshot: diagnostics failed: {e}", file=sys.stderr)
+            return 1
 
     if not (args.region or args.fullscreen or args.monitor is not None):
         parser.error("choose a capture source: --region, --fullscreen or --monitor")

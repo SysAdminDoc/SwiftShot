@@ -7,6 +7,13 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Added
+- Export Diagnostics: a one-click bundle (tray menu ▸ "Export Diagnostics…"
+  and `swiftshot --diagnostics`) that zips the logs, crash log, configuration
+  (secret-looking values stripped), and a versions manifest (SwiftShot, Python,
+  Qt, PyQt5, Pillow, NumPy, SQLite, and a Windows-Graphics-Capture probe) —
+  a local, no-telemetry artifact to attach to a bug report.
+
 ### UX & feedback
 - The Settings duplicate-shortcut check now covers the color-picker hotkey, so
   it can no longer be silently assigned the same combo as another capture

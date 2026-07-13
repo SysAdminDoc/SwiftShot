@@ -111,15 +111,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate the AB/R backlog above — these are net-new and code-verified or evidence-backed. When done, DELETE the item (no `[x]` checkmarks).
 
-### P2 — observability
-
-- [ ] P2 — "Export Diagnostics" bundle command
-  Why: only a rotating logger + `crash.log` exist; there is no one-command bundle to attach to a bug report. Cheapest observability win for a local tool.
-  Evidence: RESEARCH.md observability; peers ship diagnostics export.
-  Touches: `App/app.py` (tray menu action) + `App/cli.py` (a `--diagnostics` verb); zip `crash.log` + rotated logs + `swiftshot.json`/editor `config.json` (secrets stripped) + OS/Qt/Pillow/SQLite versions + a WGC-availability probe.
-  Acceptance: the action writes a zip whose contents include the logs and a versions manifest; secrets are absent; verified on a sample run.
-  Complexity: S
-
 ### P2 — features (evidence-backed gaps)
 
 - [ ] P2 — Device/window/browser frames for the backdrop (extends the shipped solid/gradient backdrop)

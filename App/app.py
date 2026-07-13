@@ -227,6 +227,7 @@ class SwiftShotApp:
         menu.addAction("Preferences...").triggered.connect(self.show_settings)
         menu.addSeparator()
         menu.addAction("About SwiftShot").triggered.connect(self.show_about)
+        menu.addAction("Export Diagnostics...").triggered.connect(self.export_diagnostics)
         menu.addSeparator()
         self._exit_action = menu.addAction("Exit")
         self._exit_action.triggered.connect(self.exit_app)
@@ -236,6 +237,23 @@ class SwiftShotApp:
         self.tray_icon.setToolTip("SwiftShot - Screenshot Tool")
         self.tray_icon.activated.connect(self._tray_activated)
         self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
+
+    def export_diagnostics(self):
+        """Write a diagnostics zip (logs + config + versions) and open its
+        folder — a one-click bundle to attach to a bug report."""
+        try:
+            from diagnostics import build_diagnostics_zip
+            path = build_diagnostics_zip()
+            log.info(f"Diagnostics bundle written: {path}")
+            self._notify("Diagnostics saved", f"Saved {os.path.basename(path)}")
+            try:
+                if os.name == "nt":
+                    os.startfile(os.path.dirname(path))   # reveal in Explorer
+            except Exception:
+                pass
+        except Exception as e:
+            log.error(f"Diagnostics export failed: {e}")
+            self._notify("Diagnostics failed", str(e), warning=True)
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:

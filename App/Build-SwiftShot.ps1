@@ -99,7 +99,7 @@ $SourceFiles = @(
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
     "scrolling_capture.py", "utils.py", "logger.py", "updater.py",
-    "cli.py", "generate_icon.py"
+    "cli.py", "diagnostics.py", "generate_icon.py"
 )
 
 # Hidden imports for PyInstaller (lazy imports it can't detect)
@@ -108,7 +108,7 @@ $HiddenImports = @(
     "overlay", "window_picker", "monitor_picker", "editor",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
     "capture_history", "countdown_overlay", "scrolling_capture", "utils",
-    "logger", "updater", "cli",
+    "logger", "updater", "cli", "diagnostics",
     "PyQt5.QtPrintSupport", "PyQt5.sip",
     "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets"
 )
