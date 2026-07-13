@@ -6545,6 +6545,13 @@ class ImageEditor(QMainWindow):
         return stroke
 
     def _blend(self, base, top, mode):
+        if top.size != base.size:
+            # ImageChops.* raises on mismatched sizes; a pasted layer keeps its
+            # clipboard dimensions, so a mis-sized layer with a non-Normal blend
+            # would crash get_composite on every repaint. Align top at the
+            # origin (matching the Normal-mode paste) onto a base-sized canvas.
+            fitted = Image.new("RGBA", base.size, (0, 0, 0, 0))
+            fitted.paste(top, (0, 0)); top = fitted
         if mode == "Normal":
             base.paste(top, (0, 0), top); return base
         elif mode == "Multiply":
@@ -8409,12 +8416,14 @@ class ImageEditor(QMainWindow):
                 self, "OCR Error", f"Could not extract text:\n\n{e}")
 
     def auto_redact(self):
-        """Detect emails/IPs/MACs/phone numbers via OCR and black them out."""
-        layer = self.active_layer()
-        if not layer:
+        """Detect emails/IPs/MACs/phone numbers via OCR and black them out on a
+        new redaction layer. Drawing on a dedicated full-canvas layer (not the
+        active one) keeps the box coordinates in composite space, so it works
+        regardless of the active layer's type or size — an active group used to
+        silently redact nothing (its image setter is a no-op) and a pasted,
+        differently-sized active layer got boxes at the wrong pixels."""
+        if not self.layers:
             return
-        if layer.locked:
-            self._status("Layer is locked"); return
         try:
             from ocr import ocr_words_pixmap, find_pii_words
         except ImportError:
@@ -8427,14 +8436,26 @@ class ImageEditor(QMainWindow):
             return
         if not boxes:
             self._status("Auto-redact: no personal data detected"); return
+        # OCR PII matching has false positives (long numbers can look like phone
+        # numbers), so confirm before defacing the image.
+        if QMessageBox.question(
+                self, "Auto-Redact",
+                f"Black out {len(boxes)} detected item(s) — emails, IP/MAC "
+                f"addresses and phone numbers?\n\nThis adds a redaction layer "
+                f"you can undo or delete.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) != QMessageBox.Yes:
+            return
         self.history.save_state(self.layers, self.active_layer_index, "Auto-Redact")
-        draw = ImageDraw.Draw(layer.image)
+        redaction = Image.new("RGBA", comp.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(redaction)
         for b in boxes:
             draw.rectangle([b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]],
                            fill=(0, 0, 0, 255))
+        nl = Layer("Redaction"); nl.image = redaction
+        self.layers.append(nl); self.active_layer_index = len(self.layers) - 1
         self._mark_dirty()
         self.canvas.update(); self.update_layer_panel()
-        self._status(f"Auto-redacted {len(boxes)} item(s)")
+        self._status(f"Redacted {len(boxes)} item(s) on a new layer")
 
     def run_ocr_table(self):
         """Detect table structure from OCR word boxes and copy it as TSV."""

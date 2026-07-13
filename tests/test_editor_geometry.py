@@ -21,6 +21,21 @@ def _geo(qapp):
     return _S()
 
 
+def test_blend_handles_size_mismatch_without_crashing(qapp):
+    """A pasted layer keeps its own dimensions; a non-Normal blend used to
+    raise 'images do not match' in ImageChops and crash get_composite."""
+    from editor import ImageEditor
+
+    class _S:
+        _blend = ImageEditor._blend
+
+    base = Image.new("RGBA", (10, 10), (0, 0, 0, 255))
+    for mode in ("Multiply", "Screen", "Overlay", "Difference", "Normal"):
+        top = Image.new("RGBA", (20, 15), (255, 255, 255, 255))
+        out = _S()._blend(base.copy(), top, mode)
+        assert out.size == (10, 10)      # never raises, stays canvas-sized
+
+
 def test_crop_transforms_layer_mask(qapp):
     from editor import Layer
 

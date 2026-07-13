@@ -7,6 +7,21 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Editor — correctness & privacy
+- Auto-redact now blacks out personal data on a dedicated full-canvas
+  redaction layer instead of the active layer. Redacting with a group as the
+  active layer used to silently cover nothing (a group's image buffer can't be
+  written to), and a pasted, differently-sized active layer got the black
+  boxes at the wrong pixels — both left the data visible while claiming success.
+- Auto-redact asks for confirmation (showing how many items were detected)
+  before defacing the image, and its phone-number detection now requires
+  10-15 digits plus a separator or leading "+", so dates, prices, ISBNs and
+  plain ID numbers are no longer mistaken for phone numbers.
+- Layer blend modes no longer crash on a size-mismatched layer: a pasted layer
+  keeps its own dimensions, and a non-Normal blend (Multiply/Screen/…) used to
+  raise "images do not match" and pop a crash dialog on every repaint. The
+  layer is now aligned onto the canvas before blending.
+
 ### Build & distribution
 - `cli.py` is now in the build manifest (`$SourceFiles` + `$HiddenImports`)
   and the prerequisite check. It was missing, so the space/paren "safe build

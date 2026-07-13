@@ -111,30 +111,7 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate the AB/R backlog above — these are net-new and code-verified or evidence-backed. When done, DELETE the item (no `[x]` checkmarks).
 
-### P1 — security / data safety
-
-- [ ] P1 — Auto-redact silently fails to redact on a group / mis-redacts on size-mismatched layers
-  Why: `auto_redact` OCRs `self.get_composite()` (canvas-sized, origin = layers[0]) but draws the black boxes on `self.active_layer().image`; a `LayerGroup` active layer has a no-op image setter so `ImageDraw.Draw` mutates a throwaway composite — nothing is redacted, yet history is pushed and the doc marked dirty, so the user believes the PII is hidden. A differently-sized active layer (pasted/diff-overlay) gets boxes at the wrong coordinates.
-  Evidence: `App/editor.py` `auto_redact` (draws on active layer) vs `LayerGroup.image` setter no-op (~848); RESEARCH.md "net-new bugs".
-  Touches: `App/editor.py` — bake redaction onto a fresh full-canvas layer or into the composite, and/or refuse when `active_layer()` is a group or its size != composite size.
-  Acceptance: redacting with a group (or a pasted smaller/larger layer) as the active layer actually blacks out the PII pixels; regression test on a group-active document.
-  Complexity: M
-
 ### P2 — capture correctness / reliability (net-new bugs)
-
-- [ ] P2 — Auto-redact over-matches numeric data and never asks for confirmation
-  Why: the phone pattern `\+?\d[\d().-]{6,}\d` matches any 8+ run of digits/`().-` — dates (2026-07-12), order/ID numbers, ISBNs, prices — and `auto_redact` blacks them out with no preview, silently defacing legitimate data on e.g. a spreadsheet screenshot.
-  Evidence: `App/ocr.py:_PII_PATTERNS` (phone entry); `App/editor.py:auto_redact` (no confirm step).
-  Touches: `App/ocr.py` (tighten the phone pattern to plausible phone groupings), `App/editor.py` (show the matched boxes and confirm before drawing).
-  Acceptance: a screenshot of a dates/prices table is not redacted; the user sees and confirms the matched regions first; unit test on `find_pii_words` false-positive cases.
-  Complexity: M
-
-- [ ] P2 — `get_composite` crashes on a size-mismatched layer with a non-Normal blend mode
-  Why: `_blend` non-Normal modes call `ImageChops.multiply(base.convert("RGB"), top.convert("RGB"))`; a pasted layer keeps its clipboard dimensions, so a larger/smaller pasted layer with any non-Normal blend raises `images do not match`. `get_composite` runs on every repaint/hover/save/export → repeated crash dialogs (Normal mode is safe — paste clips).
-  Evidence: `App/editor.py:_blend` (~6547); `paste_clipboard` keeps clipboard size (~6915).
-  Touches: `App/editor.py` — crop/pad `top` to `base.size` at the top of `_blend` (or normalize pasted layers to canvas size on paste).
-  Acceptance: pasting a larger image, setting Multiply, and repainting does not raise; regression test on `_blend` with mismatched sizes.
-  Complexity: S
 
 - [ ] P2 — CLI `--monitor` out-of-range silently writes a full-desktop image (exit 0)
   Why: `cli._capture` → `capture.capture_monitor` falls through the `0 <= idx < len(screens)` guard to `capture_fullscreen()`; a script asking for monitor 99 gets a wrong full-desktop image with a success exit code.

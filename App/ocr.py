@@ -21,16 +21,35 @@ _PII_PATTERNS = [
     re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),   # email
     re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),                       # IPv4
     re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b"),      # MAC
-    re.compile(r"\+?\d[\d().-]{6,}\d"),                               # phone-ish
 ]
+
+_PHONE_SHAPE = re.compile(r"\+?[\d(][\d\s().-]{8,}\d")
+_NON_DIGIT = re.compile(r"\D")
+
+
+def _looks_like_phone(text):
+    """A phone number, not a date/price/ID. Requires 10-15 digits (rejects
+    8-digit dates and short ID runs) plus a phone separator or a leading '+'
+    (a bare digit run is more likely an ID; a comma/decimal is a price)."""
+    t = text.strip()
+    if not _PHONE_SHAPE.fullmatch(t):
+        return False
+    digits = _NON_DIGIT.sub("", t)
+    if not (10 <= len(digits) <= 15):
+        return False
+    return t.startswith("+") or bool(re.search(r"[\s().-]", t))
 
 
 def find_pii_words(words):
-    """Return the OCR word boxes whose text matches an email/IP/MAC/phone
-    pattern — used to auto-redact personal data. Word-level (multi-token
+    """Return the OCR word boxes whose text is an email/IP/MAC address or a
+    phone number — used to auto-redact personal data. Word-level (multi-token
     phone numbers OCR'd as separate words may only partly match)."""
-    return [wd for wd in words
-            if any(p.search(wd.get("text", "")) for p in _PII_PATTERNS)]
+    out = []
+    for wd in words:
+        text = wd.get("text", "")
+        if any(p.search(text) for p in _PII_PATTERNS) or _looks_like_phone(text):
+            out.append(wd)
+    return out
 
 
 _WIN_OCR_SCRIPT = r'''
