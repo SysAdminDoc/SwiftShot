@@ -11,6 +11,15 @@ def test_words_to_table_empty():
     assert words_to_table([]) == ""
 
 
+def test_words_to_table_keeps_slanted_row_together():
+    """A row whose baseline drifts a couple of px per word must stay one row
+    (running-mean clustering), not split mid-row."""
+    from ocr import words_to_table
+    # five words on one visual row, each 3px lower than the last (h=14)
+    words = [_word(i * 60, i * 3, f"c{i}") for i in range(5)]
+    assert words_to_table(words).count("\n") == 0   # single row
+
+
 def test_words_to_table_rows_and_columns():
     from ocr import words_to_table
     # two rows, two columns (wide gap between columns)

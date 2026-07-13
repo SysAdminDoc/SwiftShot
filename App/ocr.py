@@ -228,10 +228,13 @@ def words_to_table(words):
 
     rows = []
     cur = [ws[0]]
-    row_y = ws[0]["y"]
+    row_y = ws[0]["y"]      # running mean baseline of the current row
     for wd in ws[1:]:
         if abs(wd["y"] - row_y) <= row_tol:
             cur.append(wd)
+            # Track the running mean so a gradually-drifting baseline (skewed
+            # scans, superscripts) stays one row instead of splitting mid-row.
+            row_y = sum(w["y"] for w in cur) / len(cur)
         else:
             rows.append(cur)
             cur = [wd]

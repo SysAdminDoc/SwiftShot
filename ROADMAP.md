@@ -131,27 +131,6 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 ### P3 — polish / correctness
 
-- [ ] P3 — `words_to_table` row clustering drifts on slanted/variable-baseline text
-  Why: rows are grouped against the first word's `y` (never updated within a row, `row_y = ws[0]["y"]`), so a row whose baseline gradually rises/falls splits mid-row and scrambles the emitted TSV columns.
-  Evidence: `App/ocr.py:words_to_table` (~215-231).
-  Touches: `App/ocr.py` — cluster by a running row mean/median `y` (update as words are added).
-  Acceptance: a synthetic slanted-baseline row stays one row; unit test on `words_to_table`.
-  Complexity: S
-
-- [ ] P3 — `compute_image_diff` hard-overwrites changed pixels though the docstring says "tinted"
-  Why: `overlay[changed] = (255,0,0,255)` replaces changed regions with solid opaque red, discarding the underlying content; the docstring claims a tint, and near-identical images become large solid-red blocks.
-  Evidence: `App/editor.py:compute_image_diff` (~121-135).
-  Touches: `App/editor.py` — alpha-blend red over the base for changed pixels (or fix the docstring to match).
-  Acceptance: changed regions show a red tint over the original content; existing diff test updated.
-  Complexity: S
-
-- [ ] P3 — Structured crash context in the editor excepthook
-  Why: the editor's single excepthook logs the traceback but not the active tool / layer count / last history action, so crash reports lack the context to reproduce.
-  Evidence: `App/editor.py` editor excepthook (see CLAUDE.md note); RESEARCH.md observability.
-  Touches: `App/editor.py` — attach active tool, layer count, and last history label to the logged record.
-  Acceptance: a forced editor exception logs the extra context alongside the traceback.
-  Complexity: S
-
 - [ ] P3 — Async history-OCR can update an already-evicted row (lost OCR text under burst)
   Why: `save_to_history` enforces `CAPTURE_HISTORY_MAX` immediately, so a rapid capture burst can delete the row/file before the background `_OcrWorker` finishes; `update_history_ocr` then no-ops and the computed OCR text is lost.
   Evidence: `App/app.py:_start_history_ocr`; `App/capture_history.py:save_to_history` eviction + `update_history_ocr`.
@@ -165,11 +144,3 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 Net-new, code-verified findings from auditing the less-examined support modules (build script, hotkeys, config, updater, pickers). Not duplicated above. Delete when done (no `[x]`).
 
-### P3 — reliability / correctness (support modules)
-
-- [ ] P3 — History panel re-hashes content-duplicate files on every open
-  Why: `_index_file` uses `INSERT OR IGNORE` on the UNIQUE `sha256`, so a second file with identical content is never path-indexed and `_ensure_history_index` re-reads + re-hashes it on every panel open/search (repeated full-file SHA-256 on large dirs).
-  Evidence: `App/capture_history.py:100-124` (`_index_file`), `~138` (`_ensure_history_index` "not in indexed").
-  Touches: `App/capture_history.py` — record attempted-but-ignored paths (side table or path-keyed index) and dedupe visible entries at query time.
-  Acceptance: opening the history panel twice does not re-hash already-seen content-duplicate files; verified via a hash-call counter in a test.
-  Complexity: M

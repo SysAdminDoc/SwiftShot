@@ -7,6 +7,18 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Editor & OCR polish
+- OCR "Copy as Table" keeps a slightly slanted or drifting text row as one row
+  (running-mean baseline clustering) instead of splitting it and scrambling the
+  columns.
+- "Compare With Image" now tints changed pixels red over the original content
+  instead of overwriting them with solid red, so the diff stays legible.
+- History-panel indexing remembers files it has already examined, so a
+  content-duplicate image dropped into the history folder is no longer
+  re-read and re-hashed on every panel open.
+- Unhandled-exception crash logs now include per-editor context (active tool,
+  layer count, last action) to make reports reproducible.
+
 ### Reliability
 - Configuration written by a newer build is preserved when an older build
   saves, so a downgrade→upgrade round-trip no longer silently resets settings

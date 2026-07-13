@@ -89,7 +89,8 @@ def test_compute_image_diff_highlights_changed_region(qapp):
 
     overlay, pct = compute_image_diff(a, b)
     assert abs(pct - 50.0) < 1.0                     # ~half changed
-    assert overlay.getpixel((0, 0)) == (255, 0, 0, 255)   # changed → red
+    r, g, bl, al = overlay.getpixel((0, 0))          # changed → red tint
+    assert r > 100 and r > g and r > bl and al == 255
     assert overlay.getpixel((0, 9)) == (0, 0, 0, 255)     # unchanged → original
 
 

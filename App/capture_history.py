@@ -66,6 +66,15 @@ def _connect_db(history_dir):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at)"
     )
+    # Files we've already examined. A content-duplicate file can't be inserted
+    # into `captures` (its sha256 is taken), so without this we'd re-read and
+    # re-hash it on every panel open. mtime lets us re-index if the file changes.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS seen_files (
+            path TEXT PRIMARY KEY,
+            mtime REAL NOT NULL
+        )
+    """)
     return conn
 
 
@@ -97,15 +106,13 @@ def _thumbnail_blob(pixmap):
     return _pixmap_png_bytes(thumb)
 
 
-def _index_file(conn, filepath):
+def _index_file(conn, filepath, mtime):
     pixmap = QPixmap(filepath)
     if pixmap.isNull():
         return
     with open(filepath, "rb") as f:
         digest = hashlib.sha256(f.read()).hexdigest()
-    created_at = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat(
-        timespec="seconds"
-    )
+    created_at = datetime.fromtimestamp(mtime).isoformat(timespec="seconds")
     conn.execute(
         """
         INSERT OR IGNORE INTO captures
@@ -122,21 +129,42 @@ def _index_file(conn, filepath):
             _thumbnail_blob(pixmap),
         ),
     )
+    # Record the path either way — a content-duplicate that INSERT OR IGNORE
+    # dropped must not be re-hashed on the next panel open.
+    conn.execute(
+        "INSERT OR REPLACE INTO seen_files (path, mtime) VALUES (?, ?)",
+        (filepath, mtime))
 
 
 def _ensure_history_index(conn, history_dir):
     indexed = {
         row["path"] for row in conn.execute("SELECT path FROM captures")
     }
+    # Files already examined (including content-duplicates with no captures row),
+    # with the mtime we saw — so we only re-index a file that actually changed.
+    seen = {row["path"]: row["mtime"]
+            for row in conn.execute("SELECT path, mtime FROM seen_files")}
     # Purge rows whose file was deleted outside the app. Otherwise they keep
     # occupying LIMIT slots (the panel filtered missing files AFTER the query,
     # so dead rows could starve the panel down to zero visible captures).
     for path in indexed:
         if not os.path.exists(path):
             conn.execute("DELETE FROM captures WHERE path = ?", (path,))
+    # Prune seen_files rows whose file is gone so the table can't grow forever.
+    for path in list(seen):
+        if not os.path.exists(path):
+            conn.execute("DELETE FROM seen_files WHERE path = ?", (path,))
+            del seen[path]
     for filepath in _history_files(history_dir):
-        if filepath not in indexed:
-            _index_file(conn, filepath)
+        if filepath in indexed:
+            continue
+        try:
+            mtime = os.path.getmtime(filepath)
+        except OSError:
+            continue
+        if seen.get(filepath) == mtime:
+            continue                       # unchanged duplicate — skip re-hash
+        _index_file(conn, filepath, mtime)
     conn.commit()
 
 

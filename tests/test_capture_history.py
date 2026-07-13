@@ -53,6 +53,32 @@ def test_search_escapes_like_wildcards(fresh_config, qapp, tmp_path):
     assert capture_history._history_entries(str(tmp_path), "%zzz%") == []
 
 
+def test_duplicate_content_file_not_rehashed_every_open(fresh_config, qapp, tmp_path):
+    """A content-duplicate file (same sha256, different path) can't get a
+    captures row, so it must be remembered in seen_files and not re-hashed on
+    every panel open."""
+    import shutil
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(QColor(9, 9, 9))
+    original = capture_history.save_to_history(pixmap)
+    dup = str(Path(tmp_path, "dup_copy.png"))
+    shutil.copyfile(original, dup)          # identical bytes → same sha256
+
+    calls = []
+    real = capture_history._index_file
+    capture_history._index_file = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    try:
+        capture_history._history_entries(str(tmp_path))   # first open indexes dup
+        first = len(calls)
+        capture_history._history_entries(str(tmp_path))   # second open must not rehash
+        capture_history._history_entries(str(tmp_path))
+        assert len(calls) == first          # no further _index_file on re-open
+    finally:
+        capture_history._index_file = real
+
+
 def test_save_to_history_prunes_sqlite_and_files(fresh_config, qapp, tmp_path):
     capture_history = _load_capture_history(fresh_config, tmp_path)
     capture_history.config.CAPTURE_HISTORY_MAX = 1

@@ -130,8 +130,14 @@ def compute_image_diff(base, other, threshold=16):
     b = np.asarray(other, dtype=np.int16)
     changed = np.abs(a[:, :, :3] - b[:, :, :3]).max(axis=2) > threshold
     pct = float(changed.mean()) * 100.0
+    # Tint changed pixels red over the original content (55% red), rather than
+    # overwriting them with solid red — so the diff stays legible against the
+    # underlying image instead of showing opaque blocks.
     overlay = np.asarray(base).copy()
-    overlay[changed] = (255, 0, 0, 255)
+    orig = overlay[changed][:, :3].astype(np.float32)
+    overlay[changed, :3] = (orig * 0.45 + np.array([255, 0, 0], np.float32) * 0.55
+                            ).clip(0, 255).astype(np.uint8)
+    overlay[changed, 3] = 255
     return Image.fromarray(overlay, "RGBA"), pct
 
 # ── Numpy image helpers (scipy-free) ─────────────────────────────────────────
@@ -8538,6 +8544,28 @@ import traceback
 
 _reported_crash_sites = set()
 
+def _editor_context():
+    """Best-effort per-editor state for crash reports: active tool, layer count
+    and the last history action. Never raises."""
+    try:
+        app = QApplication.instance()
+        if not app:
+            return ""
+        lines = []
+        for w in app.topLevelWidgets():
+            if not isinstance(w, ImageEditor):
+                continue
+            hist = getattr(w, "history", None)
+            stack = getattr(hist, "undo_stack", None)
+            last = stack[-1][1] if stack else ""
+            lines.append(
+                f"  editor: tool={getattr(w, 'current_tool', '?')} "
+                f"layers={len(getattr(w, 'layers', []))} last_action={last!r}")
+        return ("Editor context:\n" + "\n".join(lines) + "\n") if lines else ""
+    except Exception:
+        return ""
+
+
 def _exception_handler(exc_type, exc_value, exc_tb):
     """Log unhandled exceptions and keep running.
 
@@ -8548,7 +8576,8 @@ def _exception_handler(exc_type, exc_value, exc_tb):
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
-    msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    context = _editor_context()
+    msg = context + "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     log.critical(f"Unhandled exception:\n{msg}")
     crash_dir = os.path.join(
         os.environ.get("APPDATA", os.path.expanduser("~")), "SwiftShot")
