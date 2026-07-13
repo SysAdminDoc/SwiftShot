@@ -7,6 +7,17 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Hotkeys & CLI
+- `swiftshot --monitor N` now errors (non-zero exit, no file written) when N is
+  out of range, instead of silently writing a full-desktop image and reporting
+  success.
+- The hotkey recorder rejects keys the global low-level hook can't bind (F13+,
+  media keys, punctuation), so a shortcut can no longer be saved and displayed
+  while never actually firing.
+- The shutdown WM_QUIT to the hotkey hook thread now declares its argument
+  types, so the thread id marshals as a DWORD — preventing a stale keyboard
+  hook from lingering after a live re-bind.
+
 ### Editor — correctness & privacy
 - Auto-redact now blacks out personal data on a dedicated full-canvas
   redaction layer instead of the active layer. Redacting with a group as the

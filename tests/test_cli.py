@@ -54,3 +54,13 @@ def test_cli_requires_a_source():
     import cli
     with pytest.raises(SystemExit):
         cli.run(["--out", "x.png"])
+
+
+def test_cli_rejects_out_of_range_monitor(qapp, tmp_path):
+    import cli
+    out = tmp_path / "shot.png"
+    # A monitor index far beyond any real display must error, not silently
+    # write a full-desktop image with a success exit.
+    with pytest.raises(SystemExit):
+        cli.run(["--monitor", "99", "--out", str(out)])
+    assert not out.exists()

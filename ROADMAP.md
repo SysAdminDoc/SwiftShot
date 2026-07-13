@@ -111,15 +111,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate the AB/R backlog above — these are net-new and code-verified or evidence-backed. When done, DELETE the item (no `[x]` checkmarks).
 
-### P2 — capture correctness / reliability (net-new bugs)
-
-- [ ] P2 — CLI `--monitor` out-of-range silently writes a full-desktop image (exit 0)
-  Why: `cli._capture` → `capture.capture_monitor` falls through the `0 <= idx < len(screens)` guard to `capture_fullscreen()`; a script asking for monitor 99 gets a wrong full-desktop image with a success exit code.
-  Evidence: `App/capture.py:capture_monitor` (~327); `App/cli.py:_capture` (~63).
-  Touches: `App/cli.py` — validate the monitor index against `QApplication.screens()` and return a non-zero error for out-of-range values.
-  Acceptance: `swiftshot --monitor 99 --out x.png` errors with a non-zero exit and no file written; test covers it.
-  Complexity: S
-
 ### P2 — observability
 
 - [ ] P2 — "Export Diagnostics" bundle command
@@ -173,22 +164,6 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 ## Research-Driven Additions — support-module depth pass (2026-07-12)
 
 Net-new, code-verified findings from auditing the less-examined support modules (build script, hotkeys, config, updater, pickers). Not duplicated above. Delete when done (no `[x]`).
-
-### P2 — reliability (support modules)
-
-- [ ] P2 — Hotkey recorder saves combos that silently never fire
-  Why: for a key absent from `_VK_NAMES` and not A-Z/0-9, the recorder falls back to `QKeySequence(key).toString()`, producing names (`F13`, `+`, `[`, media keys) that `HotkeyManager._parse_combo` can't resolve against `VK_MAP`; `register()` then binds nothing while Settings shows the combo as saved.
-  Evidence: `App/settings_dialog.py:170-174` (fallback) vs `App/hotkeys.py` `VK_MAP` / `_parse_combo` (~115-143).
-  Touches: `App/settings_dialog.py` — only accept a recorded key whose resulting name is a `VK_MAP` key (or A-Z/0-9); otherwise reject the recording and keep the field unchanged.
-  Acceptance: recording an unmappable key (e.g. F13) does not overwrite the field; every combo the recorder accepts actually fires; test asserts recorder output ⊆ VK_MAP-resolvable names.
-  Complexity: S
-
-- [ ] P2 — `PostThreadMessageW` undeclared argtypes → hook leak risk on live re-bind
-  Why: `stop()` calls the shared `windll.user32.PostThreadMessageW(self._thread.ident, 0x0012, 0, 0)` with no `argtypes`, so the thread id is marshaled as signed 32-bit; a large thread id could target the wrong thread, the WM_QUIT never lands, and the old LL keyboard hook stays installed alongside the new one after a settings re-bind.
-  Evidence: `App/hotkeys.py:295` (`stop()`).
-  Touches: `App/hotkeys.py` — declare `PostThreadMessageW.argtypes = [DWORD, UINT, WPARAM, LPARAM]` and pass `wintypes.DWORD(self._thread.ident)`.
-  Acceptance: repeated live hotkey re-binds leave exactly one keyboard hook installed; unit/manual check that `stop()` joins the hook thread each time.
-  Complexity: S
 
 ### P3 — reliability / correctness (support modules)
 

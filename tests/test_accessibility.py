@@ -121,3 +121,16 @@ def test_hotkey_recorder_keyboard_start_updates_accessible_state(qapp):
 
     assert widget.text() == "Press keys..."
     assert "Recording shortcut" in widget.accessibleDescription()
+
+
+def test_hotkey_recorder_rejects_unmappable_key(qapp):
+    """A key the global hook can't bind (e.g. F13) must not be saved — it would
+    show a combo that silently never fires."""
+    from settings_dialog import HotkeyRecorderWidget
+
+    widget = HotkeyRecorderWidget("Print")
+    widget._begin_recording()
+    widget.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F13, Qt.NoModifier))
+
+    assert widget._combo == "Print"          # unchanged, not "F13"
+    assert not widget._recording

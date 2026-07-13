@@ -173,6 +173,19 @@ class HotkeyRecorderWidget(QLineEdit):
                 if not key_name:
                     return
 
+        # The global low-level hook can only bind keys HotkeyManager resolves
+        # (VK_MAP names, or a single A-Z/0-9). Reject anything else — otherwise
+        # the combo would be saved and shown but never actually fire.
+        from hotkeys import HotkeyManager
+        if not (key_name in HotkeyManager.VK_MAP
+                or (len(key_name) == 1 and key_name.isalnum())):
+            self._recording = False
+            self.setText(self._combo or "Not set")
+            self._update_style(False)
+            self.clearFocus()
+            self.setToolTip(f"'{key_name}' can't be used as a global hotkey")
+            return
+
         parts.append(key_name)
         combo = "+".join(parts)
 

@@ -65,6 +65,12 @@ def _capture(args, parser):
     if args.fullscreen:
         return CaptureManager.capture_fullscreen()
     if args.monitor is not None:
+        from PyQt5.QtWidgets import QApplication
+        count = len(QApplication.screens())
+        if not (0 <= args.monitor < count):
+            parser.error(
+                f"--monitor {args.monitor} is out of range "
+                f"(found {count} monitor(s): valid 0-{count - 1})")
         return CaptureManager.capture_monitor(args.monitor)
     from PyQt5.QtCore import QRect
     x, y, w, h = _parse_region(parser, args.region)

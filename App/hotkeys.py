@@ -288,12 +288,19 @@ class HotkeyManager:
             # (window between Thread.start() and the first GetMessage call).
             # Retry briefly — a WM_QUIT that never lands leaves the old hook
             # alive alongside the new one after a settings re-bind.
+            # Declare argtypes so the thread id marshals as a DWORD (an
+            # undeclared int is signed 32-bit and can target the wrong thread).
             import time
+            WM_QUIT = 0x0012
+            u32 = ctypes.WinDLL('user32', use_last_error=True)
+            u32.PostThreadMessageW.argtypes = [
+                wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            u32.PostThreadMessageW.restype = wintypes.BOOL
             posted = False
             for _ in range(20):
                 try:
-                    if ctypes.windll.user32.PostThreadMessageW(
-                            self._thread.ident, 0x0012, 0, 0):
+                    if u32.PostThreadMessageW(
+                            wintypes.DWORD(self._thread.ident), WM_QUIT, 0, 0):
                         posted = True
                         break
                 except Exception:
