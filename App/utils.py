@@ -187,11 +187,53 @@ def apply_frame(pixmap):
     return pil_to_qpixmap(image)
 
 
+def _window_frame(img, style):
+    """Wrap `img` in a titlebar/chrome so a capture looks like a real window.
+    style: 'macos' (rounded, traffic-light dots) or 'windows' (min/max/close).
+    Returns a new RGBA image; the whole result is rounded for macOS."""
+    from PIL import Image, ImageDraw
+    w, h = img.size
+    bar_h = 30 if style == "macos" else 34
+    radius = 12 if style == "macos" else 0
+    fw, fh = w, h + bar_h
+
+    frame = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    draw.rectangle((0, 0, fw, bar_h), fill=(52, 54, 70, 255))     # titlebar
+    frame.alpha_composite(img, (0, bar_h))
+    draw = ImageDraw.Draw(frame)                                   # re-draw over
+
+    cy = bar_h // 2
+    if style == "macos":
+        for i, col in enumerate(((255, 95, 86), (255, 189, 46), (39, 201, 63))):
+            cx = 16 + i * 20
+            draw.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=col + (255,))
+    else:  # windows-style controls on the right
+        pen = (205, 208, 220, 255)
+        gx = fw - 20
+        draw.line((gx - 5, cy - 5, gx + 5, cy + 5), fill=(232, 90, 90, 255), width=2)
+        draw.line((gx - 5, cy + 5, gx + 5, cy - 5), fill=(232, 90, 90, 255), width=2)
+        gx -= 34
+        draw.rectangle((gx - 5, cy - 5, gx + 5, cy + 5), outline=pen, width=2)
+        gx -= 34
+        draw.line((gx - 5, cy + 5, gx + 5, cy + 5), fill=pen, width=2)
+
+    if radius > 0:
+        mask = Image.new("L", (fw, fh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, fw - 1, fh - 1), radius, fill=255)
+        rounded = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+        rounded.paste(frame, (0, 0), mask)
+        frame = rounded
+    return frame
+
+
 def apply_backdrop(pixmap):
     """Place the (already framed) capture on a padded solid or gradient
     backdrop. No-op unless BACKDROP_ENABLED. Runs after apply_frame so a
-    rounded/shadowed screenshot sits on the coloured padding."""
-    from PIL import Image, ImageColor
+    rounded/shadowed screenshot sits on the coloured padding. An optional
+    window/browser chrome (BACKDROP_FRAME) wraps the capture with a soft
+    drop shadow so it reads as a floating window."""
+    from PIL import Image, ImageColor, ImageFilter
     import config as _cfg
     import numpy as np
     cfg = _cfg.config if hasattr(_cfg, "config") else _cfg
@@ -201,6 +243,9 @@ def apply_backdrop(pixmap):
 
     pad = max(0, int(getattr(cfg, "BACKDROP_PADDING", 48)))
     img = qpixmap_to_pil(pixmap)
+    frame_style = getattr(cfg, "BACKDROP_FRAME", "none")
+    if frame_style in ("macos", "windows"):
+        img = _window_frame(img, frame_style)
     w, h = img.size
     cw, ch = w + pad * 2, h + pad * 2
     c1 = ImageColor.getrgb(getattr(cfg, "BACKDROP_COLOR", "#1e1e2e"))
@@ -215,6 +260,14 @@ def apply_backdrop(pixmap):
         canvas = Image.fromarray(np.concatenate([arr, alpha], axis=2), "RGBA")
     else:
         canvas = Image.new("RGBA", (cw, ch), c1 + (255,))
+
+    # Soft drop shadow under a framed window so it floats off the backdrop.
+    if frame_style in ("macos", "windows") and pad > 0:
+        shadow = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+        silhouette = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        silhouette.putalpha(img.split()[3].point(lambda a: int(a * 0.45)))
+        shadow.alpha_composite(silhouette, (pad, pad + 12))
+        canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(14)))
 
     canvas.alpha_composite(img, (pad, pad))
     return pil_to_qpixmap(canvas)

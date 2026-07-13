@@ -111,14 +111,6 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate the AB/R backlog above — these are net-new and code-verified or evidence-backed. When done, DELETE the item (no `[x]` checkmarks).
 
-### P2 — features (evidence-backed gaps)
-
-- [ ] P2 — Device/window/browser frames for the backdrop (extends the shipped solid/gradient backdrop)
-  Why: the padded solid/gradient backdrop shipped; the remaining gap vs CleanShot X is a "framed inside a macOS/Windows window or browser chrome" preset. Pure Pillow (compose the capture inside a frame PNG or drawn chrome).
-  Evidence: RESEARCH.md Competitive Landscape (CleanShot X); `App/utils.py` `apply_backdrop`.
-  Touches: `App/utils.py` (frame assets/drawing), `App/config.py`, `App/settings_dialog.py` Frame tab.
-  Acceptance: at least one window/browser frame preset renders around a capture; tested on a sample pixmap.
-  Complexity: M
 
 
 

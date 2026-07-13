@@ -606,6 +606,15 @@ class SettingsDialog(QDialog):
         self.backdrop_padding.setValue(config.BACKDROP_PADDING)
         layout.addRow("Backdrop padding:", self.backdrop_padding)
 
+        self.backdrop_frame = QComboBox()
+        self.backdrop_frame.addItem("None", "none")
+        self.backdrop_frame.addItem("macOS window", "macos")
+        self.backdrop_frame.addItem("Windows window", "windows")
+        idx = self.backdrop_frame.findData(config.BACKDROP_FRAME)
+        self.backdrop_frame.setCurrentIndex(idx if idx >= 0 else 0)
+        self.backdrop_frame.setAccessibleName("Backdrop window frame")
+        layout.addRow("Window frame:", self.backdrop_frame)
+
         bd_row = QHBoxLayout()
         self._backdrop_color = QColor(config.BACKDROP_COLOR)
         self.backdrop_color_btn = QPushButton()
@@ -902,6 +911,7 @@ class SettingsDialog(QDialog):
         config.BACKDROP_ENABLED = self.backdrop_enabled.isChecked()
         config.BACKDROP_TYPE = self.backdrop_type.currentText()
         config.BACKDROP_PADDING = self.backdrop_padding.value()
+        config.BACKDROP_FRAME = self.backdrop_frame.currentData() or "none"
         config.BACKDROP_COLOR = self._backdrop_color.name()
         config.BACKDROP_COLOR2 = self._backdrop_color2.name()
 

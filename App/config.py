@@ -26,6 +26,7 @@ OUTPUT_FILE_FORMAT_CHOICES = ("png", "jpg", "bmp", "gif", "tiff", "webp")
 if _avif_supported():
     OUTPUT_FILE_FORMAT_CHOICES = OUTPUT_FILE_FORMAT_CHOICES + ("avif",)
 AFTER_CAPTURE_ACTION_CHOICES = ("editor", "save", "clipboard")
+BACKDROP_FRAME_CHOICES = ("none", "macos", "windows")
 BEAUTIFICATION_PRESETS = {
     "none": {
         "label": "None",
@@ -127,6 +128,7 @@ class Config:
     BACKDROP_COLOR = "#1e1e2e"
     BACKDROP_COLOR2 = "#45475a"      # gradient end colour
     BACKDROP_PADDING = 48
+    BACKDROP_FRAME = "none"          # "none" | "macos" | "windows" window chrome
 
     # --- Pin Window ---
     PIN_OPACITY = 95
@@ -240,6 +242,10 @@ class Config:
             self.BEAUTIFY_PRESET = Config.BEAUTIFY_PRESET
         if self.EDITOR_OBFUSCATE_MODE not in ("pixelate", "blur"):
             self.EDITOR_OBFUSCATE_MODE = Config.EDITOR_OBFUSCATE_MODE
+        if self.BACKDROP_TYPE not in ("solid", "gradient"):
+            self.BACKDROP_TYPE = Config.BACKDROP_TYPE
+        if self.BACKDROP_FRAME not in BACKDROP_FRAME_CHOICES:
+            self.BACKDROP_FRAME = Config.BACKDROP_FRAME
         for key, (lo, hi) in self._NUMERIC_RANGES.items():
             val = getattr(self, key, None)
             if isinstance(val, int) and not isinstance(val, bool):

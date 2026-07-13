@@ -8,6 +8,10 @@ First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
 ### Added
+- Backdrop window frames: the padded backdrop can now wrap the capture in a
+  macOS- or Windows-style window chrome (titlebar with traffic-light or
+  min/max/close controls, rounded corners for macOS, and a soft drop shadow)
+  so a screenshot reads as a floating window. Settings ▸ Frame ▸ Window frame.
 - Export Diagnostics: a one-click bundle (tray menu ▸ "Export Diagnostics…"
   and `swiftshot --diagnostics`) that zips the logs, crash log, configuration
   (secret-looking values stripped), and a versions manifest (SwiftShot, Python,
