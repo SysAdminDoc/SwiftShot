@@ -13,16 +13,8 @@ Roadmap for SwiftShot - a fast, bloat-free Greenshot replacement for Windows (Py
 
 ## Audit Backlog (2026-07-07)
 
-### P2 — editor correctness
-
-- [ ] AB-17 P2 — Full PIL recomposite on every hover repaint
-  Why: `mouseMoveEvent` calls `update()` unconditionally (~1388) and every `paintEvent` calls `get_composite()` — a full Python flatten of all layers/masks/fx per mouse event.
-  Fix: cache the composite, invalidate on actual edits; also rebuild quick-mask/rubylith pixmaps only when their source changes (~2179, ~2357).
-
 ### Carried research items (from RESEARCH.md, still open)
 
-- [ ] R-01 P2 — Windows Graphics Capture backend with GDI fallback
-  GDI BitBlt returns black for hardware-accelerated/protected/some UWP windows; WGC captures them and unlocks recording. `CAPTUREBLT` quick-win is DONE — this is the full backend. Touches `App/capture.py` (probe + fallback), optional dep `windows-capture` or `winrt-Windows.Graphics.Capture`. Complexity: L.
 - [ ] R-02 P2 — Split editor.py into modules
   8,200+ lines in one file. Start with zero-Qt-coupling units: `core.py` (scaling/PIL↔Qt/numpy/theme) and `layers.py` (`Layer`/`HistoryManager`/`LayerGroup`). Full suite must pass unchanged. Complexity: L (first two modules: M).
 

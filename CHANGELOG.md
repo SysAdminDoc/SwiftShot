@@ -7,6 +7,14 @@ All notable changes to SwiftShot will be documented in this file.
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
+### Performance
+- The editor caches the flattened composite and only rebuilds it when layer
+  content, order, visibility, opacity, blend, effects or masks actually change.
+  Hover, the marching-ants animation, panning and zooming previously
+  re-flattened every layer/mask/effect on each repaint; now they reuse the
+  cache. The quick-mask red overlay is likewise cached and rebuilt only when
+  the mask is painted. Large multi-layer documents feel far more responsive.
+
 ### Added
 - Backdrop window frames: the padded backdrop can now wrap the capture in a
   macOS- or Windows-style window chrome (titlebar with traffic-light or

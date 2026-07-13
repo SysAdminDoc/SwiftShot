@@ -1535,6 +1535,10 @@ class CanvasWidget(QWidget):
             self.update()
             return
         if self.drawing and event.buttons() & Qt.LeftButton:
+            # A live drag stroke mutates content each move without a new
+            # save_state, so drop the composite cache here (harmless for the
+            # quick-mask branch, which doesn't touch the composite).
+            self.editor.invalidate_composite()
             if (tool in ("brush", "pencil", "spray", "eraser")
                     and self.editor.quick_mask_active):
                 # Quick mask strokes must never touch the layer image.
@@ -2355,10 +2359,18 @@ class CanvasWidget(QWidget):
         """Red overlay on the quick-mask canvas (masked = red)."""
         if self._quick_mask_layer is None: return
         painter.save()
-        inv = ImageChops.invert(self._quick_mask_layer)
-        overlay = Image.new("RGBA", self._quick_mask_layer.size, (200, 40, 40, 0))
-        overlay.putalpha(inv.point(lambda v: int(v * 0.5)))
-        qpx = pil_to_qpixmap(overlay)
+        # Rebuild the overlay pixmap only when the quick-mask changed — not on
+        # every hover/marching-ants repaint.
+        qm_ver = getattr(self, "_qm_version", 0)
+        cache = getattr(self, "_qm_overlay_cache", None)
+        if cache is not None and cache[0] == qm_ver:
+            qpx = cache[1]
+        else:
+            inv = ImageChops.invert(self._quick_mask_layer)
+            overlay = Image.new("RGBA", self._quick_mask_layer.size, (200, 40, 40, 0))
+            overlay.putalpha(inv.point(lambda v: int(v * 0.5)))
+            qpx = pil_to_qpixmap(overlay)
+            self._qm_overlay_cache = (qm_ver, qpx)
         iw, ih = self._quick_mask_layer.size
         painter.setTransform(self.view_transform())
         painter.drawPixmap(QRectF(0, 0, iw, ih), qpx, QRectF(qpx.rect()))
@@ -2382,6 +2394,7 @@ class CanvasWidget(QWidget):
             self._quick_mask_layer = self.selection_mask.copy()
         else:
             self._quick_mask_layer = Image.new("L", (iw, ih), 255)
+        self._qm_version = getattr(self, "_qm_version", 0) + 1   # fresh overlay
         self.editor.quick_mask_active = True
         self.set_selection_mask(None)
         self.update()
@@ -2418,6 +2431,7 @@ class CanvasWidget(QWidget):
         draw = ImageDraw.Draw(self._quick_mask_layer)
         r = sz // 2
         draw.ellipse((x - r, y - r, x + r, y + r), fill=col)
+        self._qm_version = getattr(self, "_qm_version", 0) + 1
 
     def _paint_quick_mask_line(self, p1, p2):
         if self._quick_mask_layer is None: return
@@ -2771,6 +2785,7 @@ class CanvasWidget(QWidget):
         layer = self.editor.active_layer()
         if not layer or not self._xform_orig: return
         layer.image = self._xform_render_final()
+        self.editor.invalidate_composite()
         self.update()
 
     def persp_enter(self):
@@ -2920,6 +2935,7 @@ class CanvasWidget(QWidget):
             sy = np.clip(cy + rx * sin_a + ry * cos_a, 0, h - 1).astype(np.float32)
             result = np_warp_rgba(arr, sy, sx)
             layer.image = Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGBA")
+        self.editor.invalidate_composite()
         self.update()
 
     def _apply_blur_sharpen(self, layer, cx, cy):
@@ -2949,6 +2965,7 @@ class CanvasWidget(QWidget):
         fmask = fmask.filter(ImageFilter.GaussianBlur(sz // 3))
         blended = Image.composite(filtered, region, fmask)
         layer.image.paste(blended, (x0, y0))
+        self.editor.invalidate_composite()
         self.update()
 
     # ── Red Eye Removal ──────────────────────────────────────────────────────
@@ -3890,11 +3907,14 @@ class LayerPanel(QWidget):
         if layer:
             layer.opacity = int(v * 255 / 100)
             self.opacity_label.setText(f"{v}%")
+            self.editor.invalidate_composite()
             self.editor.canvas.update()
 
     def on_blend_change(self, mode):
         layer = self.editor.active_layer()
-        if layer: layer.blend_mode = mode; self.editor.canvas.update()
+        if layer:
+            layer.blend_mode = mode
+            self.editor.invalidate_composite(); self.editor.canvas.update()
 
     def on_visibility_toggle(self, checked):
         layer = self.editor.active_layer()
@@ -3902,6 +3922,7 @@ class LayerPanel(QWidget):
             layer.visible = checked
             key = "eye-open" if checked else "eye-closed"
             self.vis_btn.setIcon(svg_icon(key, C.ACCENT if not checked else C.TEXT_SEC, dp(14)))
+            self.editor.invalidate_composite()
             self.refresh(); self.editor.canvas.update()
 
     def on_lock_toggle(self, checked):
@@ -5305,6 +5326,8 @@ class ImageEditor(QMainWindow):
 
         # State
         self.layers = []; self.active_layer_index = 0
+        self._composite_version = 0     # bumped by invalidate_composite()
+        self._composite_cache = None    # (key, PIL image) cached flatten
         self.current_tool = "brush"
         self.fg_color = QColor(255, 255, 255)
         self.bg_color = QColor(0, 0, 0)
@@ -5393,6 +5416,9 @@ class ImageEditor(QMainWindow):
 
     # ── Dirty tracking ────────────────────────────────────────────────────────
     def _mark_dirty(self):
+        # Fires on every history op (save_state / undo / redo), so this is the
+        # central place to drop the composite cache for content edits.
+        self.invalidate_composite()
         if not self._dirty:
             self._set_dirty(True)
 
@@ -5408,6 +5434,7 @@ class ImageEditor(QMainWindow):
         """Fresh document state: new history, hooked for dirty tracking."""
         self.history = HistoryManager()
         self.history.on_change = self._mark_dirty
+        self.invalidate_composite()   # layers were just replaced
         self._set_dirty(False)
 
     def _confirm_discard(self):
@@ -6296,14 +6323,35 @@ class ImageEditor(QMainWindow):
             self.history_panel.refresh()
 
     # ── Compositing ───────────────────────────────────────────────────────────
+    def invalidate_composite(self):
+        """Drop the cached composite. Called whenever layer content, order,
+        visibility, opacity or blend changes; a hover repaint that changes
+        nothing reuses the cache instead of re-flattening every layer."""
+        self._composite_version = getattr(self, "_composite_version", 0) + 1
+        self._composite_cache = None
+
     def get_composite(self, apply_channel_visibility=False):
         """Flatten all layers.
 
         apply_channel_visibility is a screen-preview aid only -- saves,
         exports and clipboard copies must pass False (the default) so the
         Channels panel debugging view is never baked into output files.
+
+        The result is cached (keyed on a version counter that edits bump, plus
+        the channel-visibility signature) so repeated repaints on hover, the
+        marching-ants timer, panning or zooming don't re-flatten every layer.
+        No caller mutates the returned image in place, so the cache is shared.
         """
         if not self.layers: return None
+        chan_sig = None
+        if apply_channel_visibility and hasattr(self, 'channels_panel'):
+            cp = self.channels_panel
+            chan_sig = (cp.channel_hidden("R"), cp.channel_hidden("G"),
+                        cp.channel_hidden("B"), cp.channel_hidden("A"))
+        key = (getattr(self, "_composite_version", 0), apply_channel_visibility, chan_sig)
+        cache = getattr(self, "_composite_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
         result = Image.new("RGBA", self.layers[0].image.size, (0, 0, 0, 0))
         for layer in self.layers:
             if not layer.visible: continue
@@ -6332,6 +6380,7 @@ class ImageEditor(QMainWindow):
             if cp.channel_hidden("B"): b2 = blank_rgb
             if cp.channel_hidden("A"): a2 = Image.new("L", result.size, 255)
             result = Image.merge("RGBA", (r2, g2, b2, a2))
+        self._composite_cache = (key, result)
         return result
 
     def _blend_with_effects(self, base, top, layer):

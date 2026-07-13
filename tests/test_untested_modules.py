@@ -18,7 +18,42 @@ def _editor_with(layers):
     ed = editor.ImageEditor()
     ed.layers = layers
     ed.active_layer_index = len(layers) - 1
+    ed.invalidate_composite()
     return ed
+
+
+def test_get_composite_caches_and_invalidates(qapp):
+    import editor
+    base = editor.Layer("base", 4, 4)
+    base.image = Image.new("RGBA", (4, 4), (0, 0, 0, 255))
+    top = editor.Layer("top", 4, 4)
+    top.image = Image.new("RGBA", (4, 4), (255, 0, 0, 255))
+    top.visible = False
+
+    ed = _editor_with([base, top])
+    try:
+        c1 = ed.get_composite()
+        assert ed.get_composite() is c1          # repeated call → cache hit
+        # A change without invalidating must not leak (still cached)...
+        top.visible = True
+        assert ed.get_composite() is c1
+        # ...but invalidating recomputes and reflects the change.
+        ed.invalidate_composite()
+        c2 = ed.get_composite()
+        assert c2 is not c1
+        assert c2.getpixel((0, 0))[:3] == (255, 0, 0)   # red layer now visible
+
+        # A history op (save_state fires on_change → _mark_dirty → invalidate)
+        # must also drop the cache so a subsequent pixel edit is reflected.
+        ed.history.save_state(ed.layers, ed.active_layer_index, "Edit")
+        base.image.putpixel((0, 0), (0, 0, 255, 255))
+        top.visible = False
+        ed.invalidate_composite()   # visibility change (panel path)
+        c3 = ed.get_composite()
+        assert c3.getpixel((0, 0))[:3] == (0, 0, 255)   # blue base now shows
+    finally:
+        ed._dirty = False       # skip the unsaved-changes prompt on close
+        ed.close()
 
 
 def test_get_composite_blends_layer_opacity(qapp):
