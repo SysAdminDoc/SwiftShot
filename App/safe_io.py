@@ -5,6 +5,7 @@ import json
 import os
 import warnings
 import zipfile
+from datetime import datetime
 
 from PIL import Image
 
@@ -27,6 +28,9 @@ MAX_PROJECT_DEPTH = 16
 MAX_PROJECT_DECODED_PIXELS = 250_000_000
 MAX_LAYER_NAME_LENGTH = 512
 MAX_LAYER_EFFECTS = 64
+MAX_RECOVERY_PREVIEW_BYTES = 2 * 1024 * 1024
+MAX_RECOVERY_NAME_LENGTH = 255
+RECOVERY_PREVIEW_MEMBER = "recovery-preview.png"
 
 
 class SafeImageError(ValueError):
@@ -246,6 +250,40 @@ def _validate_legacy_layers(layers, names, allowed_members):
             _require_member(names, child_name, label)
 
 
+def _validate_recovery_metadata(meta, names, infos_by_name, allowed_members):
+    """Validate optional crash-recovery metadata and its bounded preview."""
+    recovery = meta.get("recovery")
+    if recovery is None:
+        return
+    if not isinstance(recovery, dict) or set(recovery) != {
+            "magic", "version", "document_name", "saved_at"}:
+        _project_error("Recovery metadata is invalid")
+    if (recovery["magic"] != "SWIFTSHOT_RECOVERY" or
+            type(recovery["version"]) is not int or recovery["version"] != 1):
+        _project_error("Recovery metadata version is invalid")
+    name = recovery["document_name"]
+    if (not isinstance(name, str) or not name or
+            len(name) > MAX_RECOVERY_NAME_LENGTH or
+            name in (".", "..") or "/" in name or "\\" in name):
+        _project_error("Recovery document name is invalid")
+    saved_at = recovery["saved_at"]
+    if not isinstance(saved_at, str) or len(saved_at) > 40:
+        _project_error("Recovery timestamp is invalid")
+    try:
+        parsed = datetime.fromisoformat(saved_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timestamp must contain a timezone")
+    except ValueError as error:
+        raise ProjectValidationError("Recovery timestamp is invalid") from error
+    _require_member(names, RECOVERY_PREVIEW_MEMBER, "recovery metadata")
+    preview_info = infos_by_name[RECOVERY_PREVIEW_MEMBER]
+    if preview_info.file_size > MAX_RECOVERY_PREVIEW_BYTES:
+        _project_error(
+            f"Recovery preview exceeds {MAX_RECOVERY_PREVIEW_BYTES:,} bytes"
+        )
+    allowed_members.add(RECOVERY_PREVIEW_MEMBER)
+
+
 def validate_project_archive(zf, archive_path=None):
     """Validate archive resources and schema before any editor state changes."""
     if archive_path is not None:
@@ -285,6 +323,7 @@ def validate_project_archive(zf, archive_path=None):
             )
 
     names_set = set(names)
+    infos_by_name = {info.filename: info for info in infos}
     if "project.json" not in names_set:
         _project_error("Project is missing project.json")
     json_info = zf.getinfo("project.json")
@@ -320,6 +359,9 @@ def validate_project_archive(zf, archive_path=None):
     _require_int(active_index, "active_index", 0, len(layers) - 1)
 
     allowed_members = {"project.json"}
+    _validate_recovery_metadata(
+        meta, names_set, infos_by_name, allowed_members
+    )
     if version >= 3:
         counter = [0]
         for index, layer in enumerate(layers):

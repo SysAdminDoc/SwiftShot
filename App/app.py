@@ -83,6 +83,7 @@ class SwiftShotApp:
         self._capture_generation = 0
         self._capture_menu_generation = 0
         self._scrolling_dialog = None
+        self._recovery_prompted = set()
 
     def start(self):
         # Set app-wide icon so every QWidget/QDialog inherits it
@@ -92,6 +93,10 @@ class SwiftShotApp:
         self._create_tray_icon()
         self._register_hotkeys()
         self.tray_icon.show()
+
+        # Defer recovery discovery until the tray is live. Corrupt journals
+        # are quarantined and valid documents are offered once per startup.
+        QTimer.singleShot(0, self._offer_recovery_journals)
 
         if config.SHOW_NOTIFICATIONS:
             self.tray_icon.showMessage(
@@ -116,6 +121,80 @@ class SwiftShotApp:
             self._check_for_updates()
 
         log.info("SwiftShot started successfully")
+
+    # -------------------------------------------------------------------
+    # Editor crash recovery
+    # -------------------------------------------------------------------
+
+    def _build_recovery_prompt(self, entry):
+        box = QMessageBox()
+        box.setWindowTitle("Recover Unsaved SwiftShot Edit")
+        box.setText(
+            f"SwiftShot found an unsaved editor recovery.\n\n"
+            f"Document: {entry.document_name}\n"
+            f"Recovery time: {entry.saved_at}"
+        )
+        box.setInformativeText(
+            "Restore opens an unsaved copy and never overwrites the original."
+        )
+        preview = QPixmap()
+        if preview.loadFromData(entry.preview_png, "PNG"):
+            box.setIconPixmap(preview.scaled(
+                320, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            ))
+        restore_button = box.addButton("Restore", QMessageBox.AcceptRole)
+        discard_button = box.addButton("Discard", QMessageBox.DestructiveRole)
+        box.addButton("Keep for Later", QMessageBox.RejectRole)
+        box.setDefaultButton(restore_button)
+        return box, restore_button, discard_button
+
+    def _recovery_decision(self, entry):
+        box, restore_button, discard_button = self._build_recovery_prompt(entry)
+        box.exec_()
+        if box.clickedButton() is restore_button:
+            return "restore"
+        if box.clickedButton() is discard_button:
+            return "discard"
+        return "later"
+
+    def _restore_recovery_entry(self, entry):
+        from editor import ImageEditor
+        editor = ImageEditor(swiftshot_app=self)
+        if not editor.restore_recovery(entry.path):
+            editor._set_dirty(False)
+            editor.close()
+            return False
+        self.editors.append(editor)
+        editor.show()
+        editor.raise_()
+        editor.activateWindow()
+        return True
+
+    def _offer_recovery_journals(self):
+        from recovery import discard_recovery, scan_recovery_journals
+        entries, quarantined = scan_recovery_journals()
+        if quarantined:
+            log.warning("Quarantined %d corrupt recovery journal(s)",
+                        len(quarantined))
+            self._notify(
+                "Recovery file quarantined",
+                f"SwiftShot moved {len(quarantined)} corrupt recovery file(s) "
+                "aside and continued startup.",
+                warning=True,
+            )
+        for entry in entries:
+            if entry.path in self._recovery_prompted:
+                continue
+            self._recovery_prompted.add(entry.path)
+            decision = self._recovery_decision(entry)
+            if decision == "restore":
+                self._restore_recovery_entry(entry)
+            elif decision == "discard" and not discard_recovery(entry.path):
+                self._notify(
+                    "Recovery discard failed",
+                    "The recovery copy was retained so it can be retried.",
+                    warning=True,
+                )
 
     # -------------------------------------------------------------------
     # Update Checker

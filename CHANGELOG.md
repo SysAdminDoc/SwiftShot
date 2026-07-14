@@ -56,6 +56,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Dirty editor documents now journal atomically after a short idle period and
+  at a bounded maximum interval. Startup previews each valid recovery once;
+  restore opens an unsaved copy, save/discard removes its journal, and corrupt
+  journals are quarantined without preventing SwiftShot from launching.
 - Diagnostic exports now use schema-validated configuration fields, stable
   path/filename aliases, bounded sanitized logs, and category previews. Raw
   malformed configuration, capture/history content, geometry, usernames,

@@ -20,7 +20,12 @@ if __name__ == "__main__":
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont, ImageOps, ImageChops
 from safe_io import (
-    DecodeBudget, load_image, load_project_image, validate_project_archive,
+    DecodeBudget, RECOVERY_PREVIEW_MEMBER, load_image, load_project_image,
+    validate_project_archive,
+)
+from recovery import (
+    RECOVERY_IDLE_MS, RECOVERY_MAX_INTERVAL_MS, discard_recovery,
+    encode_preview, new_recovery_path, recovery_metadata, safe_document_name,
 )
 from utils import atomic_replace
 
@@ -5219,6 +5224,7 @@ class ImageEditor(QMainWindow):
 
         self._load_recent_files()
         self.init_ui()
+        self._init_recovery_timers()
 
         if pixmap is not None and not pixmap.isNull():
             pil_img = qpixmap_to_pil(pixmap)
@@ -5236,10 +5242,75 @@ class ImageEditor(QMainWindow):
         return None
 
     # ── Dirty tracking ────────────────────────────────────────────────────────
+    def _init_recovery_timers(self):
+        self._recovery_journal_path = None
+        self._recovery_document_name = None
+        self._recovery_revision = 0
+        self._recovery_saved_revision = 0
+        self._recovery_idle_timer = QTimer(self)
+        self._recovery_idle_timer.setSingleShot(True)
+        self._recovery_idle_timer.setInterval(RECOVERY_IDLE_MS)
+        self._recovery_idle_timer.timeout.connect(self._write_recovery_journal)
+        self._recovery_max_timer = QTimer(self)
+        self._recovery_max_timer.setInterval(RECOVERY_MAX_INTERVAL_MS)
+        self._recovery_max_timer.timeout.connect(self._write_recovery_journal)
+
+    def _document_recovery_name(self):
+        source = (
+            self._recovery_document_name
+            or self.saved_path
+            or self.file_path
+            or "Untitled capture"
+        )
+        return safe_document_name(source)
+
+    def _write_recovery_journal(self):
+        """Persist a changed dirty document without changing its save target."""
+        if (not self._dirty or not self.layers or
+                self._recovery_saved_revision == self._recovery_revision):
+            return False
+        try:
+            composite = self.get_composite()
+            if composite is None:
+                return False
+            path = self._recovery_journal_path or new_recovery_path()
+            metadata = recovery_metadata(self._document_recovery_name())
+            self._write_project_archive(
+                path,
+                recovery=metadata,
+                recovery_preview=encode_preview(composite),
+            )
+            self._recovery_journal_path = path
+            self._recovery_document_name = metadata["document_name"]
+            self._recovery_saved_revision = self._recovery_revision
+            log.debug("Recovery journal updated: %s", path)
+            return True
+        except Exception:
+            # Autosave must never interrupt editing or turn a recoverable
+            # document into an application-level failure.
+            log.warning("Could not update editor recovery journal", exc_info=True)
+            return False
+
+    def _clear_recovery_journal(self):
+        if hasattr(self, "_recovery_idle_timer"):
+            self._recovery_idle_timer.stop()
+        if hasattr(self, "_recovery_max_timer"):
+            self._recovery_max_timer.stop()
+        path = getattr(self, "_recovery_journal_path", None)
+        if path and discard_recovery(path):
+            self._recovery_journal_path = None
+        self._recovery_document_name = None
+        self._recovery_revision = 0
+        self._recovery_saved_revision = 0
+
     def _mark_dirty(self):
         # Fires on every history op (save_state / undo / redo), so this is the
         # central place to drop the composite cache for content edits.
         self.invalidate_composite()
+        self._recovery_revision += 1
+        self._recovery_idle_timer.start()
+        if not self._recovery_max_timer.isActive():
+            self._recovery_max_timer.start()
         if not self._dirty:
             self._set_dirty(True)
 
@@ -5250,6 +5321,8 @@ class ImageEditor(QMainWindow):
             self.setWindowTitle("* " + title)
         elif not dirty and title.startswith("* "):
             self.setWindowTitle(title[2:])
+        if not dirty:
+            self._clear_recovery_journal()
 
     def _reset_history(self):
         """Fresh document state: new history, hooked for dirty tracking."""
@@ -8126,26 +8199,39 @@ class ImageEditor(QMainWindow):
                                  for ci, c in enumerate(layer.children)]
         return ldata
 
-    def _save_project_to(self, path):
+    def _write_project_archive(self, path, recovery=None,
+                               recovery_preview=None):
         import zipfile
+        meta = {"magic": "SWIFTSHOT_PROJECT", "version": 3,
+                "active_index": self.active_layer_index, "layers": []}
+        if recovery is not None:
+            if recovery_preview is None:
+                raise ValueError("Recovery project requires a preview")
+            meta["recovery"] = dict(recovery)
+
+        def _write_project(temp_path):
+            with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for i, layer in enumerate(self.layers):
+                    meta["layers"].append(
+                        self._serialize_layer(zf, layer, f"layer_{i}")
+                    )
+                if recovery is not None:
+                    zf.writestr(RECOVERY_PREVIEW_MEMBER, recovery_preview)
+                zf.writestr("project.json", json.dumps(meta, indent=2))
+
+        def _verify_project(temp_path):
+            with zipfile.ZipFile(temp_path) as zf:
+                saved_meta, _names = validate_project_archive(zf, temp_path)
+                if saved_meta["version"] != 3:
+                    raise ValueError(
+                        "Project archive metadata verification failed"
+                    )
+
+        atomic_replace(path, _write_project, _verify_project)
+
+    def _save_project_to(self, path):
         try:
-            meta = {"magic": "SWIFTSHOT_PROJECT", "version": 3,
-                    "active_index": self.active_layer_index, "layers": []}
-            def _write_project(temp_path):
-                with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for i, layer in enumerate(self.layers):
-                        meta["layers"].append(
-                            self._serialize_layer(zf, layer, f"layer_{i}")
-                        )
-                    zf.writestr("project.json", json.dumps(meta, indent=2))
-
-            def _verify_project(temp_path):
-                with zipfile.ZipFile(temp_path) as zf:
-                    saved_meta, _names = validate_project_archive(zf, temp_path)
-                    if saved_meta["version"] != 3:
-                        raise ValueError("Project archive metadata verification failed")
-
-            atomic_replace(path, _write_project, _verify_project)
+            self._write_project_archive(path)
             self.saved_path = path; self._status(f"Project saved: {path}")
             self._set_dirty(False)
             return True
@@ -8243,19 +8329,23 @@ class ImageEditor(QMainWindow):
             layers.append(layer)
         return layers
 
+    def _read_project_layers(self, path):
+        import zipfile
+        with zipfile.ZipFile(path) as zf:
+            meta, names = validate_project_archive(zf, path)
+            budget = DecodeBudget()
+            if meta["version"] >= 3:
+                layers = [self._deserialize_layer(
+                              zf, lmeta, f"layer_{i}", names, budget)
+                          for i, lmeta in enumerate(meta["layers"])]
+            else:
+                layers = self._load_layers_v2(zf, meta, names, budget)
+        return meta, layers
+
     def _load_project_from(self, path):
         if not self._confirm_discard(): return False
-        import zipfile
         try:
-            with zipfile.ZipFile(path) as zf:
-                meta, names = validate_project_archive(zf, path)
-                budget = DecodeBudget()
-                if meta["version"] >= 3:
-                    layers = [self._deserialize_layer(
-                                  zf, lmeta, f"layer_{i}", names, budget)
-                              for i, lmeta in enumerate(meta["layers"])]
-                else:
-                    layers = self._load_layers_v2(zf, meta, names, budget)
+            meta, layers = self._read_project_layers(path)
             self.layers = layers
             idx = meta.get("active_index", 0)
             self.active_layer_index = min(max(0, idx if isinstance(idx, int) else 0), len(layers) - 1)
@@ -8270,6 +8360,41 @@ class ImageEditor(QMainWindow):
         except Exception as e:
             log.warning(f"Project load failed: {path}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to open project:\n{e}")
+            return False
+
+    def restore_recovery(self, path):
+        """Open a journal as a dirty untitled document, never as its source."""
+        if not self._confirm_discard():
+            return False
+        try:
+            meta, layers = self._read_project_layers(path)
+            recovery = meta.get("recovery")
+            if recovery is None:
+                raise ValueError("The selected file is not a recovery journal")
+            self.layers = layers
+            idx = meta.get("active_index", 0)
+            self.active_layer_index = min(
+                max(0, idx if isinstance(idx, int) else 0), len(layers) - 1
+            )
+            self.file_path = None
+            self._reset_document_state()
+            self.canvas.clear_selection()
+            self.update_layer_panel()
+            self.canvas.fit_in_view()
+            name = recovery["document_name"]
+            self.setWindowTitle(f"SwiftShot Editor — Recovered {name}")
+            self._reset_history()
+            self._recovery_journal_path = path
+            self._recovery_document_name = name
+            self._recovery_revision = 1
+            self._recovery_saved_revision = 1
+            self._set_dirty(True)
+            return True
+        except Exception as e:
+            log.warning("Recovery load failed: %s", path, exc_info=True)
+            QMessageBox.critical(
+                self, "Recovery Error", f"Failed to restore recovery:\n{e}"
+            )
             return False
 
     def insert_note_at(self, x, y):
@@ -8410,6 +8535,9 @@ class ImageEditor(QMainWindow):
         if not self._confirm_discard():
             event.ignore()
             return
+        # Reaching here means the user saved or explicitly discarded the
+        # document. A stale journal must not be offered on the next launch.
+        self._clear_recovery_journal()
         try:
             self.canvas.march_timer.stop()
         except Exception:

@@ -64,7 +64,8 @@ to a lightweight Photoshop than a markup bar.
 - **Workflow** — undo history panel, guides and rulers, navigator, command
   palette, `.swiftshot` project files that preserve layers and masks,
   export to PNG/JPEG/WebP/BMP/TIFF, copy to clipboard, pin to desktop,
-  OCR from the editor, unsaved-changes protection
+  OCR from the editor, unsaved-changes protection, and atomic crash-recovery
+  journals with a restore/discard preview on the next launch
 
 ### Pin to Desktop
 
@@ -233,6 +234,7 @@ countdown_overlay.py    Animated countdown timer overlay
 scrolling_capture.py    Auto-scroll and stitch capture
 safe_io.py              Bounded image/project input validation
 diagnostics.py          Local support-bundle generation
+recovery.py             Atomic dirty-document journals and recovery discovery
 updater.py              GitHub release update checker
 logger.py               Rotating file logger
 utils.py                Virtual geometry, color helpers, startup registry
