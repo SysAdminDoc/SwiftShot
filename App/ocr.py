@@ -134,7 +134,8 @@ def ocr_pixmap(pixmap):
     tmp.close()
 
     try:
-        pixmap.save(tmp_path, 'PNG')
+        if not pixmap.save(tmp_path, 'PNG'):
+            raise OSError("Qt could not encode the OCR image as PNG")
         result = ocr_file(tmp_path)
         log.info(f"OCR extracted {len(result)} characters")
         return result
@@ -184,7 +185,8 @@ def ocr_words_pixmap(pixmap):
     tmp_path = tmp.name
     tmp.close()
     try:
-        pixmap.save(tmp_path, 'PNG')
+        if not pixmap.save(tmp_path, 'PNG'):
+            raise OSError("Qt could not encode the OCR image as PNG")
         return ocr_words_file(tmp_path)
     finally:
         try:

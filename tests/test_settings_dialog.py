@@ -119,3 +119,30 @@ def test_settings_keyboard_order_enters_visible_tab_controls(qapp):
         assert all(widget.isVisible() for widget in visited)
     finally:
         dialog.close()
+
+
+def test_apply_failure_keeps_dialog_open_and_restores_runtime_settings(
+        qapp, monkeypatch):
+    import settings_dialog
+
+    config = settings_dialog.config
+    previous_theme = config.THEME
+    dialog = settings_dialog.SettingsDialog()
+    dialog.theme.setCurrentIndex(
+        next(i for i in range(dialog.theme.count())
+             if dialog.theme.itemData(i) != previous_theme)
+    )
+    warnings = []
+    monkeypatch.setattr(config, "save", lambda: False)
+    monkeypatch.setattr(
+        settings_dialog.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+
+    dialog._apply_and_close()
+
+    assert config.THEME == previous_theme
+    assert dialog.result() == 0
+    assert warnings and warnings[0][1] == "Settings Not Saved"
+    dialog.close()

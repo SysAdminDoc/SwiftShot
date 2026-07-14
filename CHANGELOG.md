@@ -33,6 +33,16 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   a local, no-telemetry artifact to attach to a bug report.
 
 ### UX & feedback
+- Tray notifications now carry a one-shot typed action instead of sharing a
+  persistent update URL. Unrelated messages cannot open stale links, the
+  notification preference is enforced in one place, and capture, save,
+  history, pin, diagnostics, Preferences, and OCR preparation failures provide
+  calm recovery guidance even when optional notifications are disabled.
+- Preferences apply/reset and the clipboard-watcher toggle now fail
+  transactionally: an unwritable configuration file leaves live settings
+  unchanged and keeps the dialog open with a clear recovery message. Imported
+  themes apply immediately, and failed global-shortcut registration is visible
+  and cleans up the partial hook.
 - A repeatable accessibility gate now covers the editor's native controls,
   custom color swatches, structured layer view, pin, countdown, and region
   selector. Controls expose stable names/actions, keyboard focus and WCAG-sized
@@ -66,6 +76,16 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Settings and exports now use bounded UTF-8 JSON input and same-directory
+  atomic replacement. Oversized or non-object files are rejected, failed
+  imports roll back live state, corrupt startup files are preserved for
+  diagnosis, and a failed export cannot truncate an existing backup.
+- Update checks bound response size and network wait, validate release tags and
+  release URLs before surfacing them, and honor thread interruption during
+  shutdown. OCR temp encoding failures are caught before a worker starts.
+- History rebuilds hash large captures in fixed-size chunks instead of reading
+  an entire bounded image into memory, and Open File Location passes an
+  argument vector to Explorer with a visible error if the shell cannot open.
 - Capture-history startup now runs a time- and error-bounded SQLite
   `quick_check`. Proven corruption quarantines the database/sidecars and
   rebuilds metadata from untouched image files with a visible outcome; health

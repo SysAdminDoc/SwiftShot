@@ -832,7 +832,15 @@ class SettingsDialog(QDialog):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            config.reset_to_defaults()
+            if not config.reset_to_defaults():
+                QMessageBox.warning(
+                    self,
+                    "Settings Not Reset",
+                    "SwiftShot could not save the default settings. Your "
+                    "current settings were left unchanged. Check that the "
+                    "configuration folder is writable, then try again.",
+                )
+                return
             app = QApplication.instance()
             if app:
                 apply_theme(app, config.THEME)
@@ -889,6 +897,13 @@ class SettingsDialog(QDialog):
             )
             self.tabs.setCurrentIndex(2)
             return
+
+        snapshot = {
+            key: (list(getattr(config, key))
+                  if isinstance(getattr(config, key), list)
+                  else getattr(config, key))
+            for key in config._get_saveable_keys()
+        }
 
         # General
         config.LAUNCH_AT_STARTUP = self.launch_startup.isChecked()
@@ -974,7 +989,19 @@ class SettingsDialog(QDialog):
         config.CAPTURE_HISTORY_MAX = self.history_max.value()
         config.PIN_OPACITY = self.pin_opacity.value()
 
-        # Apply startup registry
+        if not config.save():
+            for key, value in snapshot.items():
+                setattr(config, key, value)
+            QMessageBox.warning(
+                self,
+                "Settings Not Saved",
+                "SwiftShot could not write the settings file. Your current "
+                "settings were left unchanged. Check that the configuration "
+                "folder is writable, then try again.",
+            )
+            return
+
+        # Apply startup registry only after the configuration is durable.
         try:
             from utils import set_startup_registry
             if not set_startup_registry(config.LAUNCH_AT_STARTUP) and config.LAUNCH_AT_STARTUP:
@@ -986,7 +1013,6 @@ class SettingsDialog(QDialog):
         except Exception:
             log.warning("Startup registry update failed", exc_info=True)
 
-        config.save()
         app = QApplication.instance()
         if app:
             apply_theme(app, config.THEME)

@@ -51,3 +51,14 @@ def test_windows_ocr_error_marker_raises(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="No OCR engine available"):
         ocr._ocr_windows(str(tmp_path / "img.png"))
+
+
+@pytest.mark.parametrize("entrypoint", [ocr.ocr_pixmap, ocr.ocr_words_pixmap])
+def test_ocr_rejects_failed_temp_image_encoding(entrypoint):
+    class _BadPixmap:
+        @staticmethod
+        def save(*_args):
+            return False
+
+    with pytest.raises(OSError, match="could not encode"):
+        entrypoint(_BadPixmap())

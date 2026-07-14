@@ -5,6 +5,7 @@ Shows a tray notification if a newer version is available.
 """
 
 import json
+import re
 import urllib.request
 import urllib.error
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -14,11 +15,15 @@ from config import config
 
 GITHUB_REPO = "SysAdminDoc/SwiftShot"
 RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+UPDATE_TIMEOUT_SECONDS = 3
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 def _parse_version(v):
     """Parse 'v2.1.0' or '2.1.0' into tuple (2, 1, 0)."""
     v = v.strip().lstrip('v')
+    match = re.match(r"\d+(?:\.\d+)*", v)
+    v = match.group(0) if match else "0"
     parts = []
     for p in v.split('.'):
         try:
@@ -46,11 +51,22 @@ class UpdateChecker(QThread):
                 headers={"Accept": "application/vnd.github.v3+json",
                          "User-Agent": "SwiftShot-UpdateChecker"}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
+            with urllib.request.urlopen(
+                    req, timeout=UPDATE_TIMEOUT_SECONDS) as resp:
+                payload = resp.read(MAX_RESPONSE_BYTES + 1)
+            if len(payload) > MAX_RESPONSE_BYTES:
+                raise ValueError("GitHub release response exceeded 1 MiB")
+            data = json.loads(payload.decode('utf-8'))
+            if not isinstance(data, dict):
+                raise ValueError("GitHub release response was not an object")
 
             tag = data.get("tag_name", "")
             html_url = data.get("html_url", "")
+            if not isinstance(tag, str) or not re.fullmatch(
+                    r"v?\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?", tag):
+                raise ValueError("GitHub release response had an invalid version tag")
+            if not isinstance(html_url, str):
+                html_url = ""
 
             # Only ever hand a real GitHub release URL for this repo to the
             # shell — a compromised/MITM'd response must not deliver a
@@ -62,7 +78,7 @@ class UpdateChecker(QThread):
             remote = _parse_version(tag)
             local = _parse_version(config.APP_VERSION)
 
-            if remote > local:
+            if remote > local and not self.isInterruptionRequested():
                 log.info(f"Update available: {tag} (current: {config.APP_VERSION})")
                 self.update_available.emit(tag, html_url)
             else:

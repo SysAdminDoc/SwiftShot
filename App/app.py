@@ -13,6 +13,8 @@ Space toggles between Region <-> Window mode during capture.
 import sys
 import os
 import webbrowser
+from dataclasses import dataclass
+from enum import Enum
 from PyQt5.QtWidgets import (
     QSystemTrayIcon, QMenu, QApplication, QMessageBox, QDialog, QAction
 )
@@ -28,6 +30,16 @@ from utils import pil_to_qpixmap
 
 def _load_file_pixmap(path):
     return pil_to_qpixmap(load_image(path))
+
+
+class _NotificationActionKind(Enum):
+    OPEN_UPDATE = "open_update"
+
+
+@dataclass(frozen=True)
+class _NotificationAction:
+    kind: _NotificationActionKind
+    callback: object
 
 
 class _OcrWorker(QThread):
@@ -77,6 +89,8 @@ class SwiftShotApp:
         self._update_checker = None
         self._update_url = None
         self._update_action = None
+        self._notification_action = None
+        self._notification_generation = 0
         self._tray_menu = None
         self._exit_action = None
         self._ocr_workers = []      # keep async OCR threads alive until done
@@ -91,20 +105,27 @@ class SwiftShotApp:
         self.app.setWindowIcon(app_icon)
 
         self._create_tray_icon()
-        self._register_hotkeys()
+        hotkeys_ready = self._register_hotkeys()
         self.tray_icon.show()
+        if not hotkeys_ready:
+            self._notify(
+                "Capture shortcuts unavailable",
+                "SwiftShot could not register its global shortcuts. Use the "
+                "tray menu for capture, then review shortcut conflicts in "
+                "Preferences.",
+                warning=True, required=True,
+            )
         self._check_history_health()
 
         # Defer recovery discovery until the tray is live. Corrupt journals
         # are quarantined and valid documents are offered once per startup.
         QTimer.singleShot(0, self._offer_recovery_journals)
 
-        if config.SHOW_NOTIFICATIONS:
-            self.tray_icon.showMessage(
-                "SwiftShot",
-                "SwiftShot is running. Press PrintScreen for capture menu.",
-                QSystemTrayIcon.Information, 2000
-            )
+        self._notify(
+            "SwiftShot",
+            "SwiftShot is running. Press PrintScreen for the capture menu.",
+            duration_ms=2000,
+        )
 
         # Start clipboard watcher if enabled
         if self._clipboard_watcher_enabled:
@@ -241,12 +262,16 @@ class SwiftShotApp:
 
     def _on_update_available(self, version, url):
         self._update_url = url
-        if config.SHOW_NOTIFICATIONS:
-            self.tray_icon.showMessage(
-                "SwiftShot Update Available",
-                f"Version {version} is available. Click this notification to download.",
-                QSystemTrayIcon.Information, 5000
-            )
+        self._notify(
+            "SwiftShot update available",
+            f"Version {version} is available. Select this notification to "
+            "open the verified GitHub release page.",
+            duration_ms=5000,
+            action=_NotificationAction(
+                _NotificationActionKind.OPEN_UPDATE,
+                lambda target=url: webbrowser.open(target),
+            ),
+        )
         # Add a download entry to the tray menu so the update stays reachable
         # after the notification fades.
         if self._tray_menu and self._update_action is None:
@@ -261,8 +286,18 @@ class SwiftShotApp:
             webbrowser.open(self._update_url)
 
     def _on_tray_message_clicked(self):
-        if self._update_url:
-            self._open_update_page()
+        action = self._notification_action
+        self._notification_generation += 1
+        self._notification_action = None
+        if action is None:
+            return
+        try:
+            action.callback()
+        except Exception:
+            log.warning(
+                "Tray notification action failed: %s", action.kind.value,
+                exc_info=True,
+            )
 
     # -------------------------------------------------------------------
     # Tray Icon
@@ -382,8 +417,12 @@ class SwiftShotApp:
             except Exception:
                 pass
         except Exception as e:
-            log.error(f"Diagnostics export failed: {e}")
-            self._notify("Diagnostics failed", str(e), warning=True)
+            log.error(f"Diagnostics export failed: {e}", exc_info=True)
+            self._notify(
+                "Diagnostics export failed",
+                "SwiftShot could not create the support bundle. Verify the "
+                "destination folder and try again.",
+                warning=True, required=True)
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -395,10 +434,12 @@ class SwiftShotApp:
 
     def _register_hotkeys(self):
         if sys.platform != 'win32':
-            return
+            return True
+        listener = None
         try:
             from hotkeys import HotkeyManager
-            self._hotkey_listener = HotkeyManager()
+            listener = HotkeyManager()
+            self._hotkey_listener = listener
 
             # Primary hotkeys
             if config.CAPTURE_REGION_HOTKEY:
@@ -430,8 +471,16 @@ class SwiftShotApp:
 
             self._hotkey_listener.start()
             log.info("Hotkeys registered successfully")
+            return True
         except Exception as e:
             log.warning(f"Could not register hotkeys: {e}")
+            if listener is not None:
+                try:
+                    listener.stop()
+                except Exception:
+                    pass
+            self._hotkey_listener = None
+            return False
 
     def _reregister_hotkeys(self):
         """Tear down and rebuild the global hotkey hook (live rebinding)."""
@@ -441,7 +490,7 @@ class SwiftShotApp:
             except Exception:
                 pass
             self._hotkey_listener = None
-        self._register_hotkeys()
+        return self._register_hotkeys()
 
     # -------------------------------------------------------------------
     # Capture Delay Helper
@@ -554,6 +603,9 @@ class SwiftShotApp:
             self._capture_menu = menu
         except Exception as e:
             log.error(f"Capture menu failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not open the capture menu. Try a direct "
+                "capture hotkey or restart SwiftShot.")
 
     def _on_menu_monitor(self, index):
         self._capture_with_delay(lambda: self._do_capture_monitor(index))
@@ -571,8 +623,14 @@ class SwiftShotApp:
                 self._handle_capture(screenshot)
             else:
                 log.warning(f"Monitor {index} capture returned None")
+                self._capture_failed(
+                    "SwiftShot could not read the selected monitor. Verify "
+                    "that the display is connected, then try again.")
         except Exception as e:
             log.error(f"Monitor capture failed: {e}", exc_info=True)
+            self._capture_failed(
+                "SwiftShot could not capture the selected monitor. Verify "
+                "the display connection and try again.")
 
     # -------------------------------------------------------------------
     # Region Capture
@@ -592,9 +650,9 @@ class SwiftShotApp:
             full = CaptureManager.capture_fullscreen()
             if full is None:
                 log.warning("capture_fullscreen returned None")
-                self._notify("Capture failed",
-                             "SwiftShot could not capture the screen.",
-                             warning=True)
+                self._capture_failed(
+                    "SwiftShot could not read the desktop. Verify that the "
+                    "screens are connected and try again.")
                 return
 
             self._overlay = RegionSelector(full, mode=mode)
@@ -621,9 +679,9 @@ class SwiftShotApp:
             self._overlay.show_spanning()
         except Exception as e:
             log.error(f"Region overlay failed: {e}")
-            self._notify("Capture failed",
-                         "SwiftShot could not start the capture overlay.",
-                         warning=True)
+            self._capture_failed(
+                "SwiftShot could not start region selection. Try again or "
+                "restart SwiftShot.")
 
     def _on_region_selected(self, full_screenshot, rect, ocr_mode=False,
                             generation=None, overlay=None):
@@ -648,8 +706,15 @@ class SwiftShotApp:
                 cropped = CaptureManager.crop_image(full_screenshot, rect)
                 if cropped:
                     self._do_ocr(cropped)
+                else:
+                    self._capture_failed(
+                        "The selected OCR region is outside the available "
+                        "desktop. Select the region again.")
             except Exception as e:
                 log.error(f"OCR crop failed: {e}")
+                self._capture_failed(
+                    "SwiftShot could not prepare the selected region for OCR. "
+                    "Select the region again.")
             return
 
         # Check if timed capture is active
@@ -662,8 +727,15 @@ class SwiftShotApp:
                 cropped = CaptureManager.crop_image(full_screenshot, rect)
                 if cropped:
                     self._handle_capture(cropped)
+                else:
+                    self._capture_failed(
+                        "The selected region is outside the available desktop. "
+                        "Select the region again.")
             except Exception as e:
                 log.error(f"Region selection failed: {e}")
+                self._capture_failed(
+                    "SwiftShot could not create the selected region. Select "
+                    "the region again.")
 
     def _on_freehand_selected(self, full_screenshot, data, generation=None,
                               overlay=None):
@@ -697,8 +769,15 @@ class SwiftShotApp:
             if cropped:
                 self._handle_capture(
                     apply_freehand_mask(cropped, points, rect), preserve_alpha=True)
+            else:
+                self._capture_failed(
+                    "The freehand region is outside the available desktop. "
+                    "Draw the region again.")
         except Exception as e:
             log.error(f"Freehand selection failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not create the freehand capture. Draw the "
+                "region again.")
 
     def _close_overlay(self, expected=None):
         if expected is not None and self._overlay is not expected:
@@ -741,10 +820,16 @@ class SwiftShotApp:
             from capture import CaptureManager
             full = CaptureManager.capture_fullscreen()
             if full is None:
+                self._capture_failed(
+                    "SwiftShot could not read the desktop for window capture. "
+                    "Try again or use region capture.")
                 return
             self._start_window_picker(full)
         except Exception as e:
             log.error(f"Window capture failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not read the desktop for window capture. "
+                "Try again or use region capture.")
 
     def _start_window_picker(self, full_screenshot):
         try:
@@ -769,6 +854,9 @@ class SwiftShotApp:
             self._window_picker.show_spanning()
         except Exception as e:
             log.error(f"Window picker failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not start window selection. Try again or use "
+                "region capture.")
 
     def _on_window_selected(self, full_screenshot, rect, generation=None,
                             picker=None):
@@ -791,8 +879,15 @@ class SwiftShotApp:
                 cropped = CaptureManager.crop_image(full_screenshot, rect)
                 if cropped:
                     self._handle_capture(cropped)
+                else:
+                    self._capture_failed(
+                        "The selected window is outside the available desktop. "
+                        "Select the window again.")
             except Exception as e:
                 log.error(f"Window selection failed: {e}")
+                self._capture_failed(
+                    "SwiftShot could not create the selected window capture. "
+                    "Select the window again.")
 
     def _close_window_picker(self, expected=None):
         if expected is not None and self._window_picker is not expected:
@@ -873,10 +968,19 @@ class SwiftShotApp:
                     self._handle_capture(cropped, preserve_alpha=bool(freehand_points))
                 else:
                     log.warning("Timed capture: crop returned None")
+                    self._capture_failed(
+                        "The saved timed-capture region is no longer available. "
+                        "Select the region again.")
             else:
                 log.warning("Timed capture: fresh screenshot returned None")
+                self._capture_failed(
+                    "SwiftShot could not refresh the screen after the countdown. "
+                    "Try the timed capture again.")
         except Exception as e:
             log.error(f"Timed capture fire failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not finish the timed capture. Select the "
+                "region and try again.")
 
     # -------------------------------------------------------------------
     # Space Toggle: Region <-> Window
@@ -929,6 +1033,9 @@ class SwiftShotApp:
             )
         except Exception as e:
             log.error(f"Switch to region mode failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not switch capture modes. Start a new region "
+                "capture and try again.")
 
     # -------------------------------------------------------------------
     # Fullscreen / Monitor Capture
@@ -963,8 +1070,15 @@ class SwiftShotApp:
                 screenshot = CaptureManager.capture_fullscreen()
                 if screenshot:
                     self._handle_capture(screenshot)
+                else:
+                    self._capture_failed(
+                        "SwiftShot could not read the desktop. Verify that the "
+                        "screen is available and try again.")
         except Exception as e:
             log.error(f"Fullscreen capture failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not capture the desktop. Verify that the "
+                "screens are connected and try again.")
 
     # -------------------------------------------------------------------
     # Last Region
@@ -991,8 +1105,19 @@ class SwiftShotApp:
                 cropped = CaptureManager.crop_image(full, rect)
                 if cropped:
                     self._handle_capture(cropped)
+                else:
+                    self._capture_failed(
+                        "The previous capture region is outside the current "
+                        "desktop. Select a new region.")
+            else:
+                self._capture_failed(
+                    "SwiftShot could not read the desktop. Select a new region "
+                    "and try again.")
         except Exception as e:
             log.error(f"Last region capture failed: {e}")
+            self._capture_failed(
+                "SwiftShot could not recapture the previous region. Select a "
+                "new region and try again.")
 
     # -------------------------------------------------------------------
     # OCR Capture
@@ -1001,11 +1126,48 @@ class SwiftShotApp:
     def capture_ocr(self):
         self._capture_with_delay(self._do_ocr_capture)
 
-    def _notify(self, title, message, warning=False):
-        """Show a tray balloon (no-op if the tray isn't available yet)."""
-        if self.tray_icon:
-            icon = QSystemTrayIcon.Warning if warning else QSystemTrayIcon.Information
-            self.tray_icon.showMessage(title, message, icon, 3000)
+    def _notify(self, title, message, warning=False, duration_ms=3000,
+                action=None, required=False):
+        """Route one tray message and its optional one-shot click action.
+
+        QSystemTrayIcon exposes one global ``messageClicked`` signal, not the
+        message that was clicked. Every new message therefore clears the old
+        action, and an action also expires shortly after its balloon. Required
+        failures use a dialog when tray notifications are disabled so a save
+        or capture failure never becomes silent.
+        """
+        self._notification_generation += 1
+        generation = self._notification_generation
+        self._notification_action = None
+
+        if not config.SHOW_NOTIFICATIONS or not self.tray_icon:
+            if required:
+                QMessageBox.warning(None, title, message)
+            return False
+
+        if action is not None:
+            if not isinstance(action, _NotificationAction):
+                raise TypeError("notification action must be _NotificationAction")
+            self._notification_action = action
+            QTimer.singleShot(
+                max(0, int(duration_ms)) + 1000,
+                lambda current=generation:
+                    self._expire_notification_action(current),
+            )
+        icon = QSystemTrayIcon.Warning if warning else QSystemTrayIcon.Information
+        self.tray_icon.showMessage(
+            title, message, icon, max(0, int(duration_ms)))
+        return True
+
+    def _expire_notification_action(self, generation):
+        if generation == self._notification_generation:
+            self._notification_generation += 1
+            self._notification_action = None
+
+    def _capture_failed(self, message):
+        self._notify(
+            "Capture failed", message,
+            warning=True, duration_ms=4000, required=True)
 
     def pick_color(self):
         """Global color picker: copy the pixel under the cursor as hex."""
@@ -1014,16 +1176,25 @@ class SwiftShotApp:
             pos = QCursor.pos()
             screen = QApplication.screenAt(pos) or QApplication.primaryScreen()
             if screen is None:
+                self._notify(
+                    "Color picker unavailable",
+                    "SwiftShot could not find an active screen. Reconnect the "
+                    "display and try again.",
+                    warning=True, required=True)
                 return
             img = screen.grabWindow(0, pos.x(), pos.y(), 1, 1).toImage()
             hexs = img.pixelColor(0, 0).name().upper()
             QApplication.clipboard().setText(hexs)
-            if self.tray_icon:
-                self.tray_icon.showMessage(
-                    "SwiftShot Color Picker", f"{hexs} copied to clipboard",
-                    QSystemTrayIcon.Information, 2000)
+            self._notify(
+                "Color copied", f"{hexs} copied to the clipboard.",
+                duration_ms=2000)
         except Exception as e:
             log.error(f"Color picker failed: {e}")
+            self._notify(
+                "Color picker failed",
+                "SwiftShot could not read the pixel under the pointer. Try "
+                "again on a visible screen.",
+                warning=True, required=True)
 
     def _do_ocr_capture(self):
         self._start_region_overlay("rectangle", ocr_mode=True)
@@ -1045,11 +1216,17 @@ class SwiftShotApp:
         tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
         tmp_path = tmp.name; tmp.close()
         try:
-            pixmap.save(tmp_path, 'PNG')
+            if not pixmap.save(tmp_path, 'PNG'):
+                raise OSError("Qt could not encode the OCR image as PNG")
         except Exception as e:
             log.error(f"OCR image save failed: {e}")
             try: os.unlink(tmp_path)
             except OSError: pass
+            self._notify(
+                "OCR could not start",
+                "SwiftShot could not prepare the selected image for OCR. "
+                "Select the region and try again.",
+                warning=True, required=True)
             return
         self._spawn_ocr_worker(
             tmp_path, cleanup=True,
@@ -1060,9 +1237,10 @@ class SwiftShotApp:
             QApplication.clipboard().setText(text)
             OcrResultDialog(text).exec_()
         else:
-            self.tray_icon.showMessage(
-                "SwiftShot OCR", "No text detected in the selected region.",
-                QSystemTrayIcon.Warning, 3000)
+            self._notify(
+                "No text found",
+                "No readable text was detected in the selected region.",
+                warning=True)
 
     def _on_ocr_failed(self, message):
         log.error(f"OCR failed: {message}")
@@ -1088,11 +1266,15 @@ class SwiftShotApp:
                 result = dlg.get_result()
                 if result and not result.isNull():
                     self._handle_capture(result)
+                else:
+                    self._capture_failed(
+                        "The scrolling capture did not produce an image. Keep "
+                        "the target window visible and try again.")
         except Exception as e:
             log.error(f"Scrolling capture failed: {e}")
-            self._notify("Scrolling capture failed",
-                         "Something went wrong during the scrolling capture.",
-                         warning=True)
+            self._capture_failed(
+                "SwiftShot could not complete the scrolling capture. Keep the "
+                "target window visible and try again.")
 
     # -------------------------------------------------------------------
     # Post-capture handling
@@ -1123,8 +1305,21 @@ class SwiftShotApp:
             saved_path = save_to_history(pixmap, "")
             if saved_path and config.CAPTURE_HISTORY_AUTO_OCR:
                 self._start_history_ocr(saved_path)
+            elif config.CAPTURE_HISTORY_ENABLED and not saved_path:
+                self._notify(
+                    "Capture not added to history",
+                    "The capture is still available in its selected workflow "
+                    "destinations, but SwiftShot could not save the history "
+                    "copy. Verify the history folder and export diagnostics "
+                    "if the problem continues.",
+                    warning=True, required=True)
         except Exception as e:
             log.warning(f"Could not save to history: {e}")
+            self._notify(
+                "Capture not added to history",
+                "The capture is still available in its selected workflow "
+                "destinations. Verify the history folder and try again.",
+                warning=True, required=True)
 
         for action in actions:
             if action == "editor":
@@ -1176,9 +1371,18 @@ class SwiftShotApp:
             px = _load_file_pixmap(path)
         except Exception as error:
             log.warning(f"Could not load image file {path}: {error}")
+            self._notify(
+                "Image could not be opened",
+                "The file is missing, unsupported, damaged, or exceeds the "
+                "safe image limits.",
+                warning=True, required=True)
             return
         if px.isNull():
             log.warning(f"Could not load image file: {path}")
+            self._notify(
+                "Image could not be opened",
+                "The file did not contain a readable image.",
+                warning=True, required=True)
             return
         log.info(f"Opening image file in editor: {path}")
         self._open_editor(px)
@@ -1241,34 +1445,32 @@ class SwiftShotApp:
                 config.OUTPUT_JPEG_QUALITY,
             )
             if success:
-                self.tray_icon.showMessage(
-                    "SwiftShot", f"Screenshot saved to {filepath}",
-                    QSystemTrayIcon.Information, 2000
-                )
+                self._notify(
+                    "Screenshot saved", f"Saved to {filepath}",
+                    duration_ms=2000)
                 if config.COPY_PATH_TO_CLIPBOARD:
                     QApplication.clipboard().setText(filepath)
                 log.info(f"Screenshot saved: {filepath}")
             else:
                 log.error(f"Direct save failed: {filepath}")
-                self.tray_icon.showMessage(
-                    "SwiftShot",
-                    f"Could not save screenshot to {filepath}",
-                    QSystemTrayIcon.Warning, 4000
-                )
+                self._notify(
+                    "Screenshot not saved",
+                    f"SwiftShot could not write {filepath}. Check that the "
+                    "folder exists and is writable, then try again.",
+                    warning=True, duration_ms=4000, required=True)
         except Exception as e:
-            log.error(f"Direct save failed: {e}")
-            self.tray_icon.showMessage(
-                "SwiftShot", "Could not save screenshot. Check the log for details.",
-                QSystemTrayIcon.Warning, 4000
-            )
+            log.error(f"Direct save failed: {e}", exc_info=True)
+            self._notify(
+                "Screenshot not saved",
+                "SwiftShot could not save the screenshot. Verify the output "
+                "folder and filename settings, then try again.",
+                warning=True, duration_ms=4000, required=True)
 
     def _copy_to_clipboard(self, pixmap):
         QApplication.clipboard().setPixmap(pixmap)
-        if config.SHOW_NOTIFICATIONS:
-            self.tray_icon.showMessage(
-                "SwiftShot", "Screenshot copied to clipboard",
-                QSystemTrayIcon.Information, 1500
-            )
+        self._notify(
+            "Screenshot copied", "The screenshot is ready to paste.",
+            duration_ms=1500)
 
     # -------------------------------------------------------------------
     # Pin to Desktop
@@ -1284,7 +1486,12 @@ class SwiftShotApp:
             pin.closed.connect(lambda pw: self._pin_windows.remove(pw)
                                if pw in self._pin_windows else None)
         except Exception as e:
-            log.error(f"Pin failed: {e}")
+            log.error(f"Pin failed: {e}", exc_info=True)
+            self._notify(
+                "Pin failed",
+                "SwiftShot could not create the pinned window. The capture "
+                "is still available in its other selected destinations.",
+                warning=True, required=True)
 
     # -------------------------------------------------------------------
     # Capture History
@@ -1302,40 +1509,64 @@ class SwiftShotApp:
             dlg.show()
             self._history_dialog = dlg
         except Exception as e:
-            log.error(f"History dialog failed: {e}")
+            log.error(f"History dialog failed: {e}", exc_info=True)
+            self._notify(
+                "Capture history unavailable",
+                "SwiftShot could not open capture history. Export diagnostics "
+                "for details and try again.",
+                warning=True, required=True)
 
     def _open_history_image(self, filepath):
         try:
             self._open_editor(_load_file_pixmap(filepath))
         except Exception as error:
             log.warning(f"Could not open history image {filepath}: {error}")
+            self._notify(
+                "Capture could not be opened",
+                "The history image is missing, locked, or unreadable. Refresh "
+                "capture history and try again.",
+                warning=True, required=True)
 
     def _pin_history_image(self, filepath):
         try:
             self.pin_pixmap(_load_file_pixmap(filepath))
         except Exception as error:
             log.warning(f"Could not pin history image {filepath}: {error}")
+            self._notify(
+                "Capture could not be pinned",
+                "The history image is missing, locked, or unreadable. Refresh "
+                "capture history and try again.",
+                warning=True, required=True)
 
     # -------------------------------------------------------------------
     # Clipboard Watcher
     # -------------------------------------------------------------------
 
     def _toggle_clipboard_watcher(self):
-        self._clipboard_watcher_enabled = not self._clipboard_watcher_enabled
-        config.CLIPBOARD_WATCHER_ENABLED = self._clipboard_watcher_enabled
-        config.save()
+        previous = self._clipboard_watcher_enabled
+        desired = not previous
+        config.CLIPBOARD_WATCHER_ENABLED = desired
+        if not config.save():
+            config.CLIPBOARD_WATCHER_ENABLED = previous
+            self._notify(
+                "Clipboard watcher unchanged",
+                "SwiftShot could not save this preference. Check that the "
+                "configuration folder is writable, then try again.",
+                warning=True, required=True,
+            )
+            return
+        self._clipboard_watcher_enabled = desired
         if self._clipboard_watcher_enabled:
             self._start_clipboard_watcher()
-            self.tray_icon.showMessage(
-                "SwiftShot", "Clipboard watcher enabled",
-                QSystemTrayIcon.Information, 1500
-            )
+            self._notify(
+                "Clipboard watcher enabled",
+                "Copied images will open in SwiftShot.", duration_ms=1500)
         else:
             self._stop_clipboard_watcher()
-            self.tray_icon.showMessage(
-                "SwiftShot", "Clipboard watcher disabled",
-                QSystemTrayIcon.Information, 1500
-            )
+            self._notify(
+                "Clipboard watcher disabled",
+                "Copied images will no longer open automatically.",
+                duration_ms=1500)
 
     def _start_clipboard_watcher(self):
         """Watch the clipboard via Qt's change signal (no polling)."""
@@ -1391,6 +1622,11 @@ class SwiftShotApp:
                 self._open_editor(_load_file_pixmap(filepath))
             except Exception as error:
                 log.warning(f"Could not open image file {filepath}: {error}")
+                self._notify(
+                    "Image could not be opened",
+                    "The file is unsupported, damaged, locked, or exceeds the "
+                    "safe image limits.",
+                    warning=True, required=True)
 
     def open_from_clipboard(self):
         clipboard = QApplication.clipboard()
@@ -1398,10 +1634,10 @@ class SwiftShotApp:
         if pixmap and not pixmap.isNull():
             self._open_editor(pixmap)
         else:
-            self.tray_icon.showMessage(
-                "SwiftShot", "No image found in clipboard",
-                QSystemTrayIcon.Warning, 2000
-            )
+            self._notify(
+                "No image in clipboard",
+                "Copy an image, then choose Open Image from Clipboard again.",
+                warning=True, duration_ms=2000)
 
     # -------------------------------------------------------------------
     # Settings / About
@@ -1410,11 +1646,19 @@ class SwiftShotApp:
     def show_settings(self):
         try:
             from settings_dialog import SettingsDialog
-            from theme import stylesheet_for_theme
+            from theme import apply_theme, stylesheet_for_theme
 
             dialog = SettingsDialog()
             if dialog.exec_() == QDialog.Accepted:
-                self._reregister_hotkeys()
+                apply_theme(self.app, config.THEME)
+                if not self._reregister_hotkeys():
+                    self._notify(
+                        "Capture shortcuts unavailable",
+                        "SwiftShot saved your preferences but could not "
+                        "register the global shortcuts. Resolve shortcut "
+                        "conflicts and apply Preferences again.",
+                        warning=True, required=True,
+                    )
                 # Apply the clipboard-watcher setting live and keep the flag in
                 # sync with config — otherwise the next tray toggle flips a
                 # stale flag and writes the inverted value back.
@@ -1430,7 +1674,13 @@ class SwiftShotApp:
                     if menu:
                         menu.setStyleSheet(stylesheet_for_theme(config.THEME))
         except Exception as e:
-            log.error(f"Settings dialog failed: {e}")
+            log.error(f"Settings dialog failed: {e}", exc_info=True)
+            self._notify(
+                "Preferences unavailable",
+                "SwiftShot could not open or apply Preferences. Export "
+                "diagnostics for details and try again.",
+                warning=True, required=True,
+            )
 
     def show_about(self):
         QMessageBox.about(
@@ -1484,7 +1734,9 @@ class SwiftShotApp:
         # ("QThread: Destroyed while thread is still running").
         if self._update_checker is not None:
             try:
-                self._update_checker.wait(3000)
+                self._update_checker.requestInterruption()
+                if not self._update_checker.wait(5000):
+                    log.warning("Update checker did not stop before shutdown")
             except Exception:
                 pass
         # Wait briefly for any in-flight OCR workers so we don't tear down the

@@ -37,6 +37,7 @@ IMAGE_EXTENSIONS = [
 HISTORY_QUICK_CHECK_MAX_ERRORS = 10
 HISTORY_QUICK_CHECK_TIMEOUT_SECONDS = 1.0
 HISTORY_HEALTH_SCHEMA_VERSION = 1
+HASH_CHUNK_BYTES = 1024 * 1024
 _health_results = {}
 _health_lock = threading.Lock()
 
@@ -299,6 +300,18 @@ def _thumbnail_blob(pixmap):
     return _pixmap_png_bytes(thumb)
 
 
+def _sha256_file(filepath):
+    """Hash a capture without duplicating a potentially large image in RAM."""
+    digest = hashlib.sha256()
+    with open(filepath, "rb") as file_obj:
+        while True:
+            chunk = file_obj.read(HASH_CHUNK_BYTES)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _index_file(conn, filepath, mtime):
     pixmap = _safe_pixmap(filepath)
     if pixmap.isNull():
@@ -306,8 +319,7 @@ def _index_file(conn, filepath, mtime):
             "INSERT OR REPLACE INTO seen_files (path, mtime) VALUES (?, ?)",
             (filepath, mtime))
         return
-    with open(filepath, "rb") as f:
-        digest = hashlib.sha256(f.read()).hexdigest()
+    digest = _sha256_file(filepath)
     created_at = datetime.fromtimestamp(mtime).isoformat(timespec="seconds")
     conn.execute(
         """
@@ -603,11 +615,23 @@ class HistoryThumbnail(QFrame):
     def _open_folder(self):
         import subprocess
         import sys
-        if sys.platform == 'win32':
-            subprocess.Popen(f'explorer /select,"{self.filepath}"')
-        else:
-            folder = os.path.dirname(self.filepath)
-            subprocess.Popen(['xdg-open', folder])
+        try:
+            if sys.platform == 'win32':
+                subprocess.Popen([
+                    "explorer.exe",
+                    f"/select,{os.path.normpath(self.filepath)}",
+                ])
+            else:
+                folder = os.path.dirname(self.filepath)
+                subprocess.Popen(['xdg-open', folder])
+        except OSError as error:
+            log.warning("Could not open capture location", exc_info=True)
+            QMessageBox.warning(
+                self,
+                "Location Not Opened",
+                "SwiftShot could not open this capture's folder.\n\n"
+                f"{error}",
+            )
 
 
 class CaptureHistoryDialog(QDialog):

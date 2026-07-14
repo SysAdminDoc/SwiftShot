@@ -75,6 +75,16 @@ def test_config_reset_preserves_state_and_restores_defaults(fresh_config):
     assert cfg.LAST_SAVE_DIR == "C:/captures"
 
 
+def test_config_reset_rolls_back_when_persistence_fails(fresh_config,
+                                                         monkeypatch):
+    cfg = fresh_config.Config()
+    cfg.THEME = "light"
+    monkeypatch.setattr(cfg, "save", lambda: False)
+
+    assert cfg.reset_to_defaults() is False
+    assert cfg.THEME == "light"
+
+
 def test_config_export_import_excludes_state_keys(fresh_config, tmp_path):
     cfg = fresh_config.Config()
     cfg.OUTPUT_JPEG_QUALITY = 61
@@ -188,6 +198,60 @@ def test_corrupt_config_backed_up_and_defaults_used(fresh_config, tmp_path):
 
     assert reloaded.OUTPUT_FILE_FORMAT == fresh_config.Config.OUTPUT_FILE_FORMAT
     assert Path(cfg._config_file + ".corrupt").exists()
+
+
+def test_oversized_config_is_quarantined_and_defaults_used(fresh_config):
+    cfg = fresh_config.Config()
+    path = Path(cfg._config_file)
+    path.write_bytes(b'{"padding":"' + b"x" * fresh_config.MAX_CONFIG_BYTES + b'"}')
+
+    reloaded = fresh_config.Config()
+
+    assert reloaded.THEME == fresh_config.Config.THEME
+    assert Path(str(path) + ".corrupt").exists()
+
+
+def test_oversized_import_is_rejected_without_changing_runtime(fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    cfg.THEME = "light"
+    import_path = tmp_path / "oversized.json"
+    import_path.write_bytes(
+        b'{"THEME":"dark","padding":"'
+        + b"x" * fresh_config.MAX_CONFIG_BYTES
+        + b'"}'
+    )
+
+    assert not cfg.import_settings(str(import_path))
+    assert cfg.THEME == "light"
+
+
+def test_failed_import_persistence_rolls_back_runtime(fresh_config, tmp_path,
+                                                       monkeypatch):
+    cfg = fresh_config.Config()
+    cfg.THEME = "light"
+    import_path = tmp_path / "settings.json"
+    import_path.write_text(json.dumps({"THEME": "dark"}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "save", lambda: False)
+
+    assert not cfg.import_settings(str(import_path))
+    assert cfg.THEME == "light"
+
+
+def test_failed_atomic_export_preserves_existing_destination(fresh_config,
+                                                              tmp_path,
+                                                              monkeypatch):
+    cfg = fresh_config.Config()
+    export_path = tmp_path / "settings.json"
+    export_path.write_text("original", encoding="utf-8")
+
+    def fail_replace(source, destination):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(fresh_config.os, "replace", fail_replace)
+
+    assert not cfg.export_settings(str(export_path))
+    assert export_path.read_text(encoding="utf-8") == "original"
+    assert list(tmp_path.glob(".settings.json.*.tmp")) == []
 
 
 def test_version_info_uses_config_version(fresh_config, monkeypatch):

@@ -9,6 +9,42 @@ import json
 import getpass
 import re
 import shutil
+import tempfile
+
+
+MAX_CONFIG_BYTES = 1024 * 1024
+
+
+def _read_json_object(path):
+    with open(path, "rb") as file_obj:
+        payload = file_obj.read(MAX_CONFIG_BYTES + 1)
+    if len(payload) > MAX_CONFIG_BYTES:
+        raise ValueError("settings file exceeds the 1 MiB safety limit")
+    data = json.loads(payload.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("settings file must contain a JSON object")
+    return data
+
+
+def _atomic_write_json(path, data):
+    payload = json.dumps(data, indent=2).encode("utf-8")
+    if len(payload) > MAX_CONFIG_BYTES:
+        raise ValueError("settings data exceeds the 1 MiB safety limit")
+    destination = os.path.abspath(path)
+    parent = os.path.dirname(destination) or "."
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(destination)}.", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as file_obj:
+            file_obj.write(payload)
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(temp_path, destination)
+    finally:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
 
 
 def _avif_supported():
@@ -255,8 +291,7 @@ class Config:
         if not os.path.exists(self._config_file):
             return
         try:
-            with open(self._config_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = _read_json_object(self._config_file)
             for key, value in data.items():
                 if not key.isupper() or key in self._IDENTITY_KEYS:
                     continue
@@ -268,7 +303,7 @@ class Config:
                 self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
             self._normalize_after_capture_actions()
             self._normalize_enums()
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
             backup = self._config_file + ".corrupt"
             try:
                 shutil.copy2(self._config_file, backup)
@@ -284,12 +319,11 @@ class Config:
         data = dict(self._unknown_keys)   # preserve newer-build keys first
         data.update({k: getattr(self, k) for k in self._get_saveable_keys()})
         try:
-            tmp_path = self._config_file + ".tmp"
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp_path, self._config_file)
+            _atomic_write_json(self._config_file, data)
+            return True
         except Exception as e:
             self._log_warning(f"Could not save config: {e}")
+            return False
 
     @staticmethod
     def _log_warning(message):
@@ -301,6 +335,12 @@ class Config:
 
     def reset_to_defaults(self):
         """Reset all settings to class-level defaults (preserves state keys)."""
+        snapshot = {
+            key: (list(getattr(self, key))
+                  if isinstance(getattr(self, key), list)
+                  else getattr(self, key))
+            for key in self._get_saveable_keys()
+        }
         saved_state = {k: getattr(self, k) for k in self._STATE_KEYS
                        if hasattr(self, k)}
         for key in self._get_saveable_keys():
@@ -313,7 +353,11 @@ class Config:
         for k, v in saved_state.items():
             setattr(self, k, v)
         self._normalize_after_capture_actions()
-        self.save()
+        if self.save():
+            return True
+        for key, value in snapshot.items():
+            setattr(self, key, value)
+        return False
 
     def export_settings(self, filepath):
         """Export user settings to a JSON file (excludes internal state)."""
@@ -322,8 +366,7 @@ class Config:
             if key not in self._STATE_KEYS:
                 data[key] = getattr(self, key)
         try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
+            _atomic_write_json(filepath, data)
             return True
         except Exception as e:
             self._log_warning(f"Settings export failed: {e}")
@@ -331,11 +374,14 @@ class Config:
 
     def import_settings(self, filepath):
         """Import settings from a JSON file."""
+        snapshot = {
+            key: (list(getattr(self, key))
+                  if isinstance(getattr(self, key), list)
+                  else getattr(self, key))
+            for key in self._get_saveable_keys()
+        }
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                return False
+            data = _read_json_object(filepath)
             for key, value in data.items():
                 if hasattr(self, key) and key.isupper() and key not in self._STATE_KEYS:
                     self._apply_value(key, value)
@@ -343,9 +389,12 @@ class Config:
                 self.AFTER_CAPTURE_ACTIONS = [self.AFTER_CAPTURE_ACTION]
             self._normalize_after_capture_actions()
             self._normalize_enums()
-            self.save()
+            if not self.save():
+                raise OSError("could not persist imported settings")
             return True
         except Exception as e:
+            for key, value in snapshot.items():
+                setattr(self, key, value)
             self._log_warning(f"Settings import failed: {e}")
             return False
 

@@ -1,5 +1,8 @@
 import sys
 import json
+import hashlib
+import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 
 from PyQt5.QtGui import QColor, QPixmap
@@ -164,6 +167,44 @@ def test_duplicate_content_file_not_rehashed_every_open(fresh_config, qapp, tmp_
         assert len(calls) == first          # no further _index_file on re-open
     finally:
         capture_history._index_file = real
+
+
+def test_history_hash_matches_file_without_whole_file_read(fresh_config, tmp_path):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    path = tmp_path / "capture.png"
+    payload = b"a" * (capture_history.HASH_CHUNK_BYTES + 17)
+    path.write_bytes(payload)
+
+    assert capture_history._sha256_file(str(path)) == hashlib.sha256(payload).hexdigest()
+
+
+def test_open_file_location_uses_argument_vector_and_reports_failure(
+        fresh_config, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    filepath = str(tmp_path / "capture with spaces.png")
+    widget = SimpleNamespace(filepath=filepath)
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda args: calls.append(args))
+
+    capture_history.HistoryThumbnail._open_folder(widget)
+
+    assert calls == [["explorer.exe", f"/select,{filepath}"]]
+
+    warnings = []
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda _args: (_ for _ in ()).throw(OSError("Explorer unavailable")),
+    )
+    monkeypatch.setattr(
+        capture_history.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+
+    capture_history.HistoryThumbnail._open_folder(widget)
+
+    assert warnings and "could not open" in warnings[0][2]
 
 
 def test_update_history_ocr_survivor_gets_text_evicted_is_noop(fresh_config, qapp, tmp_path):
