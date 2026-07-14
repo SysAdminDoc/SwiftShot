@@ -248,10 +248,22 @@ class SwiftShotApp:
         self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
 
     def export_diagnostics(self):
-        """Write a diagnostics zip (logs + config + versions) and open its
-        folder — a one-click bundle to attach to a bug report."""
+        """Preview and write a privacy-sanitized local support bundle."""
         try:
-            from diagnostics import build_diagnostics_zip
+            from diagnostics import (
+                build_diagnostics_zip,
+                diagnostics_preview,
+                format_diagnostics_preview,
+            )
+            reply = QMessageBox.question(
+                None,
+                "Export Privacy-Safe Diagnostics",
+                format_diagnostics_preview(diagnostics_preview()),
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if reply != QMessageBox.Yes:
+                return
             path = build_diagnostics_zip()
             log.info(f"Diagnostics bundle written: {path}")
             self._notify("Diagnostics saved", f"Saved {os.path.basename(path)}")

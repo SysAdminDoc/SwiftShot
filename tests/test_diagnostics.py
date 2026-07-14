@@ -1,39 +1,172 @@
-"""Tests for the diagnostics bundle (diagnostics.py)."""
+"""Privacy and content-contract tests for diagnostics bundles."""
 
 import json
 import zipfile
 
 
-def test_build_diagnostics_zip_contains_logs_config_versions(qapp, tmp_path):
+def _zip_text(dest):
+    with zipfile.ZipFile(dest) as archive:
+        return {
+            name: archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+        }
+
+
+def test_bundle_uses_allowlist_and_consistent_path_aliases(
+        qapp, tmp_path, monkeypatch):
     import diagnostics
 
     cfg_dir = tmp_path / "SwiftShot"
     cfg_dir.mkdir()
-    (cfg_dir / "swiftshot.log").write_text("log line\n", encoding="utf-8")
-    (cfg_dir / "swiftshot.log.1").write_text("older log\n", encoding="utf-8")
-    (cfg_dir / "crash.log").write_text("traceback\n", encoding="utf-8")
-    (cfg_dir / "swiftshot.json").write_text(
-        json.dumps({"THEME": "dark", "API_TOKEN": "hunter2"}), encoding="utf-8")
+    private = r"C:\Users\Alice\Private\Tax Return 2026.png"
+    other = r"C:\Users\Alice\Desktop\Client Secret.png"
+    monkeypatch.setenv("USERNAME", "Alice")
+    monkeypatch.setenv("USER", "Alice")
+    (cfg_dir / "swiftshot.log").write_text(
+        f'Opening image file in editor: "{private}"\n'
+        f"Direct save failed: {private}\n"
+        "Retry failed for Tax Return 2026.png\n"
+        "API_TOKEN=hunter2\n"
+        "Contact alice@example.test\n",
+        encoding="utf-8",
+    )
+    (cfg_dir / "crash.log").write_text(
+        'File "C:\\Users\\Alice\\repo\\SwiftShot\\App\\editor.py", line 42\n'
+        "client_secret: swordfish\n",
+        encoding="utf-8",
+    )
+    (cfg_dir / "swiftshot.json").write_text(json.dumps({
+        "THEME": "dark",
+        "CHECK_FOR_UPDATES": False,
+        "CAPTURE_DELAY_MS": 250,
+        "CAPTURE_WINDOW_HOTKEY": "leaked-hotkey@example.test",
+        "AFTER_CAPTURE_ACTIONS": ["editor", "private-value"],
+        "PIN_OPACITY": r"C:\Users\Alice\malicious-safe-key",
+        "OUTPUT_FILE_PATH": r"C:\Users\Alice\Pictures",
+        "OUTPUT_FILENAME_PATTERN": "Alice_{title}",
+        "LAST_REGION": "10,20,640,480",
+        "WINDOW_GEOMETRY": "private-window-geometry",
+        "CAPTURE_HISTORY_DIR": r"C:\Users\Alice\SecretCaptures",
+        "API_TOKEN": "hunter2",
+        "FUTURE_SECRET": "swordfish",
+    }), encoding="utf-8")
+    (cfg_dir / "config.json").write_text(json.dumps({
+        "ui_scale": 1.25,
+        "window_geometry": "do-not-export",
+        "password": "opensesame",
+    }), encoding="utf-8")
+    (cfg_dir / "recent.json").write_text(json.dumps({
+        "recent": [private, private, other],
+    }), encoding="utf-8")
 
     dest = tmp_path / "bundle.zip"
-    out = diagnostics.build_diagnostics_zip(
-        dest_path=str(dest), config_dir=str(cfg_dir))
+    diagnostics.build_diagnostics_zip(
+        dest_path=str(dest), config_dir=str(cfg_dir)
+    )
+    files = _zip_text(dest)
 
-    assert out == str(dest)
-    with zipfile.ZipFile(dest) as zf:
-        names = set(zf.namelist())
-        assert {"swiftshot.log", "swiftshot.log.1", "crash.log",
-                "swiftshot.json", "versions.json"} <= names
-        # Secret-looking keys are redacted; ordinary settings survive.
-        cfg = json.loads(zf.read("swiftshot.json"))
-        assert cfg["THEME"] == "dark"
-        assert cfg["API_TOKEN"] == "***redacted***"
-        versions = json.loads(zf.read("versions.json"))
-        assert versions["swiftshot"]
-        assert "sqlite" in versions and "python" in versions
+    assert {
+        "logs/swiftshot.log",
+        "logs/crash.log",
+        "configuration.json",
+        "recent-files.json",
+        "versions.json",
+        "manifest.json",
+    } <= files.keys()
+
+    config = json.loads(files["configuration.json"])
+    assert config["swiftshot.json"] == {
+        "status": "ok",
+        "settings": {
+            "CAPTURE_DELAY_MS": 250,
+            "CHECK_FOR_UPDATES": False,
+            "THEME": "dark",
+        },
+        "invalid_fields": [
+            "AFTER_CAPTURE_ACTIONS",
+            "CAPTURE_WINDOW_HOTKEY",
+            "PIN_OPACITY",
+        ],
+    }
+    assert config["config.json"]["settings"] == {"ui_scale": 1.25}
+
+    recent = json.loads(files["recent-files.json"])
+    assert recent["items"][0] == recent["items"][1]
+    assert recent["items"][0] != recent["items"][2]
+    assert recent["items"][0] in files["logs/swiftshot.log"]
+    assert files["logs/swiftshot.log"].count(recent["items"][0]) == 3
+
+    entire_bundle = "\n".join(files.values()).casefold()
+    for leaked in (
+        "alice",
+        "tax return",
+        "client secret.png",
+        "hunter2",
+        "swordfish",
+        "opensesame",
+        "leaked-hotkey",
+        "private-value",
+        "malicious-safe-key",
+        "private-window-geometry",
+        "10,20,640,480",
+        "secretcaptures",
+    ):
+        assert leaked.casefold() not in entire_bundle
+    assert "***redacted***" in entire_bundle
 
 
-def test_build_diagnostics_zip_handles_empty_config_dir(qapp, tmp_path):
+def test_malformed_files_never_enter_bundle_verbatim(qapp, tmp_path):
+    import diagnostics
+
+    cfg_dir = tmp_path / "SwiftShot"
+    cfg_dir.mkdir()
+    malformed = r'{"THEME": "dark", "password": "raw-secret", "path": "C:\Users\Alice'
+    (cfg_dir / "swiftshot.json").write_text(malformed, encoding="utf-8")
+    (cfg_dir / "recent.json").write_text(
+        "raw-recent-secret C:\\Users\\Alice\\private.png", encoding="utf-8"
+    )
+
+    dest = tmp_path / "bundle.zip"
+    diagnostics.build_diagnostics_zip(
+        dest_path=str(dest), config_dir=str(cfg_dir)
+    )
+    files = _zip_text(dest)
+
+    config = json.loads(files["configuration.json"])["swiftshot.json"]
+    recent = json.loads(files["recent-files.json"])
+    assert config["status"] == "malformed"
+    assert config["settings"] == {}
+    assert recent == {"status": "malformed", "items": []}
+    combined = "\n".join(files.values())
+    assert "raw-secret" not in combined
+    assert "raw-recent-secret" not in combined
+    assert r"C:\Users\Alice" not in combined
+
+
+def test_preview_names_included_and_excluded_categories(qapp, tmp_path):
+    import diagnostics
+
+    cfg_dir = tmp_path / "SwiftShot"
+    cfg_dir.mkdir()
+    (cfg_dir / "swiftshot.log").write_text("safe log", encoding="utf-8")
+    (cfg_dir / "swiftshot.json").write_text("{}", encoding="utf-8")
+    (cfg_dir / "recent.json").write_text('{"recent": []}', encoding="utf-8")
+
+    preview = diagnostics.diagnostics_preview(str(cfg_dir))
+    copy = diagnostics.format_diagnostics_preview(preview)
+
+    assert preview["included"] == [
+        "Runtime and dependency versions",
+        "Sanitized application/crash logs (1)",
+        "Allowlisted non-path settings",
+        "Pseudonymized recent-file entries",
+    ]
+    assert "Never included" in copy
+    assert "Screenshots" in copy
+    assert "Review the ZIP before sharing it" in copy
+
+
+def test_empty_bundle_still_has_privacy_manifest(qapp, tmp_path):
     import diagnostics
 
     cfg_dir = tmp_path / "empty"
@@ -41,17 +174,19 @@ def test_build_diagnostics_zip_handles_empty_config_dir(qapp, tmp_path):
     dest = tmp_path / "bundle.zip"
     diagnostics.build_diagnostics_zip(dest_path=str(dest), config_dir=str(cfg_dir))
 
-    with zipfile.ZipFile(dest) as zf:
-        # Even with no logs/config, the versions manifest is always present.
-        assert "versions.json" in zf.namelist()
+    files = _zip_text(dest)
+    assert set(files) == {"versions.json", "manifest.json"}
+    manifest = json.loads(files["manifest.json"])
+    assert manifest["schema_version"] == 2
+    assert "Screenshots" in " ".join(manifest["excluded"])
 
 
-def test_cli_diagnostics_writes_bundle(qapp, tmp_path):
+def test_cli_diagnostics_writes_sanitized_bundle(qapp, tmp_path):
     import cli
 
     dest = tmp_path / "diag.zip"
     code = cli.run(["--diagnostics", "--out", str(dest)])
     assert code == 0
     assert dest.exists()
-    with zipfile.ZipFile(dest) as zf:
-        assert "versions.json" in zf.namelist()
+    with zipfile.ZipFile(dest) as archive:
+        assert {"versions.json", "manifest.json"} <= set(archive.namelist())

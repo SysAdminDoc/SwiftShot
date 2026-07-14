@@ -46,7 +46,7 @@ def _build_parser():
     p.add_argument("--ocr", action="store_true",
                    help="Run OCR on the capture and print the text to stdout.")
     p.add_argument("--diagnostics", action="store_true",
-                   help="Write a diagnostics zip (logs, config, versions) and "
+                   help="Write a privacy-sanitized diagnostics zip and "
                         "print its path. Use --out to choose the destination.")
     return p
 

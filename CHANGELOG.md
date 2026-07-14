@@ -56,6 +56,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Diagnostic exports now use schema-validated configuration fields, stable
+  path/filename aliases, bounded sanitized logs, and category previews. Raw
+  malformed configuration, capture/history content, geometry, usernames,
+  paths, emails, and secret values never enter the generated ZIP.
 - Delayed and scrolling captures now carry lifecycle generation tokens: a
   cancelled, hidden, closed, or superseded control cannot later capture pixels
   or send wheel input. Region/window/countdown transitions reject stale

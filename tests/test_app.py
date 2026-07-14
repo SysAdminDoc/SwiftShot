@@ -172,3 +172,37 @@ def test_new_delayed_capture_invalidates_older_callback(qapp, monkeypatch):
     callbacks[1]()
 
     assert fired == ["new"]
+
+
+def test_diagnostics_export_previews_privacy_categories_before_writing(
+        qapp, monkeypatch):
+    import app as app_module
+    import diagnostics
+    from app import SwiftShotApp
+
+    controller = SwiftShotApp(qapp)
+    built = []
+    messages = []
+    monkeypatch.setattr(
+        diagnostics,
+        "diagnostics_preview",
+        lambda: {"included": ["Versions"], "excluded": ["Screenshots"]},
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "build_diagnostics_zip",
+        lambda: built.append(True),
+    )
+    monkeypatch.setattr(
+        app_module.QMessageBox,
+        "question",
+        lambda _parent, _title, message, *_args: (
+            messages.append(message) or app_module.QMessageBox.Cancel
+        ),
+    )
+
+    controller.export_diagnostics()
+
+    assert built == []
+    assert "Included:" in messages[0]
+    assert "Never included:" in messages[0]
