@@ -5,12 +5,12 @@ Drag to move, scroll to resize, right-click context menu.
 """
 
 from PyQt5.QtWidgets import (
-    QWidget, QApplication, QMenu
+    QWidget, QApplication, QMenu, QToolButton
 )
 from PyQt5.QtGui import (
-    QPixmap, QPainter, QColor, QPen, QCursor, QFont
+    QPixmap, QPainter, QColor, QPen, QCursor, QFont, QKeySequence, QPalette
 )
-from PyQt5.QtCore import Qt, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QRect, pyqtSignal
 
 from config import config
 
@@ -31,6 +31,11 @@ class PinWindow(QWidget):
         self._drag_start = QPoint()
         self._hovered = False
         self._opacity = config.PIN_OPACITY / 100.0
+        try:
+            from theme import is_high_contrast_enabled
+            self._high_contrast = is_high_contrast_enabled()
+        except ImportError:
+            self._high_contrast = False
 
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |
@@ -40,8 +45,28 @@ class PinWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Pinned screenshot")
+        self.setAccessibleDescription(
+            "Pinned screenshot. Arrow keys move, plus and minus zoom, Home "
+            "resets zoom, Ctrl+C copies, Shift+F10 opens options, and Escape closes.")
         self.setCursor(Qt.SizeAllCursor)
         self.setWindowOpacity(self._opacity)
+
+        self._close_button = QToolButton(self)
+        self._close_button.setText("×")
+        self._close_button.setAccessibleName("Close pinned screenshot")
+        self._close_button.setToolTip("Close pinned screenshot")
+        self._close_button.setFocusPolicy(Qt.StrongFocus)
+        self._close_button.setFixedSize(28, 28)
+        self._close_button.setCursor(Qt.PointingHandCursor)
+        self._close_button.setStyleSheet(
+            "QToolButton { background: palette(button); color: palette(button-text); "
+            "border: 1px solid palette(window-text); border-radius: 4px; "
+            "font-size: 18px; font-weight: bold; }"
+            "QToolButton:hover, QToolButton:focus { border: 2px solid palette(highlight); }"
+        )
+        self._close_button.clicked.connect(self.close)
 
         self._update_size()
         self._center_on_cursor()
@@ -57,6 +82,11 @@ class PinWindow(QWidget):
             w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.setFixedSize(self._pixmap.width() + 4, self._pixmap.height() + 4)
+        self._close_button.setGeometry(self._close_rect())
+
+    def _close_rect(self):
+        """Stable, WCAG-sized pointer target for the close action."""
+        return QRect(max(0, self.width() - 32), 4, 28, 28)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -70,8 +100,12 @@ class PinWindow(QWidget):
         painter.drawPixmap(0, 0, self._pixmap)
 
         # Border
-        border_color = QColor(config.PIN_BORDER_COLOR)
-        if self._hovered:
+        border_color = (self.palette().color(QPalette.WindowText)
+                        if self._high_contrast else QColor(config.PIN_BORDER_COLOR))
+        if self.hasFocus():
+            border_color = self.palette().color(QPalette.Highlight)
+            pen_width = 3
+        elif self._hovered:
             border_color.setAlpha(220)
             pen_width = 2
         else:
@@ -81,24 +115,15 @@ class PinWindow(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(0, 0, self._pixmap.width(), self._pixmap.height())
 
-        # Close button (top-right, visible on hover)
-        if self._hovered:
-            bx = self._pixmap.width() - 20
-            by = 4
-            painter.setBrush(QColor(243, 139, 168, 200))
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(bx, by, 16, 16, 3, 3)
-            painter.setPen(QPen(QColor("white"), 1.5))
-            painter.drawLine(bx + 4, by + 4, bx + 12, by + 12)
-            painter.drawLine(bx + 12, by + 4, bx + 4, by + 12)
-
         # Scale indicator on hover
         if self._hovered:
             pct = f"{int(self._scale * 100)}%"
-            painter.setPen(QColor("#cdd6f4"))
+            painter.setPen(self.palette().color(QPalette.ToolTipText))
             font = QFont("Segoe UI", 8)
             painter.setFont(font)
-            painter.setBrush(QColor(30, 30, 46, 180))
+            background = self.palette().color(QPalette.ToolTipBase)
+            background.setAlpha(220)
+            painter.setBrush(background)
             fm = painter.fontMetrics()
             tw = fm.horizontalAdvance(pct) + 8
             painter.drawRoundedRect(4, self._pixmap.height() - 20, tw, 16, 3, 3)
@@ -108,12 +133,7 @@ class PinWindow(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Check close button
-            bx = self._pixmap.width() - 20
-            by = 4
-            if bx <= event.pos().x() <= bx + 16 and by <= event.pos().y() <= by + 16:
-                self.close()
-                return
+            self.setFocus(Qt.MouseFocusReason)
             self._dragging = True
             self._drag_start = event.globalPos() - self.pos()
         elif event.button() == Qt.RightButton:
@@ -204,7 +224,23 @@ class PinWindow(QWidget):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.close()
-        elif event.key() == Qt.Key_C and event.modifiers() & Qt.ControlModifier:
+        elif event.matches(QKeySequence.Copy):
             self._copy_to_clipboard()
+        elif event.key() in (Qt.Key_Plus, Qt.Key_Equal):
+            self._set_scale(min(self._max_scale, self._scale * 1.1))
+        elif event.key() == Qt.Key_Minus:
+            self._set_scale(max(self._min_scale, self._scale / 1.1))
+        elif event.key() == Qt.Key_Home:
+            self._set_scale(1.0)
+        elif event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            step = 10 if event.modifiers() & Qt.ShiftModifier else 1
+            dx = (-step if event.key() == Qt.Key_Left else
+                  step if event.key() == Qt.Key_Right else 0)
+            dy = (-step if event.key() == Qt.Key_Up else
+                  step if event.key() == Qt.Key_Down else 0)
+            self.move(self.x() + dx, self.y() + dy)
+        elif (event.key() == Qt.Key_Menu or
+              event.key() == Qt.Key_F10 and event.modifiers() & Qt.ShiftModifier):
+            self._show_context_menu(self.mapToGlobal(self.rect().center()))
         else:
             super().keyPressEvent(event)

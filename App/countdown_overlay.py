@@ -10,8 +10,8 @@ while the countdown runs. Clicking the badge cancels the capture.
 
 import time
 
-from PyQt5.QtWidgets import QWidget, QApplication
-from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor
+from PyQt5.QtWidgets import QWidget, QApplication, QPushButton
+from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor, QPalette
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF
 from utils import exclude_window_from_capture
 
@@ -23,7 +23,7 @@ class CountdownOverlay(QWidget):
     cancelled = pyqtSignal()
 
     BADGE_W = 150
-    BADGE_H = 172
+    BADGE_H = 184
 
     def __init__(self, total_ms, parent=None):
         super().__init__(parent)
@@ -45,6 +45,43 @@ class CountdownOverlay(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(self.BADGE_W, self.BADGE_H)
         self.setToolTip("Click to cancel the timed capture")
+        self.setAccessibleName("Timed capture countdown")
+        self.setAccessibleDescription(
+            f"Timed capture in {self._seconds_left} seconds. Activate Cancel "
+            "timed capture to stop it.")
+        self.setFocusPolicy(Qt.NoFocus)
+
+        # Keep the window non-activating, but expose a native button so UIA /
+        # Narrator gets a Button role and Invoke action instead of an opaque
+        # custom-painted client area.
+        self.cancel_button = QPushButton("Cancel", self)
+        self.cancel_button.setAccessibleName("Cancel timed capture")
+        self.cancel_button.setAccessibleDescription(
+            "Stop the pending capture and close this countdown.")
+        self.cancel_button.setToolTip("Cancel timed capture")
+        self.cancel_button.setFocusPolicy(Qt.StrongFocus)
+        self.cancel_button.setGeometry(25, 150, 100, 28)
+        self.cancel_button.setStyleSheet(
+            "QPushButton { background: palette(button); color: palette(button-text); "
+            "border: 1px solid palette(window-text); border-radius: 4px; }"
+            "QPushButton:focus { border: 2px solid palette(highlight); }"
+        )
+        self.cancel_button.clicked.connect(self._cancel)
+
+        self._ring_background = QColor(30, 30, 46, 230)
+        self._ring_color = QColor("#89b4fa")
+        self._number_color = QColor("#cdd6f4")
+        self._label_color = QColor("#a6adc8")
+        try:
+            from theme import is_high_contrast_enabled
+            if is_high_contrast_enabled():
+                self._ring_background = self.palette().color(QPalette.Window)
+                self._ring_background.setAlpha(245)
+                self._ring_color = self.palette().color(QPalette.Highlight)
+                self._number_color = self.palette().color(QPalette.WindowText)
+                self._label_color = self.palette().color(QPalette.Text)
+        except ImportError:
+            pass
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(
@@ -95,6 +132,9 @@ class CountdownOverlay(QWidget):
         new_seconds = max(0, (self._remaining_ms + 999) // 1000)
         if new_seconds != self._seconds_left:
             self._seconds_left = new_seconds
+            self.setAccessibleDescription(
+                f"Timed capture in {max(1, new_seconds)} seconds. Activate "
+                "Cancel timed capture to stop it.")
         self.update()
 
         if self._remaining_ms <= 0:
@@ -119,11 +159,11 @@ class CountdownOverlay(QWidget):
 
         # Background circle
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(30, 30, 46, 230))
+        painter.setBrush(self._ring_background)
         painter.drawEllipse(ring_rect)
 
         # Progress arc
-        pen = QPen(QColor("#89b4fa"), 5)
+        pen = QPen(self._ring_color, 5)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
@@ -131,18 +171,18 @@ class CountdownOverlay(QWidget):
 
         # Number
         display = max(1, self._seconds_left)
-        painter.setPen(QColor("#cdd6f4"))
+        painter.setPen(self._number_color)
         font = QFont("Segoe UI", 32, QFont.Bold)
         painter.setFont(font)
         painter.drawText(ring_rect, Qt.AlignCenter, str(display))
 
         # Label below
-        painter.setPen(QColor("#a6adc8"))
+        painter.setPen(self._label_color)
         font = QFont("Segoe UI", 8)
         painter.setFont(font)
-        label_rect = QRectF(0, cy + radius + 6, self.width(), 32)
+        label_rect = QRectF(0, cy + radius + 6, self.width(), 22)
         painter.drawText(label_rect, Qt.AlignHCenter | Qt.AlignTop,
-                         "Capturing soon\nClick to cancel")
+                         "Capturing soon")
 
         painter.end()
 

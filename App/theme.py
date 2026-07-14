@@ -3,6 +3,9 @@ SwiftShot Dark Theme
 Professional dark theme matching Matt's preferred aesthetic.
 """
 
+import ctypes
+import sys
+
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QPalette, QColor
 
@@ -13,10 +16,12 @@ EDITOR_COLORS = {
     "BG1": "#1e1e2e",
     "BG2": "#313244",
     "BG3": "#45475a",
-    "BORDER": "#45475a",
+    # Component boundaries need 3:1 contrast against both dark surfaces.
+    "BORDER": "#7f849c",
     "TEXT_PRI": "#cdd6f4",
     "TEXT_SEC": "#a6adc8",
-    "TEXT_MUT": "#6c7086",
+    # Muted copy is still copy: keep it above 4.5:1 on BG1 and BG2.
+    "TEXT_MUT": "#9ca3bd",
     "ACCENT": "#89b4fa",
     "ACCENT_D": "#313244",
     "ACCENT_H": "#b4befe",
@@ -31,7 +36,7 @@ LIGHT_COLORS = {
     "BG1": "#f8fafc",
     "BG2": "#ffffff",
     "BG3": "#dbeafe",
-    "BORDER": "#94a3b8",
+    "BORDER": "#64748b",
     "TEXT_PRI": "#0f172a",
     "TEXT_SEC": "#334155",
     "TEXT_MUT": "#475569",
@@ -46,7 +51,7 @@ LIGHT_COLORS = {
 THEME_LABELS = {"dark": "Dark", "light": "Light"}
 
 
-DARK_STYLESHEET = """
+_BASE_STYLESHEET = """
 QWidget {
     background-color: #1e1e2e;
     color: #cdd6f4;
@@ -125,6 +130,10 @@ QToolButton:pressed, QToolButton:checked {
     border-color: #89b4fa;
 }
 
+QToolButton:focus, QPushButton:focus, QCheckBox:focus, QRadioButton:focus {
+    border: 2px solid #89b4fa;
+}
+
 QPushButton {
     background-color: #313244;
     color: #cdd6f4;
@@ -145,6 +154,12 @@ QPushButton:pressed {
 
 QPushButton:default {
     border-color: #89b4fa;
+}
+
+QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QListWidget:focus, QTreeWidget:focus, QTabBar:focus {
+    border: 2px solid #89b4fa;
 }
 
 QStatusBar {
@@ -287,6 +302,10 @@ QSlider::handle:horizontal {
     border-radius: 8px;
 }
 
+QSlider:focus::handle:horizontal {
+    border: 2px solid #cdd6f4;
+}
+
 QTabWidget::pane {
     border: 1px solid #45475a;
     background-color: #1e1e2e;
@@ -377,7 +396,7 @@ _DARK_HEX_ROLES = (
 
 
 def _build_stylesheet(colors):
-    stylesheet = DARK_STYLESHEET
+    stylesheet = _BASE_STYLESHEET
     # The dark theme uses #45475a for both hover backgrounds and borders.
     # Border usages must map to the BORDER token, or light-theme controls
     # get near-invisible pale borders (BG3 on white).
@@ -387,6 +406,7 @@ def _build_stylesheet(colors):
     return stylesheet
 
 
+DARK_STYLESHEET = _build_stylesheet(DARK_COLORS)
 LIGHT_STYLESHEET = _build_stylesheet(LIGHT_COLORS)
 
 
@@ -394,11 +414,67 @@ def normalize_theme(theme_name):
     return theme_name if theme_name in THEME_LABELS else "dark"
 
 
-def colors_for_theme(theme_name):
+def is_high_contrast_enabled():
+    """Return the live Windows high-contrast preference without caching it."""
+    if sys.platform != "win32":
+        return False
+    try:
+        class HIGHCONTRAST(ctypes.Structure):
+            _fields_ = (
+                ("cbSize", ctypes.c_uint),
+                ("dwFlags", ctypes.c_uint),
+                ("lpszDefaultScheme", ctypes.c_wchar_p),
+            )
+
+        value = HIGHCONTRAST()
+        value.cbSize = ctypes.sizeof(value)
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            0x0042, value.cbSize, ctypes.byref(value), 0
+        )
+        return bool(ok and value.dwFlags & 0x00000001)
+    except (AttributeError, OSError):
+        return False
+
+
+def _system_colors():
+    """Map SwiftShot roles to the active Qt/system palette."""
+    app = QApplication.instance()
+    palette = app.palette() if app is not None else QPalette()
+    color = lambda role: palette.color(role).name()
+    return {
+        "BG0": color(QPalette.Window),
+        "BG1": color(QPalette.Window),
+        "BG2": color(QPalette.Base),
+        "BG3": color(QPalette.AlternateBase),
+        "BORDER": color(QPalette.WindowText),
+        "TEXT_PRI": color(QPalette.WindowText),
+        "TEXT_SEC": color(QPalette.Text),
+        "TEXT_MUT": color(QPalette.Text),
+        "ACCENT": color(QPalette.Highlight),
+        "ACCENT_D": color(QPalette.Highlight),
+        "ACCENT_H": color(QPalette.Highlight),
+        "RED": color(QPalette.BrightText),
+        "GREEN": color(QPalette.Link),
+        "YELLOW": color(QPalette.Link),
+        "CANVAS_BG": color(QPalette.Window),
+    }
+
+
+def colors_for_theme(theme_name, high_contrast=None):
+    if high_contrast is None:
+        high_contrast = is_high_contrast_enabled()
+    if high_contrast:
+        return _system_colors()
     return LIGHT_COLORS if normalize_theme(theme_name) == "light" else DARK_COLORS
 
 
-def stylesheet_for_theme(theme_name):
+def stylesheet_for_theme(theme_name, high_contrast=None):
+    if high_contrast is None:
+        high_contrast = is_high_contrast_enabled()
+    if high_contrast:
+        # Native styling is the only reliable way to preserve user-selected
+        # Windows high-contrast colors and focus indicators.
+        return ""
     return LIGHT_STYLESHEET if normalize_theme(theme_name) == "light" else DARK_STYLESHEET
 
 
@@ -425,8 +501,10 @@ def _apply_palette(app: QApplication, colors):
 
 def apply_theme(app: QApplication, theme_name="dark"):
     """Apply the selected SwiftShot theme to the application."""
+    if is_high_contrast_enabled():
+        app.setStyleSheet("")
+        app.setPalette(app.style().standardPalette())
+        return
     colors = colors_for_theme(theme_name)
     _apply_palette(app, colors)
     app.setStyleSheet(stylesheet_for_theme(theme_name))
-
-

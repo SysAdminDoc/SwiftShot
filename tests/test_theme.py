@@ -56,6 +56,8 @@ def test_dark_and_light_theme_roles_meet_wcag_text_contrast():
         for background in ("BG1", "BG2"):
             assert _contrast_ratio(colors["TEXT_PRI"], colors[background]) >= 4.5
             assert _contrast_ratio(colors["TEXT_SEC"], colors[background]) >= 4.5
+            assert _contrast_ratio(colors["TEXT_MUT"], colors[background]) >= 4.5
+            assert _contrast_ratio(colors["BORDER"], colors[background]) >= 3.0
         assert _contrast_ratio(colors["ACCENT"], colors["BG1"]) >= 4.5
 
 
@@ -78,3 +80,40 @@ def test_apply_theme_sets_palette_and_stylesheet(qapp):
 
     apply_theme(qapp, "dark")
     assert qapp.palette().color(QPalette.Window) == QColor(DARK_COLORS["BG1"])
+
+
+def test_high_contrast_uses_native_system_palette(qapp, monkeypatch):
+    from PyQt5.QtGui import QPalette
+    import theme
+
+    expected = qapp.style().standardPalette()
+    monkeypatch.setattr(theme, "is_high_contrast_enabled", lambda: True)
+    try:
+        theme.apply_theme(qapp, "dark")
+        assert qapp.styleSheet() == ""
+        assert theme.stylesheet_for_theme("dark") == ""
+        assert qapp.palette().color(QPalette.Window) == expected.color(QPalette.Window)
+        colors = theme.colors_for_theme("dark")
+        assert colors["TEXT_PRI"] == expected.color(QPalette.WindowText).name()
+        assert colors["ACCENT"] == expected.color(QPalette.Highlight).name()
+    finally:
+        monkeypatch.setattr(theme, "is_high_contrast_enabled", lambda: False)
+        theme.apply_theme(qapp, "dark")
+
+
+def test_editor_high_contrast_does_not_override_native_styles(qapp, monkeypatch):
+    from PyQt5.QtGui import QPalette
+    import editor
+    import theme
+
+    monkeypatch.setattr(theme, "is_high_contrast_enabled", lambda: True)
+    try:
+        theme.apply_theme(qapp, "dark")
+        editor.apply_editor_theme("dark")
+        assert editor.build_ss() == ""
+        assert editor.C.TEXT_PRI == qapp.palette().color(QPalette.WindowText).name()
+        assert editor.C.ACCENT == qapp.palette().color(QPalette.Highlight).name()
+    finally:
+        monkeypatch.setattr(theme, "is_high_contrast_enabled", lambda: False)
+        theme.apply_theme(qapp, "dark")
+        editor.apply_editor_theme("dark")

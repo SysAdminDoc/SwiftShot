@@ -101,9 +101,13 @@ OCR, freehand, and scrolling capture can also be bound to custom hotkeys.
 
 Press `Space` during region selection to switch to window mode (and vice versa) without restarting the capture.
 
-### Dark Theme
+### Themes and accessibility
 
-Full [Catppuccin Mocha](https://github.com/catppuccin/catppuccin) color scheme across every window, dialog, menu, and overlay.
+Choose the [Catppuccin Mocha](https://github.com/catppuccin/catppuccin)
+dark theme or the light theme. When Windows High Contrast is enabled,
+SwiftShot uses the live system palette instead of overriding the user's
+colors. Editor controls, layer state, pins, countdown cancellation, and region
+selection expose keyboard and assistive-technology paths with visible focus.
 
 ---
 

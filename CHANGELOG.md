@@ -33,6 +33,12 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   a local, no-telemetry artifact to attach to a bug report.
 
 ### UX & feedback
+- A repeatable accessibility gate now covers the editor's native controls,
+  custom color swatches, structured layer view, pin, countdown, and region
+  selector. Controls expose stable names/actions, keyboard focus and WCAG-sized
+  targets; focus is visibly styled, region selection and pins are keyboard
+  operable, theme text/control contrast is enforced, and Windows high-contrast
+  mode uses the live system palette without stealing focus during countdowns.
 - Preferences now fits the available work area with a scrollable, width-aware
   surface for every tab at large text/DPI. Search covers labels and help text,
   deduplicates controls, and opens, scrolls to, focuses, and highlights the

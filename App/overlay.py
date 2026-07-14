@@ -9,7 +9,7 @@ dimension display, edge snapping, Space to switch to window mode.
 
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtGui import (
-    QPainter, QColor, QPen, QPixmap, QFont, QPainterPath
+    QPainter, QColor, QPen, QPixmap, QFont, QPainterPath, QPalette
 )
 from PyQt5.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal
 
@@ -66,6 +66,12 @@ class RegionSelector(QWidget):
         self.crosshair_color = QColor("#cdd6f4")
         self.text_color = QColor("#cdd6f4")
         self.text_bg = QColor(30, 30, 46, 200)
+        self.guide_color = QColor("#a6e3a1")
+        self.handle_color = QColor("#89b4fa")
+        self.swatch_border = QColor("#585b70")
+        self.magnifier_bg = QColor(30, 30, 46, 230)
+        self.magnifier_cross = QColor("#f38ba8")
+        self.magnifier_grid = QColor(255, 255, 255, 30)
         self.magnifier_size = 120
         self.magnifier_zoom = 4
 
@@ -79,11 +85,44 @@ class RegionSelector(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
         self.setCursor(Qt.CrossCursor)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName(
+            "Freehand capture region" if mode == self.MODE_FREEHAND
+            else "Rectangular capture region")
+        self.setAccessibleDescription(
+            "Move the crosshair with the arrow keys. Press Enter to start, "
+            "move or draw with arrows, then press Enter to capture. Escape "
+            "cancels; Space switches to window capture; S toggles snapping.")
 
         geo = virtual_geometry()
         self._desktop_geo = geo
         self.setFixedSize(geo.width(), geo.height())
         self.move(geo.x(), geo.y())
+        self.current_pos = QPoint(max(0, self.width() // 2),
+                                  max(0, self.height() // 2))
+
+        try:
+            from theme import is_high_contrast_enabled
+            if is_high_contrast_enabled():
+                palette = self.palette()
+                self.overlay_color = palette.color(QPalette.Window)
+                self.overlay_color.setAlpha(180)
+                self.selection_border = palette.color(QPalette.Highlight)
+                self.freehand_color = palette.color(QPalette.Highlight)
+                self.crosshair_color = palette.color(QPalette.WindowText)
+                self.text_color = palette.color(QPalette.ToolTipText)
+                self.text_bg = palette.color(QPalette.ToolTipBase)
+                self.text_bg.setAlpha(240)
+                self.guide_color = palette.color(QPalette.Highlight)
+                self.handle_color = palette.color(QPalette.Highlight)
+                self.swatch_border = palette.color(QPalette.WindowText)
+                self.magnifier_bg = palette.color(QPalette.Window)
+                self.magnifier_bg.setAlpha(245)
+                self.magnifier_cross = palette.color(QPalette.Highlight)
+                self.magnifier_grid = palette.color(QPalette.WindowText)
+                self.magnifier_grid.setAlpha(80)
+        except ImportError:
+            pass
 
         # Pre-detect window edges for snapping
         self._detect_snap_edges()
@@ -178,6 +217,7 @@ class RegionSelector(QWidget):
             self.setGeometry(self._desktop_geo)
         self.activateWindow()
         self.raise_()
+        self.setFocus(Qt.ActiveWindowFocusReason)
 
     def _defer_emit(self, signal, payload=None, has_payload=False):
         """Emit only if this hidden overlay still owns the capture action."""
@@ -221,17 +261,21 @@ class RegionSelector(QWidget):
         self._draw_coordinates(painter)
         self._draw_magnifier(painter)
         self._draw_mode_hint(painter)
+        if self.hasFocus():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(self.palette().color(QPalette.Highlight), 3))
+            painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
         painter.end()
 
     def _draw_snap_guides(self, painter):
         """Draw subtle snap guide lines."""
         if self._snapped_x is not None:
-            pen = QPen(QColor("#a6e3a1"), 1, Qt.DotLine)
+            pen = QPen(self.guide_color, 1, Qt.DotLine)
             painter.setPen(pen)
             painter.drawLine(self._snapped_x, 0, self._snapped_x, self.height())
 
         if self._snapped_y is not None:
-            pen = QPen(QColor("#a6e3a1"), 1, Qt.DotLine)
+            pen = QPen(self.guide_color, 1, Qt.DotLine)
             painter.setPen(pen)
             painter.drawLine(0, self._snapped_y, self.width(), self._snapped_y)
 
@@ -290,7 +334,7 @@ class RegionSelector(QWidget):
             QPoint(selection.left(), selection.center().y()),
             QPoint(selection.right(), selection.center().y()),
         ]
-        painter.setBrush(QColor("#89b4fa"))
+        painter.setBrush(self.handle_color)
         for h in handles:
             painter.drawRect(h.x() - handle_size // 2,
                              h.y() - handle_size // 2,
@@ -353,7 +397,7 @@ class RegionSelector(QWidget):
 
         # Color swatch
         painter.setBrush(QColor(r, g, b))
-        painter.setPen(QPen(QColor("#585b70"), 1))
+        painter.setPen(QPen(self.swatch_border, 1))
         swatch_x = tx + 6
         swatch_y = ty + (text_h - 10) // 2
         painter.drawRect(swatch_x, swatch_y, 10, 10)
@@ -376,7 +420,7 @@ class RegionSelector(QWidget):
         if mag_y + size + 4 > self.height():
             mag_y = pos.y() - size - 24
 
-        painter.setBrush(QColor(30, 30, 46, 230))
+        painter.setBrush(self.magnifier_bg)
         painter.setPen(QPen(self.selection_border, 2))
         painter.drawRoundedRect(mag_x - 2, mag_y - 2, size + 4, size + 4, 4, 4)
         # Scale directly from the source rect -- no intermediate copy
@@ -384,13 +428,13 @@ class RegionSelector(QWidget):
                            self.screenshot, src_rect)
 
         center = QPoint(mag_x + size // 2, mag_y + size // 2)
-        pen = QPen(QColor("#f38ba8"), 1)
+        pen = QPen(self.magnifier_cross, 1)
         painter.setPen(pen)
         painter.drawLine(center.x() - 6, center.y(), center.x() + 6, center.y())
         painter.drawLine(center.x(), center.y() - 6, center.x(), center.y() + 6)
 
         # Pixel grid lines in magnifier
-        pen = QPen(QColor(255, 255, 255, 30), 1)
+        pen = QPen(self.magnifier_grid, 1)
         painter.setPen(pen)
         pixel_size = zoom
         for gx in range(mag_x, mag_x + size, pixel_size):
@@ -420,6 +464,7 @@ class RegionSelector(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            self.setFocus(Qt.MouseFocusReason)
             self.selecting = True
             pos = self._snap_point(event.pos()) if self.mode == self.MODE_RECTANGLE else event.pos()
             self.start_pos = pos
@@ -452,35 +497,63 @@ class RegionSelector(QWidget):
             else:
                 self.end_pos = event.pos()
 
-            if self.mode == self.MODE_FREEHAND and self.freehand_points:
-                path = QPainterPath()
-                path.moveTo(self.freehand_points[0])
-                for pt in self.freehand_points[1:]:
-                    path.lineTo(pt)
-                bounding = path.boundingRect().toAlignedRect()
-                if bounding.width() > 2 and bounding.height() > 2:
-                    points = [QPoint(p) for p in self.freehand_points]
-                    self._defer_emit(
-                        self.freehand_selected,
-                        (points, QRect(bounding)),
-                        has_payload=True,
-                    )
-                else:
-                    self._defer_emit(self.cancelled)
+            self._finish_selection()
+
+    def _finish_selection(self):
+        if self.mode == self.MODE_FREEHAND and self.freehand_points:
+            path = QPainterPath()
+            path.moveTo(self.freehand_points[0])
+            for pt in self.freehand_points[1:]:
+                path.lineTo(pt)
+            bounding = path.boundingRect().toAlignedRect()
+            if bounding.width() > 2 and bounding.height() > 2:
+                points = [QPoint(p) for p in self.freehand_points]
+                self._defer_emit(
+                    self.freehand_selected, (points, QRect(bounding)),
+                    has_payload=True)
             else:
-                selection = QRect(self.start_pos, self.end_pos).normalized()
-                if selection.width() > 2 and selection.height() > 2:
-                    self._defer_emit(
-                        self.region_selected,
-                        QRect(selection),
-                        has_payload=True,
-                    )
-                else:
-                    self._defer_emit(self.cancelled)
+                self._defer_emit(self.cancelled)
+            return
+        selection = QRect(self.start_pos, self.end_pos).normalized()
+        if selection.width() > 2 and selection.height() > 2:
+            self._defer_emit(
+                self.region_selected, QRect(selection), has_payload=True)
+        else:
+            self._defer_emit(self.cancelled)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self._defer_emit(self.cancelled)
+        elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.selecting:
+                self.selecting = False
+                self._finish_selection()
+            else:
+                self.selecting = True
+                self.start_pos = QPoint(self.current_pos)
+                self.end_pos = QPoint(self.current_pos)
+                if self.mode == self.MODE_FREEHAND:
+                    self.freehand_points = [QPoint(self.current_pos)]
+                self.update()
+        elif event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            step = 10 if event.modifiers() & Qt.ShiftModifier else 1
+            dx = (-step if event.key() == Qt.Key_Left else
+                  step if event.key() == Qt.Key_Right else 0)
+            dy = (-step if event.key() == Qt.Key_Up else
+                  step if event.key() == Qt.Key_Down else 0)
+            moved = QPoint(
+                max(0, min(self.width() - 1, self.current_pos.x() + dx)),
+                max(0, min(self.height() - 1, self.current_pos.y() + dy)))
+            self.current_pos = moved
+            if self.selecting:
+                self.end_pos = QPoint(moved)
+                if self.mode == self.MODE_FREEHAND:
+                    self.freehand_points.append(QPoint(moved))
+                selection = QRect(self.start_pos, self.end_pos).normalized()
+                self.setAccessibleDescription(
+                    f"Keyboard selection {selection.width()} by "
+                    f"{selection.height()} pixels. Press Enter to capture.")
+            self.update()
         elif event.key() == Qt.Key_Space:
             self._defer_emit(self.switch_to_window)
         elif event.key() == Qt.Key_S:

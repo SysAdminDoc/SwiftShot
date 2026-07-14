@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QMenu,
     QFrame, QInputDialog, QMessageBox, QSizePolicy,
     QToolButton, QGridLayout, QLineEdit, QTextEdit,
-    QAbstractItemView, QTabWidget, QShortcut
+    QAbstractButton, QAbstractItemView, QTabWidget, QShortcut
 )
 from PyQt5.QtCore import (
     Qt, QPoint, QRect, QSize, QTimer, pyqtSignal, QPointF, QRectF,
@@ -282,6 +282,12 @@ def apply_editor_theme(theme_name):
 # ── QSS Stylesheet ────────────────────────────────────────────────────────────
 def build_ss():
     """Build the shared dark QSS theme."""
+    try:
+        from theme import is_high_contrast_enabled
+        if is_high_contrast_enabled():
+            return ""
+    except ImportError:
+        pass
     return f"""
 QMainWindow, QWidget {{
     background-color: {C.BG1};
@@ -336,6 +342,16 @@ QToolButton:checked {{
     color: {C.ACCENT};
     border-color: {C.ACCENT};
     border-width: 1px;
+}}
+QToolButton:focus, QPushButton:focus, QCheckBox:focus {{
+    border: 2px solid {C.ACCENT};
+}}
+QListWidget:focus, QComboBox:focus, QSpinBox:focus,
+QDoubleSpinBox:focus, QLineEdit:focus, QTabBar:focus {{
+    border: 2px solid {C.ACCENT};
+}}
+QSlider:focus::handle:horizontal {{
+    border: 2px solid {C.TEXT_PRI};
 }}
 QToolButton:pressed {{ background-color: {C.ACCENT_D}; }}
 QPushButton {{
@@ -3332,7 +3348,7 @@ class CommandPaletteDialog(QDialog):
 
 
 # ── ColorSwatch widget ────────────────────────────────────────────────────────
-class ColorSwatchWidget(QWidget):
+class ColorSwatchWidget(QAbstractButton):
     """FG/BG color boxes with swap button."""
     fg_changed = pyqtSignal(QColor)
     bg_changed = pyqtSignal(QColor)
@@ -3342,6 +3358,14 @@ class ColorSwatchWidget(QWidget):
         self._fg = QColor(255, 255, 255)
         self._bg = QColor(0, 0, 0)
         self.setFixedHeight(dp(60))
+        self.setMinimumWidth(dp(64))
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Foreground color")
+        self.setAccessibleDescription(
+            "Choose the foreground color. Shift+Enter chooses the background "
+            "color; X swaps foreground and background.")
+        self.setToolTip(self.accessibleDescription())
+        self.clicked.connect(self._choose_fg)
 
     def set_fg(self, c): self._fg = c; self.update()
     def set_bg(self, c): self._bg = c; self.update()
@@ -3361,23 +3385,45 @@ class ColorSwatchWidget(QWidget):
         # Swap arrows
         p.setPen(QColor(C.TEXT_SEC)); p.setFont(QFont("Segoe UI", 9))
         p.drawText(sx + sz + dp(4), sy + sz // 2, "⇄")
+        if self.hasFocus():
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(C.ACCENT), dp(2)))
+            p.drawRect(self.rect().adjusted(1, 1, -2, -2))
         p.end()
+
+    def _choose_fg(self):
+        c = QColorDialog.getColor(self._fg, self, "Foreground Color")
+        if c.isValid(): self._fg = c; self.fg_changed.emit(c); self.update()
+
+    def _choose_bg(self):
+        c = QColorDialog.getColor(self._bg, self, "Background Color")
+        if c.isValid(): self._bg = c; self.bg_changed.emit(c); self.update()
+
+    def _swap(self):
+        self._fg, self._bg = self._bg, self._fg
+        self.fg_changed.emit(self._fg); self.bg_changed.emit(self._bg); self.update()
 
     def mousePressEvent(self, e):
         sz = dp(36); gap = dp(14); sx = dp(8); sy = dp(12)
         pos = e.pos()
         # Click swap area
         if pos.x() > sx + sz:
-            self._fg, self._bg = self._bg, self._fg
-            self.fg_changed.emit(self._fg); self.bg_changed.emit(self._bg); self.update(); return
+            self._swap(); e.accept(); return
         # Click FG
         if sx <= pos.x() <= sx + sz and sy <= pos.y() <= sy + sz:
-            c = QColorDialog.getColor(self._fg, self, "Foreground Color")
-            if c.isValid(): self._fg = c; self.fg_changed.emit(c); self.update()
+            self._choose_fg()
         # Click BG
         elif sx + gap <= pos.x() <= sx + gap + sz and sy + gap <= pos.y() <= sy + gap + sz:
-            c = QColorDialog.getColor(self._bg, self, "Background Color")
-            if c.isValid(): self._bg = c; self.bg_changed.emit(c); self.update()
+            self._choose_bg()
+        e.accept()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_X:
+            self._swap()
+        elif e.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._choose_bg() if e.modifiers() & Qt.ShiftModifier else self._choose_fg()
+        else:
+            super().keyPressEvent(e)
 
 # ── LayerPanel ────────────────────────────────────────────────────────────────
 class LayerPanel(QWidget):
@@ -3425,6 +3471,9 @@ class LayerPanel(QWidget):
         # Layer list
         self.layer_list = QListWidget()
         self.layer_list.setAccessibleName("Layers")
+        self.layer_list.setAccessibleDescription(
+            "Structured view of canvas layers. Use arrows to select, Space to "
+            "toggle selection, and the named layer action buttons to edit.")
         self.layer_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.layer_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.layer_list.setIconSize(QSize(dp(40), dp(32)))
@@ -3447,6 +3496,7 @@ class LayerPanel(QWidget):
         def _ico_btn(svg_key, tip, cb):
             b = QToolButton(); b.setIcon(svg_icon(svg_key, C.TEXT_SEC, dp(15)))
             b.setToolTip(tip); b.setFixedSize(dp(30), dp(30))
+            b.setAccessibleName(tip)
             b.clicked.connect(cb); return b
 
         al.addWidget(_ico_btn("layer-new",   "New Layer",       self.add_layer))
@@ -3457,6 +3507,7 @@ class LayerPanel(QWidget):
         self.fx_btn = QPushButton("fx")
         self.fx_btn.setFixedSize(dp(30), dp(30))
         self.fx_btn.setToolTip("Layer Effects")
+        self.fx_btn.setAccessibleName("Layer effects")
         self.fx_btn.setStyleSheet(
             f"QPushButton{{background:{C.BG2};color:{C.TEXT_MUT};border:1px solid {C.BORDER};"
             f"border-radius:4px;font-size:{dp(10)}px;font-style:italic;font-weight:bold;}}"
@@ -3467,6 +3518,7 @@ class LayerPanel(QWidget):
         # Group button
         self.group_btn = QToolButton()
         self.group_btn.setToolTip("Group Selected Layers (Ctrl+G)")
+        self.group_btn.setAccessibleName("Group selected layers")
         self.group_btn.setText("G")
         self.group_btn.setFixedSize(dp(30), dp(30))
         self.group_btn.setStyleSheet(
@@ -3505,6 +3557,7 @@ class LayerPanel(QWidget):
 
         def _mask_btn(text, tip, cb):
             b = QPushButton(text); b.setFixedHeight(dp(26)); b.setToolTip(tip)
+            b.setAccessibleName(tip)
             b.setStyleSheet(
                 f"QPushButton{{background:{C.BG3};color:{C.TEXT_SEC};border:1px solid {C.BORDER};"
                 f"border-radius:3px;padding:0 5px;font-size:{dp(10)}px;}}"
@@ -3590,6 +3643,16 @@ class LayerPanel(QWidget):
             item = QListWidgetItem(self._make_thumb(layer),
                                    f"{prefix}{layer.name}{vis}{lock}{collapsed_sfx}")
             item.setData(Qt.UserRole, idx)
+            kind = "group" if is_group else "layer"
+            state = ["visible" if layer.visible else "hidden",
+                     "locked" if layer.locked else "unlocked",
+                     f"{layer.opacity * 100 // 255} percent opacity",
+                     layer.blend_mode]
+            if is_group:
+                state.append("collapsed" if layer.collapsed else "expanded")
+                state.append(f"{len(layer.children)} child layers")
+            item.setData(Qt.AccessibleDescriptionRole,
+                         f"{layer.name}, {kind}, " + ", ".join(state))
             if not layer.visible:
                 item.setForeground(QColor(C.TEXT_MUT))
             elif idx in getattr(self.editor, 'selected_layer_indices', set()):
@@ -3601,6 +3664,13 @@ class LayerPanel(QWidget):
                     citem = QListWidgetItem(self._make_thumb(child),
                                            f"    {child.name}")
                     citem.setData(Qt.UserRole, (idx, len(layer.children)-1-ci))
+                    citem.setData(
+                        Qt.AccessibleDescriptionRole,
+                        f"{child.name}, child layer in {layer.name}, "
+                        f"{'visible' if child.visible else 'hidden'}, "
+                        f"{'locked' if child.locked else 'unlocked'}, "
+                        f"{child.opacity * 100 // 255} percent opacity, "
+                        f"{child.blend_mode}")
                     citem.setFlags(citem.flags() & ~Qt.ItemIsDragEnabled)
                     if not child.visible:
                         citem.setForeground(QColor(C.TEXT_MUT))
@@ -4509,6 +4579,9 @@ class ColorPanel(QWidget):
                    "#f9a8d4", "#ffffff", "#aaaaaa", "#555555", "#000000"]
         for pc in presets:
             b = QPushButton(); b.setFixedSize(dp(20), dp(20))
+            b.setMinimumSize(dp(24), dp(24))
+            b.setAccessibleName(f"Use color {pc}")
+            b.setToolTip(f"Use color {pc}")
             b.setStyleSheet(f"background:{pc};border:1px solid {C.BORDER};border-radius:3px;")
             b.clicked.connect(lambda checked=False, c=pc: self._pick_preset(c))
             sw_row.addWidget(b)
@@ -5419,6 +5492,8 @@ class ImageEditor(QMainWindow):
         self._create_options_bar()
         self._create_right_panel()
         self._setup_rulers()
+        from accessibility import configure_accessible_controls
+        self._accessible_controls = configure_accessible_controls(self)
         # Connect canvas to histogram refresh on update
         self.canvas.installEventFilter(self)
         # Panel refresh is coalesced: a single debounce timer throttles the
@@ -5694,11 +5769,34 @@ class ImageEditor(QMainWindow):
         """Live FG/BG color swatches at bottom of left toolbar."""
         editor_ref = self
 
-        class _Swatch(QWidget):
+        class _Swatch(QAbstractButton):
             def __init__(self2):
                 super().__init__()
                 self2.setFixedSize(dp(40), dp(54))
-                self2.setToolTip("Left-click: pick foreground\nRight-click: pick background\nX: swap")
+                self2.setFocusPolicy(Qt.StrongFocus)
+                self2.setAccessibleName("Foreground color")
+                self2.setAccessibleDescription(
+                    "Choose the foreground color. Shift+Enter chooses the "
+                    "background color; X swaps foreground and background.")
+                self2.setToolTip(self2.accessibleDescription())
+                self2.clicked.connect(self2._choose_fg)
+
+            def _choose_fg(self2):
+                c = QColorDialog.getColor(editor_ref.fg_color, editor_ref, "Foreground Color")
+                if c.isValid():
+                    editor_ref.set_fg_color(c)
+                    if hasattr(editor_ref, "color_panel"):
+                        editor_ref.color_panel.sync_fg(c)
+                    self2.update()
+
+            def _choose_bg(self2):
+                c = QColorDialog.getColor(editor_ref.bg_color, editor_ref, "Background Color")
+                if c.isValid(): editor_ref.set_bg_color(c); self2.update()
+
+            def _swap(self2):
+                fg, bg = editor_ref.bg_color, editor_ref.fg_color
+                editor_ref.set_fg_color(fg); editor_ref.set_bg_color(bg)
+                self2.update(); editor_ref.canvas.update()
 
             def paintEvent(self2, event):
                 p = QPainter(self2)
@@ -5719,26 +5817,30 @@ class ImageEditor(QMainWindow):
                 p.setPen(QColor(C.TEXT_MUT))
                 p.setFont(QFont("Segoe UI", 6))
                 p.drawText(QRect(dp(26), dp(36), dp(14), dp(14)), Qt.AlignCenter, "⇄")
+                if self2.hasFocus():
+                    p.setBrush(Qt.NoBrush)
+                    p.setPen(QPen(QColor(C.ACCENT), dp(2)))
+                    p.drawRect(self2.rect().adjusted(1, 1, -2, -2))
                 p.end()
 
             def mousePressEvent(self2, e):
                 if e.button() == Qt.LeftButton:
                     fx, fy, fsz = dp(4), dp(4), dp(22)
                     if QRect(fx, fy, fsz, fsz).contains(e.pos()):
-                        c = QColorDialog.getColor(editor_ref.fg_color, editor_ref, "Foreground Color")
-                        if c.isValid():
-                            editor_ref.set_fg_color(c)
-                            if hasattr(editor_ref, "color_panel"):
-                                editor_ref.color_panel.sync_fg(c)
-                            self2.update()
+                        self2._choose_fg()
                     else:
-                        c = QColorDialog.getColor(editor_ref.bg_color, editor_ref, "Background Color")
-                        if c.isValid():
-                            editor_ref.set_bg_color(c); self2.update()
+                        self2._choose_bg()
                 elif e.button() == Qt.RightButton:
-                    fg, bg = editor_ref.bg_color, editor_ref.fg_color
-                    editor_ref.set_fg_color(fg); editor_ref.set_bg_color(bg)
-                    self2.update(); editor_ref.canvas.update()
+                    self2._swap()
+                e.accept()
+
+            def keyPressEvent(self2, e):
+                if e.key() == Qt.Key_X:
+                    self2._swap()
+                elif e.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    self2._choose_bg() if e.modifiers() & Qt.ShiftModifier else self2._choose_fg()
+                else:
+                    super().keyPressEvent(e)
 
         self._color_swatch = _Swatch()
         return self._color_swatch
