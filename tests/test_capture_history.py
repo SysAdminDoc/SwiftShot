@@ -153,3 +153,166 @@ def test_history_index_failure_removes_published_file(
     assert capture_history.save_to_history(pixmap) is None
     assert capture_history._history_entries(str(tmp_path)) == []
     assert list(tmp_path.glob("*.png")) == []
+
+
+def _indexed_paths(capture_history, history_dir):
+    with capture_history._db(str(history_dir)) as conn:
+        return {
+            row["path"] for row in conn.execute("SELECT path FROM captures")
+        }
+
+
+def _seen_paths(capture_history, history_dir):
+    with capture_history._db(str(history_dir)) as conn:
+        return {
+            row["path"] for row in conn.execute("SELECT path FROM seen_files")
+        }
+
+
+class _HistoryDialogStub:
+    def __init__(self):
+        self.reloads = 0
+
+    def _load_history(self):
+        self.reloads += 1
+
+
+def test_single_delete_failure_keeps_file_row_and_seen_marker(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("red"))
+    filepath = capture_history.save_to_history(pixmap)
+    with capture_history._db(str(tmp_path)) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO seen_files (path, mtime) VALUES (?, ?)",
+            (filepath, Path(filepath).stat().st_mtime),
+        )
+
+    warnings = []
+    monkeypatch.setattr(
+        capture_history.QMessageBox, "question",
+        staticmethod(lambda *args: capture_history.QMessageBox.Yes),
+    )
+    monkeypatch.setattr(
+        capture_history.QMessageBox, "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+    monkeypatch.setattr(
+        capture_history, "_remove_history_file",
+        lambda path: (False, "file is locked"),
+    )
+    dialog = _HistoryDialogStub()
+
+    capture_history.CaptureHistoryDialog._on_delete(dialog, filepath)
+
+    assert Path(filepath).exists()
+    assert filepath in _indexed_paths(capture_history, tmp_path)
+    assert filepath in _seen_paths(capture_history, tmp_path)
+    assert dialog.reloads == 0
+    assert warnings and "remains in capture history" in warnings[0][2]
+    assert "file is locked" in warnings[0][2]
+
+
+def test_single_delete_removes_file_row_and_seen_marker(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("green"))
+    filepath = capture_history.save_to_history(pixmap)
+    with capture_history._db(str(tmp_path)) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO seen_files (path, mtime) VALUES (?, ?)",
+            (filepath, Path(filepath).stat().st_mtime),
+        )
+    monkeypatch.setattr(
+        capture_history.QMessageBox, "question",
+        staticmethod(lambda *args: capture_history.QMessageBox.Yes),
+    )
+    dialog = _HistoryDialogStub()
+
+    capture_history.CaptureHistoryDialog._on_delete(dialog, filepath)
+
+    assert not Path(filepath).exists()
+    assert filepath not in _indexed_paths(capture_history, tmp_path)
+    assert filepath not in _seen_paths(capture_history, tmp_path)
+    assert dialog.reloads == 1
+
+
+def test_clear_history_reports_partial_failure_and_keeps_failed_row(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    first = QPixmap(20, 20); first.fill(QColor("red"))
+    second = QPixmap(20, 20); second.fill(QColor("blue"))
+    failed_path = capture_history.save_to_history(first)
+    removed_path = capture_history.save_to_history(second)
+    real_remove = capture_history.os.remove
+
+    def remove_with_locked_file(path):
+        if path == failed_path:
+            raise PermissionError("locked by another process")
+        return real_remove(path)
+
+    warnings = []
+    monkeypatch.setattr(capture_history.os, "remove", remove_with_locked_file)
+    monkeypatch.setattr(
+        capture_history.QMessageBox, "question",
+        staticmethod(lambda *args: capture_history.QMessageBox.Yes),
+    )
+    monkeypatch.setattr(
+        capture_history.QMessageBox, "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+    dialog = _HistoryDialogStub()
+
+    capture_history.CaptureHistoryDialog._clear_history(dialog)
+
+    assert Path(failed_path).exists()
+    assert not Path(removed_path).exists()
+    assert _indexed_paths(capture_history, tmp_path) == {failed_path}
+    assert dialog.reloads == 1
+    assert warnings
+    assert "Deleted 1 of 2" in warnings[0][2]
+    assert Path(failed_path).name in warnings[0][2]
+    assert "locked by another process" in warnings[0][2]
+
+
+def test_retention_failure_keeps_old_reference_and_new_capture(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    capture_history.config.CAPTURE_HISTORY_MAX = 1
+    first = QPixmap(20, 20); first.fill(QColor("red"))
+    second = QPixmap(20, 20); second.fill(QColor("blue"))
+    first_path = capture_history.save_to_history(first)
+    real_remove = capture_history._remove_history_file
+
+    def fail_first(path):
+        if path == first_path:
+            return False, "file is locked"
+        return real_remove(path)
+
+    monkeypatch.setattr(capture_history, "_remove_history_file", fail_first)
+    second_path = capture_history.save_to_history(second)
+
+    assert second_path and Path(second_path).exists()
+    assert Path(first_path).exists()
+    assert _indexed_paths(capture_history, tmp_path) == {first_path, second_path}
+
+
+def test_delete_missing_file_still_purges_stale_row(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("magenta"))
+    filepath = capture_history.save_to_history(pixmap)
+    Path(filepath).unlink()
+    monkeypatch.setattr(
+        capture_history.QMessageBox, "question",
+        staticmethod(lambda *args: capture_history.QMessageBox.Yes),
+    )
+    dialog = _HistoryDialogStub()
+
+    capture_history.CaptureHistoryDialog._on_delete(dialog, filepath)
+
+    assert filepath not in _indexed_paths(capture_history, tmp_path)
+    assert dialog.reloads == 1

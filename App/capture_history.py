@@ -222,6 +222,48 @@ def _history_entries(history_dir, search_text=""):
 def _delete_history_entry(history_dir, filepath):
     with _db(history_dir) as conn:
         conn.execute("DELETE FROM captures WHERE path = ?", (filepath,))
+        conn.execute("DELETE FROM seen_files WHERE path = ?", (filepath,))
+
+
+def _remove_history_file(filepath):
+    """Return ``(removed, error)``; missing already means safely removed."""
+    try:
+        os.remove(filepath)
+    except FileNotFoundError:
+        return True, None
+    except OSError as error:
+        return False, str(error)
+    if os.path.exists(filepath):
+        return False, "the file still exists after the delete operation"
+    return True, None
+
+
+def _prune_history_retention(history_dir):
+    """Retry old files without dropping their only DB reference on failure."""
+    with _db(history_dir) as conn:
+        old_entries = conn.execute(
+            """
+            SELECT path FROM captures
+            ORDER BY created_at DESC, id DESC
+            LIMIT -1 OFFSET ?
+            """,
+            (max(0, int(config.CAPTURE_HISTORY_MAX)),),
+        ).fetchall()
+    for row in old_entries:
+        filepath = row["path"]
+        removed, error = _remove_history_file(filepath)
+        if not removed:
+            log.warning(f"History retention could not delete {filepath}: {error}")
+            continue
+        try:
+            _delete_history_entry(history_dir, filepath)
+        except Exception as db_error:
+            # The file is already gone; the next index pass will purge the
+            # stale row. Do not make a successfully saved new capture fail.
+            log.warning(
+                f"History retention removed {filepath} but could not remove "
+                f"its index row: {db_error}"
+            )
 
 
 def update_history_ocr(history_dir, filepath, ocr_text):
@@ -504,11 +546,19 @@ class CaptureHistoryDialog(QDialog):
         if response != QMessageBox.Yes:
             return
 
+        removed, error = _remove_history_file(filepath)
+        if not removed:
+            QMessageBox.warning(
+                self,
+                "Capture Not Deleted",
+                f"SwiftShot could not delete '{filename}'. The file remains "
+                f"in capture history so you can retry.\n\n{error}",
+            )
+            return
         try:
-            os.remove(filepath)
-        except Exception:
-            pass
-        _delete_history_entry(config.CAPTURE_HISTORY_DIR, filepath)
+            _delete_history_entry(config.CAPTURE_HISTORY_DIR, filepath)
+        except Exception as db_error:
+            log.warning(f"Deleted capture but could not update history index: {db_error}")
         self._load_history()
 
     def _clear_history(self):
@@ -519,28 +569,48 @@ class CaptureHistoryDialog(QDialog):
         if not files:
             return
 
-        # Count the entries the panel actually shows (deduped by content), not
-        # the raw file count — otherwise a duplicate-content file that the
-        # sha256 index hides makes "Delete all N" report more than is visible.
         visible = len(_history_entries(history_dir))
+        stored = len(files)
+        count_text = f"{stored} stored capture file(s)"
+        if visible != stored:
+            count_text += f" ({visible} visible history entries)"
         response = QMessageBox.question(
             self,
             "Clear Capture History",
-            f"Delete all {visible} capture history image(s)?",
+            f"Permanently delete all {count_text}?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
         if response != QMessageBox.Yes:
             return
 
-        for f in files:
+        removed_paths = []
+        failures = []
+        for filepath in files:
+            removed, error = _remove_history_file(filepath)
+            if removed:
+                removed_paths.append(filepath)
+            else:
+                failures.append((filepath, error))
+        if removed_paths:
             try:
-                os.remove(f)
-            except Exception:
-                pass
-        with _db(history_dir) as conn:
-            conn.execute("DELETE FROM captures")
+                with _db(history_dir) as conn:
+                    for filepath in removed_paths:
+                        conn.execute("DELETE FROM captures WHERE path = ?", (filepath,))
+                        conn.execute("DELETE FROM seen_files WHERE path = ?", (filepath,))
+            except Exception as db_error:
+                log.warning(f"Clear history could not update the index: {db_error}")
         self._load_history()
+        if failures:
+            details = "\n".join(
+                f"• {os.path.basename(path)} — {error}" for path, error in failures
+            )
+            QMessageBox.warning(
+                self,
+                "Capture History Partially Cleared",
+                f"Deleted {len(removed_paths)} of {stored} stored capture "
+                f"file(s). {len(failures)} remain in history for retry.\n\n{details}",
+            )
 
 
 def save_to_history(pixmap, ocr_text=""):
@@ -598,20 +668,6 @@ def save_to_history(pixmap, ocr_text=""):
                         _thumbnail_blob(pixmap),
                     ),
                 )
-                old_entries = conn.execute(
-                    """
-                    SELECT path FROM captures
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT -1 OFFSET ?
-                    """,
-                    (config.CAPTURE_HISTORY_MAX,),
-                ).fetchall()
-                for row in old_entries:
-                    try:
-                        os.remove(row["path"])
-                    except Exception:
-                        pass
-                    conn.execute("DELETE FROM captures WHERE path = ?", (row["path"],))
         except Exception:
             # The image is published before the DB transaction. Compensate if
             # indexing/commit fails so history never accumulates hidden files.
@@ -620,6 +676,8 @@ def save_to_history(pixmap, ocr_text=""):
             except FileNotFoundError:
                 pass
             raise
+
+        _prune_history_retention(history_dir)
 
         log.info(f"Saved to history: {filepath}")
         return filepath

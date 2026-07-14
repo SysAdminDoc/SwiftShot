@@ -56,6 +56,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Capture-history deletion is now truthful: a row and dedupe marker disappear
+  only after the file is confirmed gone, partial Clear All failures list every
+  retained filename/error for retry, and retention keeps/retries undeletable
+  captures instead of hiding sensitive files while leaving them on disk.
 - Image/file-association/history imports now share a bounded Pillow decoder
   with format, byte, frame, dimension and pixel limits. `.swiftshot` loading
   additionally preflights ZIP paths, duplicates, compression/encryption, CRCs,
