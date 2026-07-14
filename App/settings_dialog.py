@@ -11,10 +11,11 @@ from PyQt5.QtWidgets import (
     QFormLayout, QComboBox, QCheckBox, QSpinBox, QLineEdit,
     QSlider, QColorDialog, QPushButton, QLabel, QGroupBox,
     QFileDialog, QMessageBox, QDialogButtonBox, QAbstractButton,
-    QApplication, QListWidget, QListWidgetItem, QAbstractItemView
+    QApplication, QListWidget, QListWidgetItem, QAbstractItemView,
+    QScrollArea, QFrame, QSizePolicy, QGraphicsDropShadowEffect
 )
 from PyQt5.QtGui import QColor, QKeySequence
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
 from config import (
     AFTER_CAPTURE_ACTION_CHOICES,
@@ -215,49 +216,99 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SwiftShot - Preferences")
-        self.setMinimumSize(580, 560)
+        self.setMinimumSize(420, 360)
         self.setStyleSheet(self._stylesheet())
+        self._search_entries = []
+        self._search_highlight = None
+        self._search_highlight_effect = None
 
         layout = QVBoxLayout(self)
 
+        self.search_settings = QLineEdit()
+        self.search_settings.setPlaceholderText("Search settings...")
+        self.search_settings.setClearButtonEnabled(True)
+        self.search_settings.setAccessibleName("Search settings")
+        self.search_settings.setAccessibleDescription(
+            "Search setting labels and help text. Press Enter to open the first result."
+        )
+        self.search_settings.textChanged.connect(self._update_search_results)
+        self.search_settings.returnPressed.connect(self._activate_first_search_result)
+        layout.addWidget(self.search_settings)
+
+        self.search_results = QListWidget()
+        self.search_results.setAccessibleName("Settings search results")
+        self.search_results.setMaximumHeight(168)
+        self.search_results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.search_results.itemActivated.connect(self._activate_search_result)
+        self.search_results.itemClicked.connect(self._activate_search_result)
+        self.search_results.hide()
+        layout.addWidget(self.search_results)
+
         # Tab widget
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._create_general_tab(), "General")
-        self.tabs.addTab(self._create_capture_tab(), "Capture")
-        self.tabs.addTab(self._create_hotkeys_tab(), "Hotkeys")
-        self.tabs.addTab(self._create_output_tab(), "Output")
-        self.tabs.addTab(self._create_editor_tab(), "Editor")
-        self.tabs.addTab(self._create_frame_tab(), "Frame")
-        self.tabs.addTab(self._create_advanced_tab(), "Advanced")
+        self._add_scrollable_tab(self._create_general_tab(), "General")
+        self._add_scrollable_tab(self._create_capture_tab(), "Capture")
+        self._add_scrollable_tab(self._create_hotkeys_tab(), "Hotkeys")
+        self._add_scrollable_tab(self._create_output_tab(), "Output")
+        self._add_scrollable_tab(self._create_editor_tab(), "Editor")
+        self._add_scrollable_tab(self._create_frame_tab(), "Frame")
+        self._add_scrollable_tab(self._create_advanced_tab(), "Advanced")
         layout.addWidget(self.tabs)
 
-        # Bottom buttons
-        btn_row = QHBoxLayout()
+        # Keep global actions and accept/cancel on separate rows so neither
+        # clips at narrow work areas or 200% text scaling.
+        tools_row = QHBoxLayout()
 
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.setToolTip("Reset all settings to factory defaults")
         reset_btn.clicked.connect(self._reset_defaults)
-        btn_row.addWidget(reset_btn)
+        tools_row.addWidget(reset_btn)
 
         import_btn = QPushButton("Import...")
         import_btn.setToolTip("Import settings from a JSON file")
         import_btn.clicked.connect(self._import_settings)
-        btn_row.addWidget(import_btn)
+        tools_row.addWidget(import_btn)
 
         export_btn = QPushButton("Export...")
         export_btn.setToolTip("Export current settings to a JSON file")
         export_btn.clicked.connect(self._export_settings)
-        btn_row.addWidget(export_btn)
-
-        btn_row.addStretch()
+        tools_row.addWidget(export_btn)
+        tools_row.addStretch()
+        layout.addLayout(tools_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._apply_and_close)
         buttons.rejected.connect(self.reject)
-        btn_row.addWidget(buttons)
-
-        layout.addLayout(btn_row)
+        layout.addWidget(buttons)
         self._apply_accessibility()
+        self._build_search_index()
+        self._fit_to_available_work_area()
+
+    def _add_scrollable_tab(self, content, name):
+        for form in content.findChildren(QFormLayout):
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        content.setMinimumSize(0, 0)
+        content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+        scroll.setProperty("settingsTabName", name)
+        self.tabs.addTab(scroll, name)
+
+    def _fit_to_available_work_area(self):
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(760, 680)
+            return
+        available = screen.availableGeometry()
+        width = min(760, max(420, int(available.width() * 0.9)))
+        height = min(700, max(360, int(available.height() * 0.9)))
+        self.resize(width, height)
 
     # --- Tab: General ---
 
@@ -425,10 +476,10 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel(""))
 
         # Reset hotkeys button
-        reset_hk_btn = QPushButton("Reset Hotkeys to Defaults")
-        reset_hk_btn.setFixedWidth(220)
-        reset_hk_btn.clicked.connect(self._reset_hotkeys)
-        form.addRow("", reset_hk_btn)
+        self.reset_hotkeys_btn = QPushButton("Reset Hotkeys to Defaults")
+        self.reset_hotkeys_btn.setMinimumWidth(220)
+        self.reset_hotkeys_btn.clicked.connect(self._reset_hotkeys)
+        form.addRow("", self.reset_hotkeys_btn)
 
         layout.addLayout(form)
         layout.addStretch()
@@ -478,9 +529,9 @@ class SettingsDialog(QDialog):
         dir_row = QHBoxLayout()
         self.output_dir = QLineEdit(config.OUTPUT_FILE_PATH or "(Desktop)")
         dir_row.addWidget(self.output_dir)
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_output_dir)
-        dir_row.addWidget(browse_btn)
+        self.output_browse_btn = QPushButton("Browse...")
+        self.output_browse_btn.clicked.connect(self._browse_output_dir)
+        dir_row.addWidget(self.output_browse_btn)
         layout.addRow("Save directory:", dir_row)
 
         self.auto_increment = QCheckBox("Auto-increment filename if exists")
@@ -666,16 +717,18 @@ class SettingsDialog(QDialog):
         colors = colors_for_theme(config.THEME)
         config_label.setStyleSheet(f"color: {colors['TEXT_MUT']}; font-size: 9pt;")
         config_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        config_label.setWordWrap(True)
         layout.addRow(config_label)
 
         log_label = QLabel(f"Log: {config.log_file}")
         log_label.setStyleSheet(f"color: {colors['TEXT_MUT']}; font-size: 9pt;")
         log_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        log_label.setWordWrap(True)
         layout.addRow(log_label)
 
-        open_log_btn = QPushButton("Open Log File")
-        open_log_btn.clicked.connect(self._open_log)
-        layout.addRow(open_log_btn)
+        self.open_log_btn = QPushButton("Open Log File")
+        self.open_log_btn.clicked.connect(self._open_log)
+        layout.addRow(self.open_log_btn)
 
         return w
 
@@ -972,10 +1025,13 @@ class SettingsDialog(QDialog):
             self.hk_ocr: "OCR region hotkey",
             self.hk_freehand: "Freehand region hotkey",
             self.hk_scrolling: "Scrolling capture hotkey",
+            self.hk_color_picker: "Color picker hotkey",
+            self.reset_hotkeys_btn: "Reset hotkeys to defaults",
             self.file_format: "Output file format",
             self.jpeg_quality: "JPEG quality percentage",
             self.filename_pattern: "Output filename pattern",
             self.output_dir: "Save directory",
+            self.output_browse_btn: "Browse for save directory",
             self.auto_increment: "Auto-increment filename if it already exists",
             self.default_line_width: "Default editor line width",
             self.default_font_size: "Default editor font size",
@@ -991,11 +1047,19 @@ class SettingsDialog(QDialog):
             self.shadow_opacity: "Shadow opacity",
             self.rounded_enabled: "Round capture corners",
             self.rounded_radius: "Rounded corner radius",
+            self.backdrop_enabled: "Place captures on a padded backdrop",
+            self.backdrop_type: "Backdrop type",
+            self.backdrop_padding: "Backdrop padding",
+            self.backdrop_frame: "Backdrop window frame",
+            self.backdrop_color_btn: "Backdrop start color picker",
+            self.backdrop_color2_btn: "Backdrop end color picker",
             self.history_enabled: "Enable capture history",
             self.history_auto_ocr: "Auto-OCR captures for searchable history",
             self.history_max: "Maximum history items",
             self.pin_opacity: "Pin window opacity",
+            self.open_log_btn: "Open log file",
         }
+        self._searchable_controls = dict(named_controls)
         for widget, name in named_controls.items():
             self._set_accessible(widget, name)
 
@@ -1010,6 +1074,129 @@ class SettingsDialog(QDialog):
                 self._set_accessible(widget, self._fallback_accessible_name(widget))
             elif not widget.accessibleDescription() and widget.toolTip():
                 widget.setAccessibleDescription(self._clean_accessible_text(widget.toolTip()))
+
+    def _build_search_index(self):
+        """Index each real setting control once, including its help text."""
+        entries = []
+        seen = set()
+        for widget, label in self._searchable_controls.items():
+            if id(widget) in seen:
+                continue
+            tab_index = -1
+            for index in range(self.tabs.count()):
+                content = self.tabs.widget(index).widget()
+                if widget is content or content.isAncestorOf(widget):
+                    tab_index = index
+                    break
+            if tab_index < 0:
+                continue
+            seen.add(id(widget))
+            help_parts = [
+                label,
+                widget.accessibleDescription(),
+                widget.toolTip(),
+                self.tabs.tabText(tab_index),
+            ]
+            if isinstance(widget, QAbstractButton):
+                help_parts.append(widget.text())
+            if isinstance(widget, QComboBox):
+                help_parts.extend(
+                    widget.itemText(i) for i in range(widget.count())
+                )
+            entries.append({
+                "widget": widget,
+                "label": label,
+                "tab": tab_index,
+                "haystack": self._clean_accessible_text(
+                    " ".join(filter(None, help_parts))
+                ).casefold(),
+            })
+        self._search_entries = sorted(
+            entries, key=lambda entry: (entry["tab"], entry["label"].casefold())
+        )
+
+    def _update_search_results(self, query):
+        self._clear_search_highlight()
+        self.search_results.clear()
+        normalized = " ".join(query.casefold().split())
+        if not normalized:
+            self.search_results.hide()
+            return
+        tokens = normalized.split()
+        matches = []
+        for index, entry in enumerate(self._search_entries):
+            if all(token in entry["haystack"] for token in tokens):
+                label = entry["label"].casefold()
+                score = 0 if label.startswith(normalized) else (
+                    1 if normalized in label else 2
+                )
+                matches.append((score, entry["tab"], label, index, entry))
+        matches.sort(key=lambda match: match[:3])
+        for _score, _tab, _label, index, entry in matches:
+            item = QListWidgetItem(
+                f"{self.tabs.tabText(entry['tab'])}  ›  {entry['label']}"
+            )
+            item.setData(Qt.UserRole, index)
+            self.search_results.addItem(item)
+        if not matches:
+            item = QListWidgetItem("No settings found")
+            item.setFlags(Qt.NoItemFlags)
+            self.search_results.addItem(item)
+        else:
+            self.search_results.setCurrentRow(0)
+        row_height = max(28, self.search_results.sizeHintForRow(0))
+        self.search_results.setMaximumHeight(
+            min(168, row_height * min(5, max(1, len(matches))))
+        )
+        self.search_results.show()
+
+    def _activate_first_search_result(self):
+        if self.search_results.count():
+            self._activate_search_result(self.search_results.item(0))
+
+    def _activate_search_result(self, item):
+        index = item.data(Qt.UserRole)
+        if not isinstance(index, int) or not 0 <= index < len(self._search_entries):
+            return
+        entry = self._search_entries[index]
+        widget = entry["widget"]
+        self.tabs.setCurrentIndex(entry["tab"])
+        scroll = self.tabs.widget(entry["tab"])
+        scroll.ensureWidgetVisible(widget, 24, 24)
+        widget.setFocus(Qt.TabFocusReason)
+        self._highlight_search_widget(widget)
+        self.search_results.hide()
+
+    def _highlight_search_widget(self, widget):
+        self._clear_search_highlight()
+        self._search_highlight = widget
+        widget.setProperty("settingsSearchMatch", True)
+        effect = QGraphicsDropShadowEffect(widget)
+        effect.setBlurRadius(18)
+        effect.setOffset(0, 0)
+        effect.setColor(QColor(colors_for_theme(config.THEME)["YELLOW"]))
+        widget.setGraphicsEffect(effect)
+        self._search_highlight_effect = effect
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+        QTimer.singleShot(
+            2000,
+            lambda target=widget: self._clear_search_highlight()
+            if self._search_highlight is target else None,
+        )
+
+    def _clear_search_highlight(self):
+        widget = self._search_highlight
+        if widget is None:
+            return
+        self._search_highlight = None
+        self._search_highlight_effect = None
+        widget.setGraphicsEffect(None)
+        widget.setProperty("settingsSearchMatch", False)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
 
     def _set_accessible(self, widget, name, description=None):
         widget.setAccessibleName(name)
@@ -1030,4 +1217,9 @@ class SettingsDialog(QDialog):
         return " ".join(text.replace("&", "").split())
 
     def _stylesheet(self):
-        return stylesheet_for_theme(config.THEME)
+        colors = colors_for_theme(config.THEME)
+        return (
+            stylesheet_for_theme(config.THEME)
+            + f'\n*[settingsSearchMatch="true"] {{ '
+              f'border: 2px solid {colors["YELLOW"]}; border-radius: 4px; }}'
+        )

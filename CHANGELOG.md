@@ -33,6 +33,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   a local, no-telemetry artifact to attach to a bug report.
 
 ### UX & feedback
+- Preferences now fits the available work area with a scrollable, width-aware
+  surface for every tab at large text/DPI. Search covers labels and help text,
+  deduplicates controls, and opens, scrolls to, focuses, and highlights the
+  matching real setting; narrow layouts retain a logical keyboard order.
 - The Settings duplicate-shortcut check now covers the color-picker hotkey, so
   it can no longer be silently assigned the same combo as another capture
   action (which would make two hotkeys fight over one key).
