@@ -13,7 +13,7 @@ from PyQt5.QtGui import (
 )
 from PyQt5.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal
 
-from utils import virtual_geometry, color_to_hex
+from utils import virtual_geometry, color_to_hex, exclude_window_from_capture
 
 
 class RegionSelector(QWidget):
@@ -43,6 +43,7 @@ class RegionSelector(QWidget):
         self.start_pos = QPoint()
         self.end_pos = QPoint()
         self.current_pos = QPoint()
+        self._generation = 0
 
         # Freehand
         self.freehand_points = []
@@ -170,11 +171,32 @@ class RegionSelector(QWidget):
         return QPoint(sx, sy)
 
     def show_spanning(self):
+        self._generation += 1
         self.show()
+        exclude_window_from_capture(self)
         if hasattr(self, '_desktop_geo'):
             self.setGeometry(self._desktop_geo)
         self.activateWindow()
         self.raise_()
+
+    def _defer_emit(self, signal, payload=None, has_payload=False):
+        """Emit only if this hidden overlay still owns the capture action."""
+        generation = self._generation
+        self.hide()
+
+        def emit_if_current():
+            if generation != self._generation or self.isVisible():
+                return
+            if has_payload:
+                signal.emit(payload)
+            else:
+                signal.emit()
+
+        QTimer.singleShot(50, emit_if_current)
+
+    def closeEvent(self, event):
+        self._generation += 1
+        super().closeEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -406,8 +428,7 @@ class RegionSelector(QWidget):
                 self.freehand_points = [event.pos()]
             self.update()
         elif event.button() == Qt.RightButton:
-            self.hide()
-            QTimer.singleShot(50, lambda: self.cancelled.emit())
+            self._defer_emit(self.cancelled)
 
     def mouseMoveEvent(self, event):
         self.current_pos = event.pos()
@@ -438,32 +459,30 @@ class RegionSelector(QWidget):
                     path.lineTo(pt)
                 bounding = path.boundingRect().toAlignedRect()
                 if bounding.width() > 2 and bounding.height() > 2:
-                    self.hide()
                     points = [QPoint(p) for p in self.freehand_points]
-                    QTimer.singleShot(
-                        50,
-                        lambda r=QRect(bounding), pts=points:
-                            self.freehand_selected.emit((pts, r))
+                    self._defer_emit(
+                        self.freehand_selected,
+                        (points, QRect(bounding)),
+                        has_payload=True,
                     )
                 else:
-                    self.hide()
-                    QTimer.singleShot(50, lambda: self.cancelled.emit())
+                    self._defer_emit(self.cancelled)
             else:
                 selection = QRect(self.start_pos, self.end_pos).normalized()
                 if selection.width() > 2 and selection.height() > 2:
-                    self.hide()
-                    QTimer.singleShot(50, lambda r=QRect(selection): self.region_selected.emit(r))
+                    self._defer_emit(
+                        self.region_selected,
+                        QRect(selection),
+                        has_payload=True,
+                    )
                 else:
-                    self.hide()
-                    QTimer.singleShot(50, lambda: self.cancelled.emit())
+                    self._defer_emit(self.cancelled)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
-            self.hide()
-            QTimer.singleShot(50, lambda: self.cancelled.emit())
+            self._defer_emit(self.cancelled)
         elif event.key() == Qt.Key_Space:
-            self.hide()
-            QTimer.singleShot(50, lambda: self.switch_to_window.emit())
+            self._defer_emit(self.switch_to_window)
         elif event.key() == Qt.Key_S:
             self._snap_enabled = not self._snap_enabled
             self.update()

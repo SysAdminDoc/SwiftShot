@@ -51,3 +51,99 @@ def test_stitch_collapses_footer(qapp):
     # Taller than one frame (new content added) but far less than 2x (the
     # footer is not duplicated).
     assert 100 < result.height() < 200
+
+
+def test_reject_invalidates_pending_window_identification(qapp, monkeypatch):
+    import scrolling_capture
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    callbacks = []
+    monkeypatch.setattr(scrolling_capture.sys, "platform", "win32")
+    monkeypatch.setattr(
+        scrolling_capture.QTimer,
+        "singleShot",
+        lambda _delay, callback: callbacks.append(callback),
+    )
+
+    dialog._begin_capture()
+    generation = dialog._generation
+    assert dialog._awaiting_target
+    assert len(callbacks) == 1
+
+    dialog.reject()
+    callbacks[0]()
+
+    assert dialog._generation > generation
+    assert not dialog._awaiting_target
+    assert not dialog._capturing
+    assert dialog._target_hwnd is None
+
+
+def test_stale_capture_frame_never_captures_or_scrolls(qapp, monkeypatch):
+    import scrolling_capture
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._generation = 8
+    dialog._capturing = True
+    captures = []
+    scrolls = []
+    monkeypatch.setattr(
+        scrolling_capture.QApplication,
+        "primaryScreen",
+        lambda: captures.append(True),
+    )
+    monkeypatch.setattr(dialog, "_scroll_window", lambda *_: scrolls.append(True))
+
+    dialog._capture_frame(7)
+
+    assert captures == []
+    assert scrolls == []
+    dialog.close()
+
+
+def test_hidden_capture_dialog_blocks_current_callback(qapp, monkeypatch):
+    import scrolling_capture
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._generation = 3
+    dialog._capturing = True
+    dialog.hide()
+    captures = []
+    monkeypatch.setattr(
+        scrolling_capture.QApplication,
+        "primaryScreen",
+        lambda: captures.append(True),
+    )
+
+    dialog._capture_frame(3)
+
+    assert captures == []
+
+
+def test_cancel_during_finish_prevents_stitch_and_accept(qapp, monkeypatch):
+    import scrolling_capture
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._generation = 4
+    dialog._capturing = True
+    dialog._frames = [_frame(20, 40, 0, 0), _frame(20, 40, 0, 10)]
+    stitched = []
+    monkeypatch.setattr(
+        scrolling_capture.QApplication,
+        "processEvents",
+        dialog.reject,
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_stitch_frames",
+        lambda: stitched.append(True),
+    )
+
+    dialog._finish(4)
+
+    assert stitched == []
+    assert dialog.result() == dialog.Rejected

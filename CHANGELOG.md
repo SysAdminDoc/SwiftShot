@@ -56,6 +56,12 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Delayed and scrolling captures now carry lifecycle generation tokens: a
+  cancelled, hidden, closed, or superseded control cannot later capture pixels
+  or send wheel input. Region/window/countdown transitions reject stale
+  callbacks, and transient capture controls use Windows display affinity
+  (`WDA_EXCLUDEFROMCAPTURE`, with the older `WDA_MONITOR` fallback) while
+  pinned reference windows remain capturable.
 - Install and uninstall now request shutdown through SwiftShot's local control
   channel and wait for the normal editor Save/Discard/Cancel flow. The former
   `taskkill /F` paths are gone; unattended upgrades close only clean sessions,

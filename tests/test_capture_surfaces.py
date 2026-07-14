@@ -2,6 +2,7 @@
 picker's rectangle animator (R-04)."""
 
 from PyQt5.QtCore import QPoint, QRectF
+from pathlib import Path
 
 
 # ── Overlay edge snapping ──────────────────────────────────────────────────
@@ -72,3 +73,41 @@ def test_tick_completes_to_target(qapp):
     a.tick()
     assert not a.active
     assert a.current_rect == QRectF(100, 100, 50, 50)
+
+
+def test_all_transient_capture_windows_opt_out_but_pins_do_not():
+    root = Path(__file__).resolve().parents[1] / "App"
+    transient_modules = (
+        "overlay.py",
+        "window_picker.py",
+        "monitor_picker.py",
+        "countdown_overlay.py",
+        "capture_menu.py",
+        "scrolling_capture.py",
+    )
+
+    for filename in transient_modules:
+        source = (root / filename).read_text(encoding="utf-8")
+        assert "exclude_window_from_capture" in source, filename
+
+    pin_source = (root / "pin_window.py").read_text(encoding="utf-8")
+    assert "exclude_window_from_capture" not in pin_source
+
+
+def test_cancelled_countdown_rejects_stale_timer_tick(qapp):
+    from countdown_overlay import CountdownOverlay
+
+    overlay = CountdownOverlay(5000)
+    completed = []
+    overlay.countdown_finished.connect(lambda: completed.append(True))
+    overlay.start()
+    generation = overlay._active_generation
+    remaining = overlay._remaining_ms
+
+    overlay._cancel()
+    overlay._tick(generation)
+
+    assert completed == []
+    assert overlay._remaining_ms == remaining
+    assert not overlay._timer.isActive()
+    assert not overlay.isVisible()

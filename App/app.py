@@ -80,6 +80,9 @@ class SwiftShotApp:
         self._tray_menu = None
         self._exit_action = None
         self._ocr_workers = []      # keep async OCR threads alive until done
+        self._capture_generation = 0
+        self._capture_menu_generation = 0
+        self._scrolling_dialog = None
 
     def start(self):
         # Set app-wide icon so every QWidget/QDialog inherits it
@@ -336,32 +339,82 @@ class SwiftShotApp:
                 pass
             self._countdown = None
 
+    def _capture_is_current(self, generation):
+        return generation == self._capture_generation
+
+    def _begin_capture_operation(self):
+        """Supersede capture UI/input and return the new operation token."""
+        self._capture_generation += 1
+        self._supersede_countdown()
+        self._close_overlay()
+        self._close_window_picker()
+        scrolling = self._scrolling_dialog
+        if scrolling is not None:
+            try:
+                scrolling.reject()
+            except Exception:
+                pass
+            self._scrolling_dialog = None
+        return self._capture_generation
+
+    def _cancel_capture(self, generation, overlay=None):
+        """Invalidate callbacks owned by one capture without cancelling newer work."""
+        if not self._capture_is_current(generation):
+            return
+        if overlay is not None and getattr(self, "_countdown", None) is overlay:
+            self._countdown = None
+        self._capture_generation += 1
+
+    def _run_capture_callback(self, generation, callback):
+        if self._capture_is_current(generation):
+            callback()
+
     def _capture_with_delay(self, callback):
         """Execute callback after configured delay (with countdown if >0)."""
+        generation = self._begin_capture_operation()
         delay = config.CAPTURE_DELAY_MS
         if delay > 0:
             try:
                 from countdown_overlay import CountdownOverlay
-                self._supersede_countdown()
                 overlay = CountdownOverlay(delay)
-                overlay.countdown_finished.connect(callback)
-                overlay.cancelled.connect(lambda: None)
+                overlay.countdown_finished.connect(
+                    lambda g=generation, cb=callback:
+                        self._run_capture_callback(g, cb)
+                )
+                overlay.cancelled.connect(
+                    lambda g=generation, o=overlay: self._cancel_capture(g, o)
+                )
                 self._countdown = overlay  # prevent GC
                 overlay.start()
             except Exception as e:
                 log.error(f"Countdown overlay failed: {e}")
-                QTimer.singleShot(100, callback)
+                QTimer.singleShot(
+                    100,
+                    lambda g=generation, cb=callback:
+                        self._run_capture_callback(g, cb),
+                )
         else:
-            QTimer.singleShot(100, callback)
+            QTimer.singleShot(
+                100,
+                lambda g=generation, cb=callback:
+                    self._run_capture_callback(g, cb),
+            )
 
     # -------------------------------------------------------------------
     # Capture Menu (PrintScreen popup)
     # -------------------------------------------------------------------
 
     def show_capture_menu(self):
-        QTimer.singleShot(50, self._do_show_capture_menu)
+        self._capture_menu_generation += 1
+        generation = self._capture_menu_generation
+        QTimer.singleShot(
+            50, lambda: self._do_show_capture_menu(generation)
+        )
 
-    def _do_show_capture_menu(self):
+    def _do_show_capture_menu(self, generation=None):
+        if (generation is not None
+                and generation != self._capture_menu_generation):
+            return
         try:
             from capture_menu import CaptureMenu
             menu = CaptureMenu(clipboard_watching=self._clipboard_watcher_enabled)
@@ -424,18 +477,26 @@ class SwiftShotApp:
                 return
 
             self._overlay = RegionSelector(full, mode=mode)
+            overlay = self._overlay
+            generation = self._capture_generation
             self._overlay._ocr_mode = ocr_mode
             self._overlay._full_screenshot = full
             self._overlay.region_selected.connect(
-                lambda rect: self._on_region_selected(full, rect, ocr_mode)
+                lambda rect, g=generation, o=overlay:
+                    self._on_region_selected(full, rect, ocr_mode, g, o)
             )
             self._overlay.freehand_selected.connect(
-                lambda data: self._on_freehand_selected(full, data)
+                lambda data, g=generation, o=overlay:
+                    self._on_freehand_selected(full, data, g, o)
             )
             self._overlay.switch_to_window.connect(
-                lambda: self._switch_to_window_mode(full)
+                lambda g=generation, o=overlay:
+                    self._switch_to_window_mode(full, g, o)
             )
-            self._overlay.cancelled.connect(lambda: self._close_overlay())
+            self._overlay.cancelled.connect(
+                lambda g=generation, o=overlay:
+                    self._cancel_region_overlay(g, o)
+            )
             self._overlay.show_spanning()
         except Exception as e:
             log.error(f"Region overlay failed: {e}")
@@ -443,8 +504,15 @@ class SwiftShotApp:
                          "SwiftShot could not start the capture overlay.",
                          warning=True)
 
-    def _on_region_selected(self, full_screenshot, rect, ocr_mode=False):
-        self._close_overlay()
+    def _on_region_selected(self, full_screenshot, rect, ocr_mode=False,
+                            generation=None, overlay=None):
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            if overlay is not None:
+                overlay.close()
+            return
+        self._close_overlay(overlay)
         if rect.width() < 1 or rect.height() < 1:
             return
 
@@ -465,7 +533,7 @@ class SwiftShotApp:
 
         # Check if timed capture is active
         if config.CAPTURE_TIMER_ENABLED and config.CAPTURE_TIMER_SECONDS > 0:
-            self._timed_capture_region(rect)
+            self._timed_capture_region(rect, generation=generation)
         else:
             # Immediate capture from the already-taken screenshot
             try:
@@ -476,10 +544,17 @@ class SwiftShotApp:
             except Exception as e:
                 log.error(f"Region selection failed: {e}")
 
-    def _on_freehand_selected(self, full_screenshot, data):
+    def _on_freehand_selected(self, full_screenshot, data, generation=None,
+                              overlay=None):
         """Crop to the freehand bounding rect, then mask outside the drawn
         shape to transparent so the capture matches what was drawn."""
-        self._close_overlay()
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            if overlay is not None:
+                overlay.close()
+            return
+        self._close_overlay(overlay)
         try:
             points, rect = data
             rect = QRect(rect)
@@ -492,7 +567,7 @@ class SwiftShotApp:
         config.save()
 
         if config.CAPTURE_TIMER_ENABLED and config.CAPTURE_TIMER_SECONDS > 0:
-            self._timed_capture_region(rect, points)
+            self._timed_capture_region(rect, points, generation)
             return
         try:
             from capture import CaptureManager
@@ -504,7 +579,13 @@ class SwiftShotApp:
         except Exception as e:
             log.error(f"Freehand selection failed: {e}")
 
-    def _close_overlay(self):
+    def _close_overlay(self, expected=None):
+        if expected is not None and self._overlay is not expected:
+            try:
+                expected.close()
+            except Exception:
+                pass
+            return
         if self._overlay:
             try:
                 self._overlay.hide()
@@ -512,6 +593,10 @@ class SwiftShotApp:
             except Exception:
                 pass
             self._overlay = None
+
+    def _cancel_region_overlay(self, generation, overlay):
+        self._close_overlay(overlay)
+        self._cancel_capture(generation)
 
     # -------------------------------------------------------------------
     # Freehand Region Capture
@@ -545,26 +630,40 @@ class SwiftShotApp:
             from window_picker import WindowPicker
             self._close_window_picker()
             self._window_picker = WindowPicker(full_screenshot)
+            picker = self._window_picker
+            generation = self._capture_generation
             self._window_picker._full_screenshot = full_screenshot
             self._window_picker.element_selected.connect(
-                lambda rect: self._on_window_selected(full_screenshot, rect)
+                lambda rect, g=generation, p=picker:
+                    self._on_window_selected(full_screenshot, rect, g, p)
             )
             self._window_picker.switch_to_region.connect(
-                lambda: self._switch_to_region_mode(full_screenshot)
+                lambda g=generation, p=picker:
+                    self._switch_to_region_mode(full_screenshot, g, p)
             )
-            self._window_picker.cancelled.connect(lambda: self._close_window_picker())
+            self._window_picker.cancelled.connect(
+                lambda g=generation, p=picker:
+                    self._cancel_window_picker(g, p)
+            )
             self._window_picker.show_spanning()
         except Exception as e:
             log.error(f"Window picker failed: {e}")
 
-    def _on_window_selected(self, full_screenshot, rect):
-        self._close_window_picker()
+    def _on_window_selected(self, full_screenshot, rect, generation=None,
+                            picker=None):
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            if picker is not None:
+                picker.close()
+            return
+        self._close_window_picker(picker)
         if rect.width() < 1 or rect.height() < 1:
             return
 
         # Check if timed capture is active
         if config.CAPTURE_TIMER_ENABLED and config.CAPTURE_TIMER_SECONDS > 0:
-            self._timed_capture_region(rect)
+            self._timed_capture_region(rect, generation=generation)
         else:
             try:
                 from capture import CaptureManager
@@ -574,7 +673,13 @@ class SwiftShotApp:
             except Exception as e:
                 log.error(f"Window selection failed: {e}")
 
-    def _close_window_picker(self):
+    def _close_window_picker(self, expected=None):
+        if expected is not None and self._window_picker is not expected:
+            try:
+                expected.close()
+            except Exception:
+                pass
+            return
         if self._window_picker:
             try:
                 self._window_picker.hide()
@@ -583,17 +688,26 @@ class SwiftShotApp:
                 pass
             self._window_picker = None
 
+    def _cancel_window_picker(self, generation, picker):
+        self._close_window_picker(picker)
+        self._cancel_capture(generation)
+
     # -------------------------------------------------------------------
     # Timed Capture
     # -------------------------------------------------------------------
 
-    def _timed_capture_region(self, rect, freehand_points=None):
+    def _timed_capture_region(self, rect, freehand_points=None,
+                              generation=None):
         """
         Timed capture flow:
         1. User already selected a region/window (overlay is closed)
         2. Show countdown overlay so user can interact with the screen
         3. When countdown ends, take a FRESH screenshot and crop to rect
         """
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            return
         seconds = config.CAPTURE_TIMER_SECONDS
         total_ms = seconds * 1000
         log.info(f"Timed capture: {seconds}s countdown for region {rect.x()},{rect.y()} "
@@ -604,18 +718,26 @@ class SwiftShotApp:
             self._supersede_countdown()
             overlay = CountdownOverlay(total_ms)
             overlay.countdown_finished.connect(
-                lambda r=QRect(rect): self._timed_capture_fire(r, freehand_points)
+                lambda r=QRect(rect), g=generation:
+                    self._timed_capture_fire(r, freehand_points, g)
             )
-            overlay.cancelled.connect(lambda: log.info("Timed capture cancelled"))
+            overlay.cancelled.connect(
+                lambda g=generation, o=overlay: self._cancel_capture(g, o)
+            )
             self._countdown = overlay  # prevent GC
             overlay.start()
         except Exception as e:
             log.error(f"Timed capture countdown failed: {e}")
             # Fall back to immediate capture
-            self._timed_capture_fire(rect, freehand_points)
+            self._timed_capture_fire(rect, freehand_points, generation)
 
-    def _timed_capture_fire(self, rect, freehand_points=None):
+    def _timed_capture_fire(self, rect, freehand_points=None, generation=None):
         """Take a fresh screenshot and crop to the saved region."""
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            return
+        self._countdown = None
         try:
             from capture import CaptureManager
             fresh = CaptureManager.capture_fullscreen()
@@ -639,24 +761,51 @@ class SwiftShotApp:
     # Space Toggle: Region <-> Window
     # -------------------------------------------------------------------
 
-    def _switch_to_window_mode(self, full_screenshot):
-        self._close_overlay()
-        QTimer.singleShot(50, lambda: self._start_window_picker(full_screenshot))
+    def _switch_to_window_mode(self, full_screenshot, generation=None,
+                               overlay=None):
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            return
+        self._close_overlay(overlay)
+        QTimer.singleShot(
+            50,
+            lambda g=generation: self._run_capture_callback(
+                g, lambda: self._start_window_picker(full_screenshot)
+            ),
+        )
 
-    def _switch_to_region_mode(self, full_screenshot):
-        self._close_window_picker()
+    def _switch_to_region_mode(self, full_screenshot, generation=None,
+                               picker=None):
+        generation = (self._capture_generation if generation is None
+                      else generation)
+        if not self._capture_is_current(generation):
+            return
+        self._close_window_picker(picker)
         try:
             from overlay import RegionSelector
             self._overlay = RegionSelector(full_screenshot, mode="rectangle")
+            overlay = self._overlay
             self._overlay._full_screenshot = full_screenshot
             self._overlay.region_selected.connect(
-                lambda rect: self._on_region_selected(full_screenshot, rect, False)
+                lambda rect, g=generation, o=overlay:
+                    self._on_region_selected(
+                        full_screenshot, rect, False, g, o
+                    )
             )
             self._overlay.switch_to_window.connect(
-                lambda: self._switch_to_window_mode(full_screenshot)
+                lambda g=generation, o=overlay:
+                    self._switch_to_window_mode(full_screenshot, g, o)
             )
-            self._overlay.cancelled.connect(lambda: self._close_overlay())
-            QTimer.singleShot(50, lambda: self._overlay.show_spanning())
+            self._overlay.cancelled.connect(
+                lambda g=generation, o=overlay:
+                    self._cancel_region_overlay(g, o)
+            )
+            QTimer.singleShot(
+                50,
+                lambda g=generation, o=overlay:
+                    self._run_capture_callback(g, o.show_spanning),
+            )
         except Exception as e:
             log.error(f"Switch to region mode failed: {e}")
 
@@ -669,6 +818,7 @@ class SwiftShotApp:
 
     def _do_fullscreen_capture(self):
         try:
+            generation = self._capture_generation
             screens = QApplication.screens()
             if len(screens) > 1:
                 from monitor_picker import MonitorPicker
@@ -679,7 +829,14 @@ class SwiftShotApp:
                 # signal grabbed the picker itself into the screenshot.
                 if picker.exec_() == QDialog.Accepted:
                     idx = picker.selected_index()
-                    QTimer.singleShot(150, lambda: self._do_capture_monitor(idx))
+                    QTimer.singleShot(
+                        150,
+                        lambda g=generation: self._run_capture_callback(
+                            g, lambda: self._do_capture_monitor(idx)
+                        ),
+                    )
+                else:
+                    self._cancel_capture(generation)
             else:
                 from capture import CaptureManager
                 screenshot = CaptureManager.capture_fullscreen()
@@ -796,10 +953,17 @@ class SwiftShotApp:
     # -------------------------------------------------------------------
 
     def capture_scrolling(self):
+        generation = self._begin_capture_operation()
         try:
             from scrolling_capture import ScrollingCaptureDialog
             dlg = ScrollingCaptureDialog()
-            if dlg.exec_() == QDialog.Accepted:
+            self._scrolling_dialog = dlg
+            outcome = dlg.exec_()
+            if (self._scrolling_dialog is dlg
+                    and self._capture_is_current(generation)):
+                self._scrolling_dialog = None
+            if (outcome == QDialog.Accepted
+                    and self._capture_is_current(generation)):
                 result = dlg.get_result()
                 if result and not result.isNull():
                     self._handle_capture(result)
@@ -1187,6 +1351,7 @@ class SwiftShotApp:
                 log.warning("Editor failed to close; refusing application exit",
                             exc_info=True)
                 return False
+        self._begin_capture_operation()
         log.info("SwiftShot shutting down")
         if self._hotkey_listener:
             try:

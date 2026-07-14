@@ -13,6 +13,7 @@ import time
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF
+from utils import exclude_window_from_capture
 
 
 class CountdownOverlay(QWidget):
@@ -29,6 +30,8 @@ class CountdownOverlay(QWidget):
         self._total_ms = max(100, total_ms)
         self._remaining_ms = self._total_ms
         self._seconds_left = (self._total_ms + 999) // 1000
+        self._generation = 0
+        self._active_generation = None
 
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |
@@ -44,7 +47,19 @@ class CountdownOverlay(QWidget):
         self.setToolTip("Click to cancel the timed capture")
 
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
+        self._timer.timeout.connect(
+            lambda: self._tick(self._active_generation)
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        exclude_window_from_capture(self)
+
+    def closeEvent(self, event):
+        self._generation += 1
+        self._active_generation = None
+        self._timer.stop()
+        super().closeEvent(event)
 
     def _position_badge(self):
         """Bottom-right corner of the screen the cursor is on."""
@@ -62,10 +77,17 @@ class CountdownOverlay(QWidget):
         self._position_badge()
         self.show()
         self.raise_()
+        self._generation += 1
+        self._active_generation = self._generation
         self._started_at = time.monotonic()
         self._timer.start(50)
 
-    def _tick(self):
+    def _tick(self, generation=None):
+        if (generation != self._active_generation
+                or generation != self._generation
+                or not self._timer.isActive()
+                or not self.isVisible()):
+            return
         # Derive remaining time from the clock, not tick counts — coarse
         # QTimer slack accumulates and made long countdowns fire late.
         elapsed_ms = int((time.monotonic() - self._started_at) * 1000)
@@ -78,6 +100,7 @@ class CountdownOverlay(QWidget):
         if self._remaining_ms <= 0:
             self._timer.stop()
             self.hide()
+            self._active_generation = None
             self.countdown_finished.emit()
 
     def paintEvent(self, event):
@@ -134,6 +157,8 @@ class CountdownOverlay(QWidget):
             super().keyPressEvent(event)
 
     def _cancel(self):
+        self._generation += 1
+        self._active_generation = None
         self._timer.stop()
         self.hide()
         self.cancelled.emit()

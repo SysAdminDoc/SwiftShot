@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap, QFont, QCursor
 from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QTimer, pyqtSignal
 
-from utils import virtual_geometry
+from utils import virtual_geometry, exclude_window_from_capture
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +118,7 @@ class WindowPicker(QWidget):
         self._magnifier_size = 120
         self._magnifier_zoom = 4
         self._own_hwnd = 0
+        self._generation = 0
 
         geo = virtual_geometry()
         self._desktop_offset = QPoint(geo.x(), geo.y())
@@ -166,9 +167,15 @@ class WindowPicker(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(50, self._init_windows)
+        self._generation += 1
+        generation = self._generation
+        exclude_window_from_capture(self)
+        QTimer.singleShot(50, lambda: self._init_windows(generation))
 
-    def _init_windows(self):
+    def _init_windows(self, generation=None):
+        generation = self._generation if generation is None else generation
+        if generation != self._generation or not self.isVisible():
+            return
         if sys.platform != 'win32':
             return
         self._own_hwnd = int(self.winId())
@@ -194,6 +201,22 @@ class WindowPicker(QWidget):
         self.user32.EnumWindows(proc, 0)
         self.current_pos = self.mapFromGlobal(QCursor.pos())
         self._update_highlight()
+
+    def _defer_emit(self, signal, payload=None, has_payload=False):
+        """Emit only if this hidden picker still owns the selection action."""
+        generation = self._generation
+        self._timer.stop()
+        self.hide()
+
+        def emit_if_current():
+            if generation != self._generation or self.isVisible():
+                return
+            if has_payload:
+                signal.emit(payload)
+            else:
+                signal.emit()
+
+        QTimer.singleShot(50, emit_if_current)
 
     def _get_win_rect(self, hwnd):
         rect = wintypes.RECT()
@@ -380,30 +403,26 @@ class WindowPicker(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             if not self._current_rect.isEmpty():
-                self._timer.stop()
-                self.hide()  # Hide immediately so screen is unblocked
                 result_rect = self._to_display(self._current_rect)
                 # Defer signal emission -- closing from inside mousePressEvent
                 # with BypassWindowManagerHint can freeze the screen
-                QTimer.singleShot(50, lambda: self.element_selected.emit(result_rect))
+                self._defer_emit(
+                    self.element_selected, result_rect, has_payload=True
+                )
         elif event.button() == Qt.RightButton:
-            self._timer.stop()
-            self.hide()
-            QTimer.singleShot(50, lambda: self.cancelled.emit())
+            self._defer_emit(self.cancelled)
 
     def keyPressEvent(self, event):
         key = event.key()
         step = 10 if event.modifiers() & Qt.ControlModifier else 1
         if key == Qt.Key_Escape:
-            self._timer.stop()
-            self.hide()
-            QTimer.singleShot(50, lambda: self.cancelled.emit())
+            self._defer_emit(self.cancelled)
         elif key in (Qt.Key_Return, Qt.Key_Enter):
             if not self._current_rect.isEmpty():
-                self._timer.stop()
-                self.hide()
                 result_rect = self._to_display(self._current_rect)
-                QTimer.singleShot(50, lambda: self.element_selected.emit(result_rect))
+                self._defer_emit(
+                    self.element_selected, result_rect, has_payload=True
+                )
         elif key == Qt.Key_Space:
             self._timer.stop()
             self.switch_to_region.emit()
@@ -426,5 +445,6 @@ class WindowPicker(QWidget):
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
+        self._generation += 1
         self._timer.stop()
         super().closeEvent(event)

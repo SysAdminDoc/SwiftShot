@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import config
 from theme import colors_for_theme, stylesheet_for_theme
+from utils import exclude_window_from_capture
 
 
 class CaptureMenu(QMenu):
@@ -281,6 +282,10 @@ class CaptureMenu(QMenu):
 
     def popup_at_cursor(self):
         self.popup(QCursor.pos())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        exclude_window_from_capture(self)
 
     def keyPressEvent(self, event):
         selectable = self._selectable_actions()

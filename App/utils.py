@@ -13,6 +13,44 @@ from PyQt5.QtCore import QRect, QPoint
 from logger import log
 
 
+WDA_NONE = 0x00000000
+WDA_MONITOR = 0x00000001
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
+
+
+def exclude_window_from_capture(widget, user32=None):
+    """Exclude a transient SwiftShot window from Windows screen capture.
+
+    Windows 10 version 2004+ supports ``WDA_EXCLUDEFROMCAPTURE``. Older
+    supported Windows builds reject that flag, so retry with ``WDA_MONITOR``;
+    it blanks the window in captures instead of omitting it. Returning the
+    applied affinity makes the fallback observable in tests and diagnostics.
+
+    Callers opt in explicitly. In particular, pinned reference windows do not
+    call this helper and therefore remain capturable by design.
+    """
+    if sys.platform != "win32":
+        return WDA_NONE
+    try:
+        if user32 is None:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            user32.SetWindowDisplayAffinity.argtypes = [
+                wintypes.HWND, wintypes.DWORD
+            ]
+            user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+        hwnd = int(widget.winId())
+        if user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE):
+            return WDA_EXCLUDEFROMCAPTURE
+        if user32.SetWindowDisplayAffinity(hwnd, WDA_MONITOR):
+            return WDA_MONITOR
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    return WDA_NONE
+
+
 def atomic_replace(path, writer, verifier=None):
     """Write and verify a sibling temporary file before replacing ``path``.
 

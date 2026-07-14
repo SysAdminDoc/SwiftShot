@@ -129,3 +129,49 @@ def test_apply_freehand_mask_degenerate_points_returns_original(qapp):
     result = utils.apply_freehand_mask(
         pixmap, [QPoint(0, 0), QPoint(1, 1)], QRect(0, 0, 5, 5))
     assert result is pixmap
+
+
+class _AffinityWidget:
+    def winId(self):
+        return 1234
+
+
+class _AffinityApi:
+    def __init__(self, accepted):
+        self.accepted = list(accepted)
+        self.calls = []
+
+    def SetWindowDisplayAffinity(self, hwnd, affinity):
+        self.calls.append((hwnd, affinity))
+        return self.accepted.pop(0)
+
+
+def test_display_affinity_prefers_capture_exclusion(monkeypatch):
+    monkeypatch.setattr(utils.sys, "platform", "win32")
+    api = _AffinityApi([True])
+
+    result = utils.exclude_window_from_capture(_AffinityWidget(), api)
+
+    assert result == utils.WDA_EXCLUDEFROMCAPTURE
+    assert api.calls == [(1234, utils.WDA_EXCLUDEFROMCAPTURE)]
+
+
+def test_display_affinity_falls_back_for_older_windows(monkeypatch):
+    monkeypatch.setattr(utils.sys, "platform", "win32")
+    api = _AffinityApi([False, True])
+
+    result = utils.exclude_window_from_capture(_AffinityWidget(), api)
+
+    assert result == utils.WDA_MONITOR
+    assert api.calls == [
+        (1234, utils.WDA_EXCLUDEFROMCAPTURE),
+        (1234, utils.WDA_MONITOR),
+    ]
+
+
+def test_display_affinity_is_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(utils.sys, "platform", "linux")
+    api = _AffinityApi([True])
+
+    assert utils.exclude_window_from_capture(_AffinityWidget(), api) == utils.WDA_NONE
+    assert api.calls == []

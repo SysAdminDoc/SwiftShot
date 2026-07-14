@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import config
 from theme import colors_for_theme
+from utils import exclude_window_from_capture
 
 
 class MonitorCard(QFrame):
@@ -227,6 +228,10 @@ class MonitorPicker(QDialog):
         btn_layout.addWidget(cancel_btn)
 
         layout.addLayout(btn_layout)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        exclude_window_from_capture(self)
 
     def _capture_monitor_thumbnail(self, screen):
         """Capture a quick thumbnail of a monitor.

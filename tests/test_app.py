@@ -23,6 +23,11 @@ def _exit_controller(qapp, editors):
     controller._ocr_workers = []
     controller._pin_windows = []
     controller.tray_icon = None
+    controller._capture_generation = 0
+    controller._countdown = None
+    controller._overlay = None
+    controller._window_picker = None
+    controller._scrolling_dialog = None
     controller._stop_clipboard_watcher = lambda: None
     return controller
 
@@ -144,3 +149,26 @@ def test_update_history_ocr_writes_row(qapp, tmp_path, monkeypatch):
     capture_history.update_history_ocr(str(tmp_path), path, "hello world")
     entries = capture_history._history_entries(str(tmp_path))
     assert any(e["ocr_text"] == "hello world" for e in entries)
+
+
+def test_new_delayed_capture_invalidates_older_callback(qapp, monkeypatch):
+    import app as app_module
+    from app import SwiftShotApp
+    from config import config
+
+    controller = SwiftShotApp(qapp)
+    callbacks = []
+    fired = []
+    monkeypatch.setattr(config, "CAPTURE_DELAY_MS", 0)
+    monkeypatch.setattr(
+        app_module.QTimer,
+        "singleShot",
+        lambda _delay, callback: callbacks.append(callback),
+    )
+
+    controller._capture_with_delay(lambda: fired.append("old"))
+    controller._capture_with_delay(lambda: fired.append("new"))
+    callbacks[0]()
+    callbacks[1]()
+
+    assert fired == ["new"]

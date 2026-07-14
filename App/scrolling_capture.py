@@ -18,6 +18,7 @@ from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont
 from PyQt5.QtCore import Qt, QTimer, QRect
 
 from logger import log
+from utils import exclude_window_from_capture
 
 
 class ScrollingCaptureDialog(QDialog):
@@ -37,6 +38,8 @@ class ScrollingCaptureDialog(QDialog):
         self._max_scrolls = 50
         self._scroll_count = 0
         self._result_pixmap = None
+        self._generation = 0
+        self._awaiting_target = False
 
         # Styling comes from the app-wide theme stylesheet.
         layout = QVBoxLayout(self)
@@ -73,16 +76,34 @@ class ScrollingCaptureDialog(QDialog):
         # Cancel/Escape must stop the capture loop — a pending singleShot
         # kept _capture_frame firing (and auto-scrolling the user's window)
         # long after the dialog was dismissed.
-        self._capturing = False
+        self._invalidate_capture()
         super().reject()
 
     def closeEvent(self, event):
-        self._capturing = False
+        self._invalidate_capture()
         super().closeEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        exclude_window_from_capture(self)
+
+    def _invalidate_capture(self):
+        """Invalidate every callback queued by the current capture run."""
+        self._generation += 1
+        self._awaiting_target = False
+        self._capturing = False
+
+    def _capture_callback_is_current(self, generation, require_capturing=False):
+        if generation != self._generation or not self.isVisible():
+            return False
+        if require_capturing and not self._capturing:
+            return False
+        return True
 
     def _dodge_target(self):
         """Move this always-on-top dialog out of the capture rect — otherwise
-        it gets grabbed into every stitched frame. Hides as a last resort."""
+        it can obscure the target for the user. Display affinity is the
+        capture-exclusion fallback when no non-overlapping corner exists."""
         if not self.frameGeometry().intersects(self._target_rect):
             return
         screen = QApplication.screenAt(self._target_rect.center())
@@ -99,18 +120,27 @@ class ScrollingCaptureDialog(QDialog):
                 if not QRect(x, y, fg.width(), fg.height()).intersects(self._target_rect):
                     self.move(x, y)
                     return
-        self.hide()
+        # Display affinity keeps the dialog out of the captured pixels even
+        # when no non-overlapping corner is available. Staying visible also
+        # gives delayed callbacks a reliable lifecycle guard.
 
     def _begin_capture(self):
         if sys.platform != 'win32':
             self.status_label.setText("Scrolling capture is only supported on Windows.")
             return
 
+        self._invalidate_capture()
+        self._awaiting_target = True
+        generation = self._generation
         self.status_label.setText("Click on the window to capture in 3 seconds...")
         self.start_btn.setEnabled(False)
-        QTimer.singleShot(3000, self._identify_window)
+        QTimer.singleShot(3000, lambda: self._identify_window(generation))
 
-    def _identify_window(self):
+    def _identify_window(self, generation=None):
+        generation = self._generation if generation is None else generation
+        if (not self._capture_callback_is_current(generation)
+                or not self._awaiting_target):
+            return
         import ctypes
         from ctypes import wintypes
 
@@ -119,6 +149,7 @@ class ScrollingCaptureDialog(QDialog):
         # Get foreground window
         self._target_hwnd = user32.GetForegroundWindow()
         if not self._target_hwnd:
+            self._awaiting_target = False
             self.status_label.setText("Could not identify target window.")
             self.start_btn.setEnabled(True)
             log.warning("Scrolling capture: no foreground window found")
@@ -127,6 +158,7 @@ class ScrollingCaptureDialog(QDialog):
         # If no other window was clicked, the foreground window is this
         # dialog -- scrolling and capturing ourselves is never intended.
         if self._target_hwnd == int(self.winId()):
+            self._awaiting_target = False
             self.status_label.setText(
                 "That was this dialog. Click 'Start', then click the window "
                 "you want to capture.")
@@ -151,6 +183,7 @@ class ScrollingCaptureDialog(QDialog):
         )
 
         if self._target_rect.width() < 10 or self._target_rect.height() < 10:
+            self._awaiting_target = False
             self.status_label.setText("Invalid window size detected.")
             self.start_btn.setEnabled(True)
             return
@@ -158,6 +191,7 @@ class ScrollingCaptureDialog(QDialog):
         self.status_label.setText("Capturing... scrolling down")
         self.stop_btn.setEnabled(True)
         self.progress.setVisible(True)
+        self._awaiting_target = False
         self._capturing = True
         self._frames = []
         self._scroll_count = 0
@@ -165,16 +199,18 @@ class ScrollingCaptureDialog(QDialog):
 
         # Focus the target window
         user32.SetForegroundWindow(self._target_hwnd)
-        QTimer.singleShot(200, self._capture_frame)
+        QTimer.singleShot(200, lambda: self._capture_frame(generation))
 
-    def _capture_frame(self):
-        if not self._capturing:
+    def _capture_frame(self, generation=None):
+        generation = self._generation if generation is None else generation
+        if not self._capture_callback_is_current(
+                generation, require_capturing=True):
             return
 
         # Capture the current visible area
         screen = QApplication.primaryScreen()
         if screen is None:
-            self._finish()
+            self._finish(generation)
             return
 
         frame = screen.grabWindow(
@@ -184,7 +220,7 @@ class ScrollingCaptureDialog(QDialog):
         )
 
         if frame.isNull():
-            self._finish()
+            self._finish(generation)
             return
 
         self._frames.append(frame)
@@ -193,21 +229,25 @@ class ScrollingCaptureDialog(QDialog):
 
         # Check if we've reached the limit
         if self._scroll_count >= self._max_scrolls:
-            self._finish()
+            self._finish(generation)
             return
 
         # Check if content stopped changing (compare last two frames)
         if len(self._frames) >= 2:
             if self._frames_are_identical(self._frames[-1], self._frames[-2]):
-                self._finish()
+                self._finish(generation)
                 return
 
         # Scroll down and capture next frame
-        self._scroll_window()
-        QTimer.singleShot(400, self._capture_frame)
+        self._scroll_window(generation)
+        QTimer.singleShot(400, lambda: self._capture_frame(generation))
 
-    def _scroll_window(self):
+    def _scroll_window(self, generation=None):
         """Send scroll-down to the target window."""
+        generation = self._generation if generation is None else generation
+        if not self._capture_callback_is_current(
+                generation, require_capturing=True):
+            return
         if sys.platform != 'win32':
             return
         import ctypes
@@ -253,10 +293,13 @@ class ScrollingCaptureDialog(QDialog):
             return True
         return (match_count / sample_count) > 0.98
 
-    def _finish(self):
-        self._capturing = False
+    def _finish(self, generation=None):
+        generation = self._generation if generation is None else generation
+        if generation != self._generation:
+            return
+        self._invalidate_capture()
+        completion_generation = self._generation
         self.stop_btn.setEnabled(False)
-        if self.isHidden(): self.show()
 
         if len(self._frames) < 1:
             self.status_label.setText("No frames captured.")
@@ -271,9 +314,15 @@ class ScrollingCaptureDialog(QDialog):
 
         self.status_label.setText(f"Stitching {len(self._frames)} frames...")
         QApplication.processEvents()
+        if (completion_generation != self._generation
+                or not self.isVisible()):
+            return
         log.info(f"Scrolling capture: stitching {len(self._frames)} frames")
 
         self._result_pixmap = self._stitch_frames()
+        if (completion_generation != self._generation
+                or not self.isVisible()):
+            return
         if self._result_pixmap:
             self.status_label.setText(
                 f"Done! Stitched {len(self._frames)} frames into "
@@ -285,8 +334,7 @@ class ScrollingCaptureDialog(QDialog):
             self.start_btn.setEnabled(True)
 
     def _stop_capture(self):
-        self._capturing = False
-        self._finish()
+        self._finish(self._generation)
 
     def _static_bottom_height(self):
         """Height of a bottom band that stays identical between consecutive
