@@ -286,3 +286,19 @@ def test_standalone_editor_image_loader_uses_bounded_decoder(qapp, tmp_path):
     invalid.write_bytes(b"not an image")
     with pytest.raises(ValueError):
         editor.load_pixmap_safely(str(invalid))
+
+
+def test_icon_generator_writes_only_requested_destination(tmp_path):
+    from generate_icon import generate_ico
+
+    source = tmp_path / "source.png"
+    requested = tmp_path / "build" / "generated.ico"
+    tracked = tmp_path / "swiftshot.ico"
+    tracked.write_bytes(b"tracked icon must remain unchanged")
+    requested.parent.mkdir()
+    Image.new("RGBA", (64, 64), (10, 20, 30, 255)).save(source, "PNG")
+
+    generate_ico(str(source), str(requested))
+
+    assert requested.read_bytes().startswith(b"\x00\x00\x01\x00")
+    assert tracked.read_bytes() == b"tracked icon must remain unchanged"

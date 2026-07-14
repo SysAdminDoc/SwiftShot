@@ -139,3 +139,12 @@ def test_release_build_pins_and_probes_supported_sqlite():
     assert "Assert-BundledSQLite $onedirExe" in build
     assert "sqlite-3.53.3" in spec
     assert "os.path.basename(entry[0]).casefold() != 'sqlite3.dll'" in spec
+
+
+def test_release_icon_generation_is_isolated_from_tracked_source():
+    build = (APP / "Build-SwiftShot.ps1").read_text(encoding="utf-8")
+
+    assert '$GeneratedIconPath = Join-Path $BuildDir "generated\\$IconName"' in build
+    assert "--output $GeneratedIconPath" in build
+    assert "$IconPath = $GeneratedIconPath" in build
+    assert "& $VenvPython $IconGenScript 2>&1" not in build

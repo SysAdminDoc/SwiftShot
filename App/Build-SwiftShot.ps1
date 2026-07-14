@@ -88,7 +88,10 @@ $BuildDir    = Join-Path $ProjectDir "build"
 $SpecDir     = Join-Path $BuildDir "spec"
 $VenvDir     = Join-Path $ProjectDir ".build-venv"
 $IconName    = "swiftshot.ico"
-$IconPath    = Join-Path $ProjectDir $IconName
+$SourceIconPath = Join-Path $ProjectDir $IconName
+$IconSourcePng = Join-Path $ProjectDir "swiftshot.png"
+$GeneratedIconPath = Join-Path $BuildDir "generated\$IconName"
+$IconPath    = $SourceIconPath
 $IssFile     = Join-Path $ProjectDir "SwiftShot.iss"
 $IconGenScript = Join-Path $ProjectDir "generate_icon.py"
 $SQLiteMinimumVersion = [version]'3.53.2'
@@ -367,19 +370,34 @@ Write-OK "SQLite: $sqliteVer (official DLL; SHA3-256 verified)"
 # ===================================================================
 Write-Section "Application Icon"
 
-if ($SkipIcon -and (Test-Path $IconPath)) {
-    Write-OK "Using existing icon: $IconName"
+if ($SkipIcon -and (Test-Path $SourceIconPath)) {
+    $IconPath = $SourceIconPath
+    Write-OK "Using existing source icon: $IconName"
 } elseif (Test-Path $IconGenScript) {
-    Write-Step "Generating multi-size icon from generate_icon.py..."
+    Write-Step "Generating isolated multi-size icon from generate_icon.py..."
+    New-Item -Path (Split-Path $GeneratedIconPath -Parent) `
+        -ItemType Directory -Force | Out-Null
+    Remove-Item -LiteralPath $GeneratedIconPath -Force `
+        -ErrorAction SilentlyContinue
     $ErrorActionPreference = 'Continue'
-    & $VenvPython $IconGenScript 2>&1 | ForEach-Object { Write-Info $_.ToString() }
+    & $VenvPython $IconGenScript --input $IconSourcePng `
+        --output $GeneratedIconPath 2>&1 | ForEach-Object {
+            Write-Info $_.ToString()
+        }
     $ErrorActionPreference = 'Stop'
-    if (Test-Path $IconPath) {
+    if (Test-Path $GeneratedIconPath) {
+        $IconPath = $GeneratedIconPath
         $icoSize = [math]::Round((Get-Item $IconPath).Length / 1KB, 1)
-        Write-OK "Icon generated: $IconName (${icoSize} KB, 9 sizes: 16-256px)"
+        Write-OK "Icon generated in build workspace: $IconName (${icoSize} KB, 9 sizes: 16-256px)"
+    } elseif (Test-Path $SourceIconPath) {
+        $IconPath = $SourceIconPath
+        Write-Warn "Icon generation failed; using the existing source icon."
     } else {
         Write-Err "Icon generation failed. Build will continue without custom icon."
     }
+} elseif (Test-Path $SourceIconPath) {
+    $IconPath = $SourceIconPath
+    Write-Warn "generate_icon.py not found; using the existing source icon."
 } else {
     Write-Err "generate_icon.py not found and no swiftshot.ico exists."
     Write-Info "The build will use the default PyInstaller icon."

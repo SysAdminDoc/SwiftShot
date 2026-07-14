@@ -13,6 +13,7 @@ import os
 import sys
 import struct
 import io
+import argparse
 
 
 def generate_ico(png_path, ico_path):
@@ -23,7 +24,8 @@ def generate_ico(png_path, ico_path):
         print(f"  ERROR: {png_path} not found.")
         sys.exit(1)
 
-    img = Image.open(png_path).convert("RGBA")
+    with Image.open(png_path) as source:
+        img = source.convert("RGBA")
     print(f"  Source: {img.size[0]}x{img.size[1]}")
 
     sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
@@ -66,7 +68,22 @@ def generate_ico(png_path, ico_path):
     print(f"\n  ICO saved: {ico_path} ({file_size:,} bytes, {count} sizes)")
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    parser = argparse.ArgumentParser(
+        description="Generate SwiftShot's multi-resolution Windows icon.")
+    parser.add_argument(
+        "--input",
+        default=os.path.join(script_dir, "swiftshot.png"),
+        help="Source PNG path (default: App/swiftshot.png).",
+    )
+    parser.add_argument(
+        "--output",
+        default=os.path.join(script_dir, "swiftshot.ico"),
+        help="Destination ICO path (default: App/swiftshot.ico).",
+    )
+
+    args = parser.parse_args(argv)
     try:
         from PIL import Image  # noqa: F401 -- availability check only
     except ImportError:
@@ -76,10 +93,12 @@ if __name__ == "__main__":
 
     print("\nSwiftShot Icon Generator")
     print("=" * 40)
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    png_path = os.path.join(script_dir, "swiftshot.png")
-    ico_path = os.path.join(script_dir, "swiftshot.ico")
-
-    generate_ico(png_path, ico_path)
+    output_dir = os.path.dirname(os.path.abspath(args.output))
+    os.makedirs(output_dir, exist_ok=True)
+    generate_ico(os.path.abspath(args.input), os.path.abspath(args.output))
     print("\nDone!")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

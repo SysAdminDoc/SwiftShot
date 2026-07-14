@@ -212,6 +212,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer is now aligned onto the canvas before blending.
 
 ### Build & distribution
+- Release icon generation now writes to `App/build/generated` and accepts
+  explicit source/destination paths. Clean builds no longer rewrite the
+  tracked `App/swiftshot.ico` asset or leave byte-level worktree pollution.
 - Source, standalone-editor, and release builds now share one enforced CPython
   3.12.x contract and one physical-pixel DPI initializer. Documented commands
   point to the real `App\` entry/build paths, unsupported interpreters exit
