@@ -1,5 +1,5 @@
 PackageIdentifier: SysAdminDoc.SwiftShot
-PackageVersion: 2.8.0
+PackageVersion: 2.9.0
 InstallerType: inno
 InstallModes:
   - interactive
@@ -7,9 +7,8 @@ InstallModes:
   - silentWithProgress
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/SysAdminDoc/SwiftShot/releases/download/v2.8.0/SwiftShot-Setup.exe
-    # Replace with the real SHA-256 of the released installer at publish time:
-    #   (Get-FileHash SwiftShot-Setup.exe -Algorithm SHA256).Hash
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerUrl: https://github.com/SysAdminDoc/SwiftShot/releases/download/v2.9.0/SwiftShot-Setup.exe
+    # SHA-256 from the v2.9.0 release build.
+    InstallerSha256: 18BB273938E5AEF2DA2A25AF69A54AD7206D2D9E9532A974E6DD6C4AA8B9E34C
 ManifestType: installer
 ManifestVersion: 1.6.0

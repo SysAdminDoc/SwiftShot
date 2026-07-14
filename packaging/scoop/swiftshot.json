@@ -1,12 +1,12 @@
 {
-    "version": "2.8.0",
+    "version": "2.9.0",
     "description": "A fast, bloat-free screenshot tool for Windows.",
     "homepage": "https://github.com/SysAdminDoc/SwiftShot",
     "license": "GPL-3.0-only",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/SysAdminDoc/SwiftShot/releases/download/v2.8.0/SwiftShot-Portable.exe#/SwiftShot.exe",
-            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+            "url": "https://github.com/SysAdminDoc/SwiftShot/releases/download/v2.9.0/SwiftShot-Portable.exe#/SwiftShot.exe",
+            "hash": "4ab2b657c50672dbff7a04a9d56f5ff6c51beeaea4337ab0175c0b2d4ae8e64a"
         }
     },
     "bin": "SwiftShot.exe",

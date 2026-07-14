@@ -4,6 +4,8 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+## [v2.9.0] - 2026-07-14
+
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified
 findings live in ROADMAP.md as the prioritized "Audit Backlog").
 
