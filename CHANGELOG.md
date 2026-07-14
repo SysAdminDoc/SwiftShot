@@ -117,6 +117,12 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer is now aligned onto the canvas before blending.
 
 ### Build & distribution
+- Source, standalone-editor, and release builds now share one enforced CPython
+  3.12.x contract and one physical-pixel DPI initializer. Documented commands
+  point to the real `App\` entry/build paths, unsupported interpreters exit
+  with one actionable message, stale build venvs are recreated with 3.12, and
+  the README now states the default update check and optional `rembg` model
+  download instead of promising zero network activity.
 - `cli.py` is now in the build manifest (`$SourceFiles` + `$HiddenImports`)
   and the prerequisite check. It was missing, so the space/paren "safe build
   path" produced a frozen exe that crashed on launch with

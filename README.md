@@ -9,8 +9,8 @@
   <a href="#installation"><img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white"></a>
   <img alt="Version 2.8.0" src="https://img.shields.io/badge/Version-2.8.0-89b4fa">
   <a href="#license"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg"></a>
-  <img alt="Python 3.8+" src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white">
-  <img alt="Lines of code" src="https://img.shields.io/badge/Lines_of_Code-12k-green">
+  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="Lines of code" src="https://img.shields.io/badge/Lines_of_Code-18k-green">
 </p>
 
 ---
@@ -25,8 +25,8 @@ Greenshot is great, but it ships with a dozen cloud upload plugins, enterprise i
 | Jira / Confluence integrations | No enterprise dependencies |
 | Office COM interop | No Office requirement |
 | Plugin discovery & loading system | No plugin overhead |
-| OAuth / API key infrastructure | Zero network calls (except optional update check) |
-| .NET Framework + 12 plugin DLLs | Python + PyQt5 — three packages |
+| OAuth / API key infrastructure | No accounts, telemetry, or capture uploads |
+| .NET Framework + 12 plugin DLLs | Python + three core packages |
 
 ## Features
 
@@ -105,14 +105,19 @@ Full [Catppuccin Mocha](https://github.com/catppuccin/catppuccin) color scheme a
 
 ### Option 1: Run from Source
 
-```bash
+```powershell
 git clone https://github.com/SysAdminDoc/SwiftShot.git
 cd SwiftShot
-pip install -r requirements.txt
-python main.py
+py -3.12 -m pip install -r requirements.txt
+py -3.12 App\main.py
 ```
 
-Requirements: Python 3.8+ and Windows 10/11.
+Requirements: CPython 3.12.x and Windows 10/11. Other Python versions exit
+before loading the GUI with the exact command needed to use 3.12.
+
+Commands in this README run from the repository root. From `App\`, the
+equivalent launch and build commands are `py -3.12 main.py` and
+`.\Build-SwiftShot.ps1`.
 
 ### Option 2: Portable Executable
 
@@ -126,27 +131,29 @@ Download `SwiftShot-Setup.exe` from [Releases](https://github.com/SysAdminDoc/Sw
 
 ## Building from Source
 
-The build script creates both a portable `.exe` and a Windows installer. All you need is Python 3.8+ — everything else is handled automatically.
+The build script creates both a portable `.exe` and a Windows installer. It
+selects CPython 3.12 through the Windows launcher (even if another `python` is
+first on `PATH`) and recreates an older build virtual environment automatically.
 
 ```powershell
 # Full build (portable + installer)
-.\Build-SwiftShot.ps1
+.\App\Build-SwiftShot.ps1
 
 # Portable only (no Inno Setup required)
-.\Build-SwiftShot.ps1 -PortableOnly
+.\App\Build-SwiftShot.ps1 -PortableOnly
 
 # Clean rebuild
-.\Build-SwiftShot.ps1 -Clean
+.\App\Build-SwiftShot.ps1 -Clean
 
 # Debug build (console window visible)
-.\Build-SwiftShot.ps1 -Clean -DebugBuild
+.\App\Build-SwiftShot.ps1 -Clean -DebugBuild
 ```
 
 The script will:
-1. Verify Python 3.8+ and Inno Setup 6 (optional)
+1. Verify CPython 3.12.x and Inno Setup 6 (optional)
 2. Create an isolated build venv with PyInstaller
 3. Generate multi-resolution icon from source
-4. Build `SwiftShot-Portable.exe` (single file, ~25 MB)
+4. Build `SwiftShot-Portable.exe` (single file)
 5. Build `SwiftShot-Setup.exe` via Inno Setup (if available)
 
 Both outputs are fully self-contained — no Python or runtime needed on end-user machines.
@@ -184,28 +191,34 @@ This is designed for capturing UI elements that require manual interaction, like
 SwiftShot doubles as a scriptable capture tool. With any capture flag it runs
 headless and exits without the tray:
 
-```bash
-swiftshot --region 0,0,800,600 --out shot.png   # region to file
-swiftshot --fullscreen --out desktop.png         # whole virtual desktop
-swiftshot --monitor 1 --out screen1.png          # one monitor (0-based)
-swiftshot --region 0,0,800,600 --ocr             # print recognized text
-swiftshot --diagnostics                          # write a diagnostics zip
+```powershell
+py -3.12 App\main.py --region 0,0,800,600 --out shot.png
+py -3.12 App\main.py --fullscreen --out desktop.png
+py -3.12 App\main.py --monitor 1 --out screen1.png
+py -3.12 App\main.py --region 0,0,800,600 --ocr
+py -3.12 App\main.py --diagnostics
 ```
 
 `--out` picks the format from the file extension (png/jpg/webp/avif/bmp/tiff).
 `--ocr` can be combined with `--out`. Without capture flags — or with a bare
-image path — SwiftShot launches its tray application as usual.
+image path — SwiftShot launches its tray application as usual. Release builds
+accept the same arguments through `SwiftShot.exe`.
 
 ## Project Structure
 
+Application modules live under `App/`:
+
 ```
-main.py                 Entry point, logging, crash handler
+main.py                 Tray/headless entry point, logging, crash handler
+runtime_contract.py     Python-version and physical-pixel DPI policy
+app_control.py          Local installer shutdown handshake
 cli.py                  Scriptable headless capture (argparse)
 app.py                  System tray, hotkey management, capture orchestration
 capture.py              Screenshot engine (Win32 GDI + Qt fallback)
 overlay.py              Region selector with edge snapping
 window_picker.py        Window capture with animated highlight
-editor.py               Layer-based image editor (7,400+ lines)
+editor.py               Layer-based image editor (8,500+ lines)
+layers.py               Layer/group/history data model
 config.py               JSON settings with backup, import/export
 settings_dialog.py      Preferences UI with hotkey recorder
 hotkeys.py              WH_KEYBOARD_LL global keyboard hook
@@ -218,13 +231,15 @@ pin_window.py           Always-on-top floating screenshot windows
 capture_history.py      Recent captures thumbnail panel
 countdown_overlay.py    Animated countdown timer overlay
 scrolling_capture.py    Auto-scroll and stitch capture
+safe_io.py              Bounded image/project input validation
+diagnostics.py          Local support-bundle generation
 updater.py              GitHub release update checker
 logger.py               Rotating file logger
 utils.py                Virtual geometry, color helpers, startup registry
 generate_icon.py        Programmatic icon generation for builds
 ```
 
-22 Python modules — **12,000+ lines of code** — zero external services.
+28 Python modules — **18,000+ lines of code** — no capture upload service.
 
 ---
 
@@ -236,15 +251,28 @@ generate_icon.py        Programmatic icon generation for builds
 | [Pillow](https://pypi.org/project/Pillow/) | Image processing for scrolling capture stitching |
 | [NumPy](https://pypi.org/project/numpy/) | Pixel math for editor filters and selection tools |
 
-That's it. OCR uses the Windows built-in WinRT OCR engine (no install needed on Windows 10/11) with an optional Tesseract fallback.
+That's the core runtime. OCR uses the Windows built-in WinRT engine (no Python
+package needed) with an optional local Tesseract + `pytesseract` fallback.
+Background removal is also optional and requires `rembg`; its upstream package
+[downloads a model on first use](https://github.com/danielgatis/rembg#models)
+unless that model is already present in its cache.
+
+### Network behavior
+
+When **Check for updates** is enabled (the default), startup sends one HTTPS
+GET to the GitHub Releases API for version metadata. Disable it in Settings >
+Advanced for fully offline core operation. SwiftShot sends no screenshot,
+clipboard, OCR, history, or configuration content. The optional `rembg`
+first-use model download described above is controlled by that separately
+installed package.
 
 ---
 
 ## Testing
 
 ```powershell
-pip install -r requirements-dev.txt
-pytest
+py -3.12 -m pip install -r requirements-dev.txt
+py -3.12 -m pytest
 ```
 
 ---

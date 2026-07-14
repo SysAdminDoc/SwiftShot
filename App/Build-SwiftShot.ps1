@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     End-to-end build pipeline:
-      1. Verifies Python 3.8+ and Inno Setup 6 (optional)
+      1. Verifies Python 3.12 and Inno Setup 6 (optional)
       2. Creates an isolated build venv with PyInstaller + app dependencies
       3. Generates swiftshot.ico (multi-size, from generate_icon.py)
       4. Builds SwiftShot-Portable.exe  (PyInstaller --onefile)
@@ -16,7 +16,7 @@
     self-contained -- no Python or runtime required on end-user machines.
 
     Requirements (build machine only):
-      - Python 3.8+
+      - Python 3.12.x
       - Inno Setup 6+ (optional, for installer; portable builds without it)
 
 .PARAMETER PortableOnly
@@ -94,7 +94,7 @@ $IconGenScript = Join-Path $ProjectDir "generate_icon.py"
 
 # Every .py file that ships with SwiftShot
 $SourceFiles = @(
-    "main.py", "app.py", "app_control.py", "capture.py", "capture_menu.py", "config.py",
+    "main.py", "runtime_contract.py", "app.py", "app_control.py", "capture.py", "capture_menu.py", "config.py",
     "editor.py", "layers.py", "hotkeys.py", "monitor_picker.py", "ocr.py", "ocr_dialog.py",
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
@@ -104,7 +104,7 @@ $SourceFiles = @(
 
 # Hidden imports for PyInstaller (lazy imports it can't detect)
 $HiddenImports = @(
-    "app", "app_control", "config", "theme", "hotkeys", "capture", "capture_menu",
+    "runtime_contract", "app", "app_control", "config", "theme", "hotkeys", "capture", "capture_menu",
     "overlay", "window_picker", "monitor_picker", "editor", "layers",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
     "capture_history", "countdown_overlay", "scrolling_capture", "utils", "safe_io",
@@ -177,24 +177,34 @@ Write-Section "Checking Prerequisites"
 
 # --- Python ---
 $Python = $null
-foreach ($cmd in @('python', 'python3', 'py')) {
+
+# Prefer the Windows launcher because it selects 3.12 even when another
+# interpreter owns the generic `python` command.
+try {
+    $candidate = (& py -3.12 -c "import sys; print(sys.executable)" 2>$null).ToString().Trim()
+    if (($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $candidate)) {
+        $Python = $candidate
+    }
+} catch { }
+
+if (-not $Python) {
+foreach ($cmd in @('python', 'python3', 'python3.12')) {
     try {
-        $ver = & $cmd --version 2>&1
-        if ($ver -match 'Python 3\.(\d+)') {
-            $minor = [int]$Matches[1]
-            if ($minor -ge 8) {
-                $Python = $cmd
-                Write-OK "Python: $ver"
-                break
-            }
+        $candidate = (& $cmd -c "import sys; sys.version_info[:2] == (3, 12) or sys.exit(1); print(sys.executable)" 2>$null).ToString().Trim()
+        if (($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $candidate)) {
+            $Python = $candidate
+            break
         }
     } catch { }
 }
+}
 if (-not $Python) {
-    Write-Err "Python 3.8+ is required but not found on PATH."
-    Write-Info "Download from: https://www.python.org/downloads/"
+    Write-Err "Python 3.12.x is required but was not found."
+    Write-Info "Install Python 3.12 from: https://www.python.org/downloads/"
     exit 1
 }
+$PythonVersion = (& $Python -c "import platform; print(platform.python_version())").ToString().Trim()
+Write-OK "Python: $PythonVersion ($Python)"
 
 # --- Inno Setup (optional) ---
 $ISCC = $null
@@ -238,8 +248,16 @@ Write-Section "Build Environment"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
 if (Test-Path $VenvPython) {
-    Write-OK "Build venv exists: .build-venv\"
-} else {
+    $venvVersion = ''
+    try {
+        $venvVersion = (& $VenvPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null).ToString().Trim()
+    } catch { }
+    if ($venvVersion -ne '3.12') {
+        Write-Warn "Recreating build venv made with Python $venvVersion; Python 3.12 is required."
+        Remove-Item -LiteralPath $VenvDir -Recurse -Force
+    }
+}
+if (-not (Test-Path $VenvPython)) {
     Write-Step "Creating isolated build venv..."
     $ErrorActionPreference = 'Continue'
     & $Python -m venv $VenvDir
@@ -250,6 +268,8 @@ if (Test-Path $VenvPython) {
         exit 1
     }
     Write-OK "Venv created."
+} else {
+    Write-OK "Build venv exists: .build-venv\ (Python 3.12)"
 }
 
 Write-Step "Installing/upgrading build dependencies..."
@@ -657,14 +677,14 @@ $setupExe    = Join-Path $DistDir "SwiftShot-Setup.exe"
 $portableExe = Join-Path $DistDir "SwiftShot-Portable.exe"
 $outputs = 0
 
-if (Test-Path $portableExe) {
+if ((-not $InstallerOnly) -and (Test-Path $portableExe)) {
     $size = [math]::Round((Get-Item $portableExe).Length / 1MB, 1)
     Write-Host "  PORTABLE    dist\SwiftShot-Portable.exe  (${size} MB)" -ForegroundColor White
     Write-Host "              Single file. Run from anywhere. No install needed." -ForegroundColor DarkGray
     Write-Host ""
     $outputs++
 }
-if (Test-Path $setupExe) {
+if ((-not $PortableOnly) -and (Test-Path $setupExe)) {
     $size = [math]::Round((Get-Item $setupExe).Length / 1MB, 1)
     Write-Host "  INSTALLER   dist\SwiftShot-Setup.exe     (${size} MB)" -ForegroundColor White
     Write-Host "              Start Menu + Desktop shortcut. Optional auto-start." -ForegroundColor DarkGray
@@ -676,7 +696,7 @@ if (Test-Path $setupExe) {
 if ($outputs -eq 0) {
     Write-Host "  No outputs produced. Check errors above." -ForegroundColor Red
 } else {
-    Write-Host "  Both outputs are fully self-contained." -ForegroundColor DarkGray
+    Write-Host "  Produced artifacts are fully self-contained." -ForegroundColor DarkGray
     Write-Host "  No Python, no runtime, no dependencies on end-user machines." -ForegroundColor DarkGray
 }
 

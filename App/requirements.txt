@@ -1,3 +1,4 @@
+# Runtime contract: CPython 3.12.x (enforced by main.py and the release build).
 PyQt5>=5.15.0
 Pillow>=12.3.0
 numpy>=1.24.0

@@ -5,6 +5,8 @@ Entry point with logging and update checking.
 
 import sys
 
+from runtime_contract import configure_dpi_policy, require_supported_python
+
 
 def _install_excepthook():
     """Log unhandled exceptions instead of letting PyQt5 abort the process.
@@ -25,34 +27,6 @@ def _install_excepthook():
         except Exception:
             pass
     sys.excepthook = hook
-
-
-def _set_dpi_awareness():
-    """Make the process per-monitor DPI-aware with Qt scaling OFF.
-
-    Capture math requires logical == physical pixels everywhere. Qt's
-    AA_EnableHighDpiScaling rounds the per-monitor factor to whole numbers —
-    1.0 at 100%/125% (a no-op) but 2.0 at 150%+, where every capture surface
-    (overlay, pickers, crop rects, cursor draw) would mix logical widget
-    coordinates with physical GDI pixels. Setting DPI awareness ourselves
-    before Qt initializes keeps widget coordinates in physical screen pixels
-    at every scale factor (the editor scales its own UI via _UI_SCALE).
-    """
-    if sys.platform != 'win32':
-        return
-    try:
-        import ctypes
-        try:
-            # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Win10 1703+)
-            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-        except (AttributeError, OSError):
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Win 8.1+
-            except (AttributeError, OSError):
-                ctypes.windll.user32.SetProcessDPIAware()       # Vista+
-    except Exception:
-        from logger import log
-        log.warning("Could not set DPI awareness", exc_info=True)
 
 
 def _acquire_single_instance():
@@ -76,6 +50,10 @@ def _acquire_single_instance():
 
 
 def main():
+    if not require_supported_python():
+        raise SystemExit(2)
+    configure_dpi_policy()
+
     # Early logging setup before anything else
     from logger import setup_logger, log
     setup_logger()
@@ -93,7 +71,6 @@ def main():
     # Headless scriptable capture (swiftshot --region/--fullscreen/--monitor).
     # Runs and exits without the tray; DPI awareness must be set first so
     # region coordinates are physical pixels. Returns None for the GUI path.
-    _set_dpi_awareness()
     import cli
     cli_code = cli.run(sys.argv[1:])
     if cli_code is not None:
@@ -106,13 +83,6 @@ def main():
         return
 
     from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import Qt
-
-    try:
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    except AttributeError:
-        pass
-
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("SwiftShot")

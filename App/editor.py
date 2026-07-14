@@ -10,6 +10,13 @@ import math
 import random
 import json
 
+# Fail before importing binary GUI/image dependencies when the standalone
+# editor is launched with an unsupported interpreter.
+if __name__ == "__main__":
+    from runtime_contract import require_supported_python
+    if not require_supported_python():
+        raise SystemExit(2)
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont, ImageOps, ImageChops
 from safe_io import (
@@ -8498,12 +8505,9 @@ sys.excepthook = _exception_handler
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 def main():
-    # High-DPI support — must be set before QApplication
-    try:
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    except AttributeError:
-        pass
+    from runtime_contract import configure_dpi_policy
+    # Same physical-pixel policy as the tray/CLI entrypoint, before QApplication.
+    configure_dpi_policy()
     app = QApplication(sys.argv)
     app.setApplicationName("SwiftShot Editor")
     app.setApplicationVersion(getattr(config, "APP_VERSION", "0.0.0") if config else "0.0.0")
