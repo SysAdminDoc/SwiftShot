@@ -228,6 +228,7 @@ class Config:
         "SHADOW_RADIUS": (0, 50),
         "SHADOW_OPACITY": (0, 255),
         "ROUNDED_CORNERS_RADIUS": (0, 100),
+        "BACKDROP_PADDING": (0, 400),
         "CAPTURE_HISTORY_MAX": (5, 500),
         "PIN_OPACITY": (10, 100),
     }

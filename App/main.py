@@ -8,6 +8,9 @@ import sys
 from runtime_contract import configure_dpi_policy, require_supported_python
 
 
+_instance_mutex_handle = None
+
+
 def _install_excepthook():
     """Log unhandled exceptions instead of letting PyQt5 abort the process.
 
@@ -29,21 +32,62 @@ def _install_excepthook():
     sys.excepthook = hook
 
 
+def _show_fatal_error(error):
+    """Show the last-resort startup error while retaining QApplication.
+
+    Constructing QApplication as an unassigned temporary lets its Python
+    wrapper be collected before QMessageBox is created, which can trigger
+    Qt's "must construct a QApplication" fast-fail and hide the real error.
+    """
+    from PyQt5.QtWidgets import QApplication, QMessageBox
+
+    error_app = QApplication.instance()
+    if error_app is None:
+        error_app = QApplication(sys.argv)
+    QMessageBox.critical(
+        None, "SwiftShot Error",
+        f"An unexpected error occurred:\n\n{error}\n\n"
+        "Check the log file for details."
+    )
+    # Keep the wrapper alive through the modal dialog call above.
+    return error_app
+
+
 def _acquire_single_instance():
     """Hold the named mutex the installer's AppMutex directive checks.
 
     Returns False if another SwiftShot instance already owns it — a second
     instance would fight over the global keyboard hook and the log file.
-    The handle is intentionally leaked; the OS releases it at process exit.
+    The owning handle is retained for process lifetime; the OS releases it at
+    process exit.
     """
+    global _instance_mutex_handle
     if sys.platform != 'win32':
         return True
     try:
         import ctypes
+        from ctypes import wintypes
+
         ERROR_ALREADY_EXISTS = 183
-        handle = ctypes.windll.kernel32.CreateMutexW(None, False, "SwiftShot_SingleInstance")
-        if handle and ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [
+            ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.CreateMutexW(
+            None, False, "SwiftShot_SingleInstance")
+        if handle and ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            # This process does not own the mutex. Close its reference instead
+            # of leaking it until the one-file bootstrap process exits.
+            kernel32.CloseHandle(handle)
             return False
+        if handle:
+            # Retain the real pointer-sized handle for the process lifetime.
+            # The OS releases it at exit; dropping/truncating the return value
+            # can make the single-instance guard unreliable on 64-bit Windows.
+            _instance_mutex_handle = handle
     except Exception:
         pass  # never block startup on a guard failure
     return True
@@ -144,14 +188,7 @@ if __name__ == "__main__":
 
         # Show error dialog if possible
         try:
-            from PyQt5.QtWidgets import QApplication, QMessageBox
-            if not QApplication.instance():
-                QApplication(sys.argv)
-            QMessageBox.critical(
-                None, "SwiftShot Error",
-                f"An unexpected error occurred:\n\n{str(e)}\n\n"
-                "Check the log file for details."
-            )
+            _show_fatal_error(e)
         except Exception:
             print(f"FATAL: {e}", file=sys.stderr)
 

@@ -1,4 +1,6 @@
 import io
+import sys
+import types
 from pathlib import Path
 
 
@@ -60,6 +62,68 @@ def test_runtime_contract_is_in_release_manifests():
     assert '"runtime_contract.py"' in build
     assert '"runtime_contract"' in build
     assert "'runtime_contract'" in spec
+
+
+def test_single_instance_mutex_retains_owner_and_closes_duplicate(monkeypatch):
+    import ctypes
+    import main
+
+    class FakeFunction:
+        def __init__(self, result=True):
+            self.result = result
+            self.calls = []
+
+        def __call__(self, *args):
+            self.calls.append(args)
+            return self.result
+
+    class FakeKernel32:
+        def __init__(self):
+            self.CreateMutexW = FakeFunction(0x123456789ABC)
+            self.CloseHandle = FakeFunction(True)
+
+    kernel32 = FakeKernel32()
+    errors = iter((0, 183))
+    monkeypatch.setattr(main.sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_a, **_kw: kernel32)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: next(errors))
+    monkeypatch.setattr(main, "_instance_mutex_handle", None)
+
+    assert main._acquire_single_instance() is True
+    assert main._instance_mutex_handle == 0x123456789ABC
+    assert main._acquire_single_instance() is False
+    assert kernel32.CloseHandle.calls == [(0x123456789ABC,)]
+
+
+def test_fatal_error_dialog_retains_new_application_wrapper(monkeypatch):
+    import main
+
+    events = []
+
+    class FakeApplication:
+        @staticmethod
+        def instance():
+            return None
+
+        def __init__(self, argv):
+            events.append(("application", list(argv)))
+
+    class FakeMessageBox:
+        @staticmethod
+        def critical(_parent, title, message):
+            events.append(("dialog", title, message))
+
+    widgets = types.ModuleType("PyQt5.QtWidgets")
+    widgets.QApplication = FakeApplication
+    widgets.QMessageBox = FakeMessageBox
+    monkeypatch.setitem(sys.modules, "PyQt5.QtWidgets", widgets)
+
+    wrapper = main._show_fatal_error(RuntimeError("startup failed"))
+
+    assert isinstance(wrapper, FakeApplication)
+    assert events[0][0] == "application"
+    assert events[1][0:2] == ("dialog", "SwiftShot Error")
+    assert "startup failed" in events[1][2]
 
 
 def test_release_build_pins_and_probes_supported_sqlite():

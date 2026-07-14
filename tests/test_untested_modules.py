@@ -183,6 +183,20 @@ def test_pin_window_clamps_render_size_to_memory_budget(
         pin.close()
 
 
+@pytest.mark.parametrize("size", [(8192, 1), (1, 8192)])
+def test_pin_window_keeps_close_control_visible_for_extreme_aspect_ratios(
+        qapp, fresh_config, size):
+    from pin_window import PIN_MIN_WINDOW_EXTENT, PinWindow
+
+    pin = PinWindow(_solid_pixmap(*size, (10, 20, 30, 255)))
+    try:
+        assert pin.width() >= PIN_MIN_WINDOW_EXTENT
+        assert pin.height() >= PIN_MIN_WINDOW_EXTENT
+        assert pin.rect().contains(pin._close_button.geometry())
+    finally:
+        pin.close()
+
+
 def test_ocr_dialog_reports_clipboard_state_after_edits(qapp):
     from ocr_dialog import OcrResultDialog
 

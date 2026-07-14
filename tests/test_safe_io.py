@@ -101,6 +101,47 @@ def test_valid_project_archive_passes_preflight(tmp_path):
     assert names == {"project.json", "layer_0.png"}
 
 
+def test_project_accepts_bounded_partial_layer_effect(tmp_path):
+    from safe_io import validate_project_archive
+
+    meta = _flat_meta()
+    meta["layers"][0]["effects"] = [{
+        "type": "drop_shadow", "enabled": True, "blur": 4,
+    }]
+    path = tmp_path / "valid-effect.swiftshot"
+    _write_project(path, meta, {"layer_0.png": _image_bytes()})
+
+    with zipfile.ZipFile(path) as zf:
+        validated, _names = validate_project_archive(zf, path)
+
+    assert validated["layers"][0]["effects"][0]["blur"] == 4
+
+
+@pytest.mark.parametrize("effect, message", [
+    ({"type": "unknown"}, "type is invalid"),
+    ({"type": "drop_shadow", "blur": 1_000_000},
+     "blur must be between 0 and 60"),
+    ({"type": "stroke", "color": [0, "1", 2]},
+     "color must be three RGB integers"),
+    ({"type": "stroke", "position": "sideways"},
+     "position is invalid"),
+    ({"type": "color_overlay", "payload": {"nested": "data"}},
+     "unexpected field payload"),
+])
+def test_project_rejects_unsafe_layer_effect_values(
+        tmp_path, effect, message):
+    from safe_io import ProjectValidationError, validate_project_archive
+
+    meta = _flat_meta()
+    meta["layers"][0]["effects"] = [effect]
+    path = tmp_path / "unsafe-effect.swiftshot"
+    _write_project(path, meta, {"layer_0.png": _image_bytes()})
+
+    with zipfile.ZipFile(path) as zf, pytest.raises(
+            ProjectValidationError, match=message):
+        validate_project_archive(zf, path)
+
+
 def test_future_project_version_is_rejected_before_layer_decode(tmp_path):
     from safe_io import UnsupportedProjectVersion, validate_project_archive
 

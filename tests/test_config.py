@@ -190,6 +190,19 @@ def test_recent_colors_reset_after_mutation(fresh_config):
     assert cfg.EDITOR_RECENT_COLORS == []
 
 
+def test_import_clamps_backdrop_padding_to_memory_safe_ui_range(
+        fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    import_path = tmp_path / "unsafe-padding.json"
+    import_path.write_text(
+        json.dumps({"BACKDROP_PADDING": 2_000_000_000}),
+        encoding="utf-8",
+    )
+
+    assert cfg.import_settings(str(import_path))
+    assert cfg.BACKDROP_PADDING == 400
+
+
 def test_recent_colors_reject_invalid_values(fresh_config):
     cfg = fresh_config.Config()
 

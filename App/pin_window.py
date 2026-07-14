@@ -20,6 +20,7 @@ from config import config
 MAX_PIN_RENDER_PIXELS = 16_000_000
 MAX_PIN_RENDER_DIMENSION = 8_192
 PIN_SCREEN_FRACTION = 0.85
+PIN_MIN_WINDOW_EXTENT = 36
 
 
 class PinWindow(QWidget):
@@ -116,7 +117,14 @@ class PinWindow(QWidget):
         self._pixmap = self._original_pixmap.scaled(
             w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
-        self.setFixedSize(self._pixmap.width() + 4, self._pixmap.height() + 4)
+        # Extreme panoramas can legitimately scale to only one or two pixels
+        # on their short axis. Keep enough widget surface for the native close
+        # control and keyboard focus ring instead of clipping the only visible
+        # dismissal affordance outside a 5px-high/5px-wide window.
+        self.setFixedSize(
+            max(PIN_MIN_WINDOW_EXTENT, self._pixmap.width() + 4),
+            max(PIN_MIN_WINDOW_EXTENT, self._pixmap.height() + 4),
+        )
         self._close_button.setGeometry(self._close_rect())
 
     def _close_rect(self):

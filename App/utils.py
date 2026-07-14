@@ -326,7 +326,9 @@ def apply_backdrop(pixmap):
     if not getattr(cfg, "BACKDROP_ENABLED", False):
         return pixmap
 
-    pad = max(0, int(getattr(cfg, "BACKDROP_PADDING", 48)))
+    # Match the settings/config contract defensively. A poisoned runtime value
+    # must not turn one capture into an unbounded Pillow/NumPy allocation.
+    pad = max(0, min(400, int(getattr(cfg, "BACKDROP_PADDING", 48))))
     img = qpixmap_to_pil(pixmap)
     frame_style = getattr(cfg, "BACKDROP_FRAME", "none")
     if frame_style in ("macos", "windows"):
@@ -521,24 +523,26 @@ def set_startup_registry(enable=True):
     try:
         import winreg
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
-        if enable:
-            # Determine the command to run
-            if getattr(sys, 'frozen', False):
-                cmd = f'"{sys.executable}"'
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, key_path, 0,
+                winreg.KEY_SET_VALUE) as key:
+            if enable:
+                # Determine the command to run
+                if getattr(sys, 'frozen', False):
+                    cmd = f'"{sys.executable}"'
+                else:
+                    cmd = f'"{sys.executable}" "{__file__}"'
+                    # Try to find main.py relative to this file
+                    main_py = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), 'main.py')
+                    if os.path.exists(main_py):
+                        cmd = f'"{sys.executable}" "{main_py}"'
+                winreg.SetValueEx(key, "SwiftShot", 0, winreg.REG_SZ, cmd)
             else:
-                cmd = f'"{sys.executable}" "{__file__}"'
-                # Try to find main.py relative to this file
-                main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'main.py')
-                if os.path.exists(main_py):
-                    cmd = f'"{sys.executable}" "{main_py}"'
-            winreg.SetValueEx(key, "SwiftShot", 0, winreg.REG_SZ, cmd)
-        else:
-            try:
-                winreg.DeleteValue(key, "SwiftShot")
-            except FileNotFoundError:
-                pass
-        winreg.CloseKey(key)
+                try:
+                    winreg.DeleteValue(key, "SwiftShot")
+                except FileNotFoundError:
+                    pass
         return True
     except Exception:
         return False

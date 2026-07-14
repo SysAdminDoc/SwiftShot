@@ -32,6 +32,41 @@ MAX_RECOVERY_PREVIEW_BYTES = 2 * 1024 * 1024
 MAX_RECOVERY_NAME_LENGTH = 255
 RECOVERY_PREVIEW_MEMBER = "recovery-preview.png"
 
+_EFFECT_SCHEMAS = {
+    "drop_shadow": {
+        "ints": {"blur": (0, 60), "opacity": (0, 255),
+                 "angle": (0, 360), "distance": (0, 100)},
+        "colors": {"color"},
+    },
+    "outer_glow": {
+        "ints": {"blur": (0, 60), "opacity": (0, 255),
+                 "spread": (0, 30)},
+        "colors": {"color"},
+    },
+    "inner_glow": {
+        "ints": {"blur": (0, 60), "opacity": (0, 255)},
+        "colors": {"color"},
+    },
+    "bevel_emboss": {
+        "ints": {"depth": (1, 20), "size": (1, 30),
+                 "opacity": (0, 255), "angle": (0, 360)},
+        "colors": {"highlight_color", "shadow_color"},
+    },
+    "color_overlay": {
+        "ints": {"opacity": (0, 255)},
+        "colors": {"color"},
+    },
+    "gradient_overlay": {
+        "ints": {"opacity": (0, 255), "angle": (0, 360)},
+        "colors": {"color1", "color2"},
+    },
+    "stroke": {
+        "ints": {"size": (1, 50), "opacity": (0, 255)},
+        "colors": {"color"},
+        "enums": {"position": {"outside", "inside", "center"}},
+    },
+}
+
 
 class SafeImageError(ValueError):
     pass
@@ -147,6 +182,39 @@ def _require_int(value, label, minimum, maximum):
     return value
 
 
+def _validate_effect(effect, label):
+    kind = effect.get("type")
+    schema = _EFFECT_SCHEMAS.get(kind)
+    if schema is None:
+        _project_error(f"{label}.type is invalid")
+    if "enabled" in effect and type(effect["enabled"]) is not bool:
+        _project_error(f"{label}.enabled must be true or false")
+
+    int_fields = schema.get("ints", {})
+    color_fields = schema.get("colors", set())
+    enum_fields = schema.get("enums", {})
+    allowed = {"type", "enabled", *int_fields, *color_fields, *enum_fields}
+    unexpected = set(effect) - allowed
+    if unexpected:
+        _project_error(
+            f"{label} contains unexpected field {sorted(unexpected)[0]}")
+
+    for key, (minimum, maximum) in int_fields.items():
+        if key in effect:
+            _require_int(effect[key], f"{label}.{key}", minimum, maximum)
+    for key in color_fields:
+        if key not in effect:
+            continue
+        color = effect[key]
+        if (not isinstance(color, list) or len(color) != 3 or
+                any(type(channel) is not int or not 0 <= channel <= 255
+                    for channel in color)):
+            _project_error(f"{label}.{key} must be three RGB integers")
+    for key, choices in enum_fields.items():
+        if key in effect and effect[key] not in choices:
+            _project_error(f"{label}.{key} is invalid")
+
+
 def _validate_layer_common(layer, label):
     if not isinstance(layer, dict):
         _project_error(f"{label} must be an object")
@@ -167,6 +235,8 @@ def _validate_layer_common(layer, label):
         _project_error(f"{label}.effects is invalid")
     if any(not isinstance(effect, dict) for effect in effects):
         _project_error(f"{label}.effects entries must be objects")
+    for index, effect in enumerate(effects):
+        _validate_effect(effect, f"{label}.effects[{index}]")
 
 
 def _validate_group_size(layer, label):

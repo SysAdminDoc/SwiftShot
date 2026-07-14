@@ -415,7 +415,11 @@ def is_high_contrast_enabled():
 
         value = HIGHCONTRAST()
         value.cbSize = ctypes.sizeof(value)
-        ok = ctypes.windll.user32.SystemParametersInfoW(
+        user32 = ctypes.windll.user32
+        user32.SystemParametersInfoW.argtypes = [
+            ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+        user32.SystemParametersInfoW.restype = ctypes.c_int
+        ok = user32.SystemParametersInfoW(
             0x0042, value.cbSize, ctypes.byref(value), 0
         )
         return bool(ok and value.dwFlags & 0x00000001)

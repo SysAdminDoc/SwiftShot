@@ -46,6 +46,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
 - Pins auto-fit the active work area and enforce decoded/rendered pixel limits.
   Oversized scrolling captures stop safely with clear partial-result guidance
   instead of continuing until the process exhausts memory.
+- Ultra-wide and ultra-tall pins retain enough surface for their close control
+  and focus ring; extreme aspect ratios can no longer collapse the window to a
+  1–5 px strip with its only pointer dismissal action clipped off-screen.
 - Tray notifications now carry a one-shot typed action instead of sharing a
   persistent update URL. Unrelated messages cannot open stale links, the
   notification preference is enforced in one place, and capture, save,
@@ -151,6 +154,13 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   additionally preflights ZIP paths, duplicates, compression/encryption, CRCs,
   member/expanded/JSON sizes, schema, versions, layer count/depth, aggregate
   decoded pixels and mask dimensions before replacing the open document.
+- `.swiftshot` layer effects now receive strict per-effect schema checks for
+  types, fields, RGB colors, enums, and the editor's actual numeric ranges.
+  Crafted blur/stroke values or malformed effect records can no longer reach
+  Pillow/Qt and crash or exhaust memory while a project opens or renders.
+- Backdrop padding is clamped to its 0–400 UI contract both when settings are
+  loaded/imported and when the transform runs, preventing poisoned runtime
+  state from requesting an unbounded Pillow/NumPy canvas allocation.
 - Image saves/exports, `.swiftshot` projects, and capture-history PNGs now
   write to a same-directory temporary file, flush and decode/CRC-verify it,
   then atomically replace the destination. Failed or cancelled Save As keeps
@@ -162,6 +172,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
 - The update-check thread is joined on shutdown, preventing a "QThread
   destroyed while running" warning (and a signal delivered to a torn-down app)
   when you quit during the network check.
+- The 64-bit single-instance mutex and cursor GDI cleanup now use declared,
+  pointer-safe Win32 signatures; duplicate-process handles, Tesseract decoder
+  files, and startup registry keys close deterministically. The last-resort
+  startup error path also retains its temporary QApplication long enough to
+  show the real failure instead of triggering a secondary Qt fast-fail.
 - The monitor picker shows a "No displays detected" empty state instead of an
   "All Monitors (0)" button that would produce an empty capture.
 

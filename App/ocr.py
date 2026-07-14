@@ -304,8 +304,11 @@ def _ocr_tesseract(image_path):
     """Use pytesseract (requires Tesseract installed)."""
     import pytesseract
     from PIL import Image
-    img = Image.open(image_path)
-    text = pytesseract.image_to_string(img)
+    # Explicitly close the decoder before ocr_pixmap() removes its temporary
+    # file. Relying on CPython refcounting left the file locked with alternate
+    # Pillow plugins/runtimes and leaked handles during repeated OCR batches.
+    with Image.open(image_path) as img:
+        text = pytesseract.image_to_string(img)
     return text.strip()
 
 

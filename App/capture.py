@@ -125,6 +125,7 @@ class CaptureManager:
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
 
             class CURSORINFO(ctypes.Structure):
                 _fields_ = [
@@ -136,6 +137,8 @@ class CaptureManager:
 
             user32.GetCursorInfo.argtypes = [ctypes.POINTER(CURSORINFO)]
             user32.GetCursorInfo.restype = wintypes.BOOL
+            gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+            gdi32.DeleteObject.restype = wintypes.BOOL
 
             ci = CURSORINFO()
             ci.cbSize = ctypes.sizeof(CURSORINFO)
@@ -174,9 +177,9 @@ class CaptureManager:
                 cursor_x -= ii.xHotspot
                 cursor_y -= ii.yHotspot
                 if ii.hbmMask:
-                    ctypes.windll.gdi32.DeleteObject(ii.hbmMask)
+                    gdi32.DeleteObject(ii.hbmMask)
                 if ii.hbmColor:
-                    ctypes.windll.gdi32.DeleteObject(ii.hbmColor)
+                    gdi32.DeleteObject(ii.hbmColor)
 
             # Render the ACTUAL cursor shape (I-beam / hand / resize / arrow)
             # via DrawIconEx, not the app's QCursor (which is usually null and

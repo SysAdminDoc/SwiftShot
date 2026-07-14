@@ -60,6 +60,19 @@ def test_backdrop_window_frame_adds_titlebar(qapp, fresh_config):
         assert out.height() == 20 + bar_h + 20
 
 
+def test_backdrop_transform_defensively_clamps_runtime_padding(
+        qapp, fresh_config):
+    import utils
+
+    fresh_config.config.BACKDROP_ENABLED = True
+    fresh_config.config.BACKDROP_TYPE = "solid"
+    fresh_config.config.BACKDROP_PADDING = 2_000_000_000
+    result = utils.apply_backdrop(_pixmap(10, 8))
+
+    assert result.width() == 810
+    assert result.height() == 808
+
+
 def test_window_frame_helper_returns_taller_rgba(qapp):
     from PIL import Image
     from utils import _window_frame
