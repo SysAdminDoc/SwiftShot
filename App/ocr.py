@@ -17,6 +17,9 @@ import tempfile
 from logger import log
 
 
+OCR_TIMEOUT_SECONDS = 30
+
+
 _PII_PATTERNS = [
     re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),   # email
     re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),                       # IPv4
@@ -277,7 +280,7 @@ def _ocr_windows(image_path, mode="text"):
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                 '-File', script_path
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=OCR_TIMEOUT_SECONDS,
             encoding='utf-8', errors='replace',
             creationflags=creation_flags, env=run_env
         )
@@ -308,7 +311,8 @@ def _ocr_tesseract(image_path):
     # file. Relying on CPython refcounting left the file locked with alternate
     # Pillow plugins/runtimes and leaked handles during repeated OCR batches.
     with Image.open(image_path) as img:
-        text = pytesseract.image_to_string(img)
+        text = pytesseract.image_to_string(
+            img, timeout=OCR_TIMEOUT_SECONDS)
     return text.strip()
 
 

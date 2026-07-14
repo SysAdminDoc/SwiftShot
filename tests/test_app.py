@@ -81,6 +81,54 @@ def test_unattended_exit_closes_clean_session(qapp, monkeypatch):
     assert quit_calls == [True]
 
 
+def test_exit_refuses_to_destroy_active_ocr_worker(qapp, monkeypatch):
+    import app as app_module
+
+    class RunningWorker:
+        @staticmethod
+        def isRunning():
+            return True
+
+    editor = _CloseableEditor(dirty=False)
+    controller = _exit_controller(qapp, [editor])
+    controller._ocr_workers = [RunningWorker()]
+    messages = []
+    quit_calls = []
+    monkeypatch.setattr(
+        app_module.QMessageBox,
+        "information",
+        lambda _parent, title, message: messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        app_module.QApplication, "quit", lambda: quit_calls.append(True))
+
+    assert controller.exit_app() is False
+    assert editor.close_calls == 0
+    assert quit_calls == []
+    assert messages and messages[0][0] == "Text Recognition In Progress"
+
+
+def test_unattended_exit_defers_active_ocr_without_prompt(qapp, monkeypatch):
+    import app as app_module
+
+    class RunningWorker:
+        @staticmethod
+        def isRunning():
+            return True
+
+    controller = _exit_controller(qapp, [])
+    controller._ocr_workers = [RunningWorker()]
+    prompt_calls = []
+    monkeypatch.setattr(
+        app_module.QMessageBox,
+        "information",
+        lambda *_args: prompt_calls.append(True),
+    )
+
+    assert controller.exit_app(allow_prompts=False) is False
+    assert prompt_calls == []
+
+
 def test_handle_capture_runs_workflow_actions_in_order(qapp, monkeypatch):
     from app import SwiftShotApp
     from config import config

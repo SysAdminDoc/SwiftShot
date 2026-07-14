@@ -172,6 +172,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
 - The update-check thread is joined on shutdown, preventing a "QThread
   destroyed while running" warning (and a signal delivered to a torn-down app)
   when you quit during the network check.
+- Shutdown now defers while OCR is active instead of waiting three seconds and
+  destroying a still-running QThread/PowerShell recognizer. Interactive exits
+  explain when to retry; unattended installer exits report cancellation and
+  can retry after the bounded OCR operation completes. Windows and optional
+  Tesseract recognition now share the same 30-second process timeout.
 - The 64-bit single-instance mutex and cursor GDI cleanup now use declared,
   pointer-safe Win32 signatures; duplicate-process handles, Tesseract decoder
   files, and startup registry keys close deterministically. The last-resort

@@ -1784,6 +1784,28 @@ class SwiftShotApp:
                 getattr(editor, "_dirty", False) for editor in self.editors):
             log.info("Unattended exit refused because an editor is dirty")
             return False
+        running_ocr = []
+        for worker in list(self._ocr_workers):
+            try:
+                if worker.isRunning():
+                    running_ocr.append(worker)
+            except RuntimeError:
+                # Qt wrapper already deleted; it cannot still own a thread.
+                continue
+        if running_ocr:
+            log.info(
+                "Application exit deferred for %d active OCR operation(s)",
+                len(running_ocr),
+            )
+            if allow_prompts:
+                QMessageBox.information(
+                    None,
+                    "Text Recognition In Progress",
+                    "SwiftShot is still recognizing text. Wait for the OCR "
+                    "result or error, then exit again. This prevents an "
+                    "incomplete operation from being terminated abruptly.",
+                )
+            return False
         for editor in list(self.editors):
             try:
                 if not editor.close():
@@ -1808,13 +1830,6 @@ class SwiftShotApp:
                 self._update_checker.requestInterruption()
                 if not self._update_checker.wait(5000):
                     log.warning("Update checker did not stop before shutdown")
-            except Exception:
-                pass
-        # Wait briefly for any in-flight OCR workers so we don't tear down the
-        # process while a QThread is still running.
-        for worker in list(self._ocr_workers):
-            try:
-                worker.wait(3000)
             except Exception:
                 pass
         # Close all pin windows

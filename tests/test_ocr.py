@@ -55,6 +55,7 @@ def test_windows_ocr_error_marker_raises(monkeypatch, tmp_path):
 
 def test_tesseract_decoder_is_closed(monkeypatch, tmp_path):
     image = object()
+    calls = []
 
     class Decoder:
         entered = False
@@ -69,8 +70,10 @@ def test_tesseract_decoder_is_closed(monkeypatch, tmp_path):
 
     decoder = Decoder()
     fake_tesseract = types.ModuleType("pytesseract")
-    fake_tesseract.image_to_string = lambda value: (
-        " extracted text " if value is image else "wrong image")
+    def image_to_string(value, **kwargs):
+        calls.append((value, kwargs))
+        return " extracted text " if value is image else "wrong image"
+    fake_tesseract.image_to_string = image_to_string
     monkeypatch.setitem(sys.modules, "pytesseract", fake_tesseract)
 
     # _ocr_tesseract imports PIL.Image inside the function, so patch the
@@ -81,6 +84,7 @@ def test_tesseract_decoder_is_closed(monkeypatch, tmp_path):
     assert ocr._ocr_tesseract(str(tmp_path / "image.png")) == "extracted text"
     assert decoder.entered is True
     assert decoder.exited is True
+    assert calls == [(image, {"timeout": ocr.OCR_TIMEOUT_SECONDS})]
 
 
 @pytest.mark.parametrize("entrypoint", [ocr.ocr_pixmap, ocr.ocr_words_pixmap])
