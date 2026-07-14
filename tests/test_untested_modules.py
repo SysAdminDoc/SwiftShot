@@ -201,6 +201,28 @@ def test_ocr_dialog_reports_clipboard_state_after_edits(qapp):
         dialog.close()
 
 
+def test_ocr_dialog_stays_recoverable_when_clipboard_is_busy(
+        qapp, monkeypatch):
+    import ocr_dialog
+
+    class _FailingClipboard:
+        @staticmethod
+        def setText(_text):
+            raise RuntimeError("clipboard busy")
+
+    monkeypatch.setattr(
+        ocr_dialog.QApplication, "clipboard", lambda: _FailingClipboard())
+    dialog = ocr_dialog.OcrResultDialog("recoverable text")
+    try:
+        assert dialog.text_edit.toPlainText() == "recoverable text"
+        assert "Could not copy automatically" in dialog.status_label.text()
+        dialog._copy()
+        assert "was not copied" in dialog.status_label.text()
+        assert "clipboard busy" in dialog.status_label.text()
+    finally:
+        dialog.close()
+
+
 def test_editor_state_json_is_bounded_and_atomic(tmp_path, monkeypatch):
     import editor
     import utils

@@ -152,6 +152,13 @@ class ScrollingCaptureDialog(QDialog):
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowRect.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
 
         # Get foreground window
         self._target_hwnd = user32.GetForegroundWindow()
@@ -176,6 +183,9 @@ class ScrollingCaptureDialog(QDialog):
         # Get window rect
         rect = wintypes.RECT()
         dwmapi = ctypes.windll.dwmapi
+        dwmapi.DwmGetWindowAttribute.argtypes = [
+            wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
         DWMWA_EXTENDED_FRAME_BOUNDS = 9
         r = dwmapi.DwmGetWindowAttribute(
             self._target_hwnd, DWMWA_EXTENDED_FRAME_BOUNDS,

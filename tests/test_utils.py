@@ -56,6 +56,23 @@ def test_save_pixmap_failure_returns_false(qapp, tmp_path):
     assert utils.save_pixmap(pixmap, str(missing_dir), "png") is False
 
 
+def test_save_pixmap_preserves_existing_file_when_publish_fails(
+        qapp, tmp_path, monkeypatch):
+    pixmap = QPixmap(4, 4)
+    pixmap.fill(QColor(20, 30, 40))
+    destination = tmp_path / "shot.png"
+    destination.write_bytes(b"existing capture")
+
+    def fail_publish(_source, _destination):
+        raise OSError("publish failed")
+
+    monkeypatch.setattr(utils.os, "replace", fail_publish)
+
+    assert utils.save_pixmap(pixmap, str(destination), "png") is False
+    assert destination.read_bytes() == b"existing capture"
+    assert list(tmp_path.glob(".shot.png.*.tmp")) == []
+
+
 def test_apply_frame_noop_when_all_disabled(qapp):
     """apply_frame must be a no-op (identity) unless a frame effect is enabled,
     so it is safe to call unconditionally in the capture funnel."""

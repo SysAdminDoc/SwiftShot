@@ -157,3 +157,57 @@ def test_filename_pattern_editor_enforces_safe_component_budget(qapp):
         assert dialog.filename_pattern.maxLength() == MAX_FILENAME_PATTERN_LENGTH
     finally:
         dialog.close()
+
+
+def test_open_log_failure_is_visible(qapp, monkeypatch):
+    import settings_dialog
+
+    dialog = settings_dialog.SettingsDialog()
+    warnings = []
+    monkeypatch.setattr(
+        settings_dialog.os,
+        "startfile",
+        lambda *_args: (_ for _ in ()).throw(OSError("no association")),
+    )
+    monkeypatch.setattr(
+        settings_dialog.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+    try:
+        dialog._open_log()
+        assert warnings and warnings[0][1] == "Log Not Opened"
+        assert "no association" in warnings[0][2]
+    finally:
+        dialog.close()
+
+
+def test_failed_startup_registry_change_rolls_back_only_that_setting(
+        qapp, monkeypatch):
+    import settings_dialog
+    import utils
+
+    config = settings_dialog.config
+    previous_startup = config.LAUNCH_AT_STARTUP
+    previous_updates = config.CHECK_FOR_UPDATES
+    dialog = settings_dialog.SettingsDialog()
+    dialog.launch_startup.setChecked(not previous_startup)
+    dialog.check_updates.setChecked(not previous_updates)
+    warnings = []
+    monkeypatch.setattr(config, "save", lambda: True)
+    monkeypatch.setattr(utils, "set_startup_registry", lambda _enabled: False)
+    monkeypatch.setattr(
+        settings_dialog.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+    try:
+        dialog._apply_and_close()
+        assert config.LAUNCH_AT_STARTUP == previous_startup
+        assert config.CHECK_FOR_UPDATES == (not previous_updates)
+        assert warnings and warnings[0][1] == "Startup Setting Unchanged"
+    finally:
+        # Config is a process-global singleton shared by the suite.
+        config.LAUNCH_AT_STARTUP = previous_startup
+        config.CHECK_FOR_UPDATES = previous_updates
+        dialog.close()

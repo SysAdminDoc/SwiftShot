@@ -30,8 +30,16 @@ class OcrResultDialog(QDialog):
             "Review, edit, and copy text extracted from the selected image.")
         # Styling comes from the app-wide theme stylesheet.
 
-        # Make the promise in the label true for every caller.
-        QApplication.clipboard().setText(text)
+        # Auto-copy is convenient, but a busy/unavailable Windows clipboard
+        # must not prevent the OCR result from opening for manual recovery.
+        try:
+            QApplication.clipboard().setText(text)
+            clipboard_status = "Copied automatically to the clipboard."
+        except Exception:
+            clipboard_status = (
+                "Could not copy automatically. Review the text, then select "
+                "Copy to Clipboard to try again."
+            )
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -40,7 +48,7 @@ class OcrResultDialog(QDialog):
         lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
         layout.addWidget(lbl)
 
-        self.status_label = QLabel("Copied automatically to the clipboard.")
+        self.status_label = QLabel(clipboard_status)
         self.status_label.setTextFormat(Qt.PlainText)
         self.status_label.setWordWrap(True)
         self.status_label.setAccessibleName("Clipboard status")
@@ -70,7 +78,14 @@ class OcrResultDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _copy(self):
-        QApplication.clipboard().setText(self.text_edit.toPlainText())
+        try:
+            QApplication.clipboard().setText(self.text_edit.toPlainText())
+        except Exception as error:
+            self.status_label.setText(
+                "Text was not copied because Windows could not update the "
+                f"clipboard. Try again or select the text manually. ({error})"
+            )
+            return
         self.status_label.setText("Copied the current text to the clipboard.")
 
     def _mark_edited(self):

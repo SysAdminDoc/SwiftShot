@@ -387,34 +387,44 @@ def apply_freehand_mask(pixmap, points, bounding_rect):
 
 
 def save_pixmap(pixmap, filepath, file_format, jpeg_quality=90):
-    """Save a QPixmap with SwiftShot output-format semantics."""
+    """Atomically save a verified QPixmap with SwiftShot format semantics."""
     fmt = file_format.lower()
     if fmt == "jpg":
         fmt = "jpeg"
 
     try:
-        if fmt == "webp":
-            image = qpixmap_to_pil(pixmap)
-            image.save(filepath, "WEBP", lossless=True, quality=100, method=6)
-            return True
+        expected_format = "JPEG" if fmt == "jpeg" else fmt.upper()
 
-        if fmt == "gif":
-            # Qt has no GIF encoder -- route through Pillow.
-            from PIL import Image
-            image = qpixmap_to_pil(pixmap)
-            image = image.convert("RGB").convert("P", palette=Image.ADAPTIVE)
-            image.save(filepath, "GIF")
-            return True
+        def _write(temp_path):
+            if fmt == "webp":
+                image = qpixmap_to_pil(pixmap)
+                image.save(
+                    temp_path, "WEBP", lossless=True, quality=100, method=6)
+                return
+            if fmt == "gif":
+                # Qt has no GIF encoder -- route through Pillow.
+                from PIL import Image
+                image = qpixmap_to_pil(pixmap)
+                image = image.convert("RGB").convert(
+                    "P", palette=Image.ADAPTIVE)
+                image.save(temp_path, "GIF")
+                return
+            if fmt == "avif":
+                # Qt has no AVIF encoder -- route through Pillow/libavif.
+                image = qpixmap_to_pil(pixmap)
+                image.save(temp_path, "AVIF", quality=90)
+                return
 
-        if fmt == "avif":
-            # Qt has no AVIF encoder -- route through Pillow (libavif, 12.3.0+).
-            image = qpixmap_to_pil(pixmap)
-            image.save(filepath, "AVIF", quality=90)
-            return True
+            quality = int(jpeg_quality) if expected_format == "JPEG" else -1
+            if not pixmap.save(temp_path, expected_format, quality):
+                raise OSError(f"Qt could not encode {expected_format}")
 
-        qt_format = "JPEG" if fmt == "jpeg" else fmt.upper()
-        quality = int(jpeg_quality) if qt_format == "JPEG" else -1
-        return pixmap.save(filepath, qt_format, quality)
+        def _verify(temp_path):
+            from safe_io import load_image
+            load_image(temp_path, allowed_formats={expected_format})
+
+        atomic_replace(filepath, _write, _verify)
+        return True
     except Exception as e:
         log.error(f"save_pixmap failed for {filepath} ({fmt}): {e}")
         return False
@@ -436,6 +446,16 @@ def get_foreground_window_metadata():
         import ctypes.wintypes
 
         user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
+        user32.GetWindowTextLengthW.argtypes = [ctypes.wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [
+            ctypes.wintypes.HWND, ctypes.wintypes.LPWSTR, ctypes.c_int]
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.GetWindowThreadProcessId.argtypes = [
+            ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = ctypes.wintypes.DWORD
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return metadata
@@ -452,6 +472,16 @@ def get_foreground_window_metadata():
             return metadata
 
         kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [
+            ctypes.wintypes.DWORD, ctypes.wintypes.BOOL,
+            ctypes.wintypes.DWORD]
+        kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD,
+            ctypes.wintypes.LPWSTR, ctypes.POINTER(ctypes.wintypes.DWORD)]
+        kernel32.QueryFullProcessImageNameW.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
         process = kernel32.OpenProcess(0x1000, False, pid.value)
         if not process:
             return metadata

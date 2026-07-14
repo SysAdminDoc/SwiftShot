@@ -316,7 +316,38 @@ class Config:
         self.EDITOR_RECENT_COLORS = recent_colors[:12]
         self.OUTPUT_FILENAME_PATTERN = self.OUTPUT_FILENAME_PATTERN[
             :MAX_FILENAME_PATTERN_LENGTH]
+        self._normalize_history_directory()
         self._normalize_hotkeys()
+
+    def _normalize_history_directory(self):
+        """Keep destructive history maintenance inside SwiftShot's data root.
+
+        ``CAPTURE_HISTORY_DIR`` is internal persisted state and has no picker in
+        Preferences. Older/hand-edited files could point it at Pictures or
+        another general image folder, where retention or Clear All would then
+        treat unrelated images as SwiftShot history. Resolve links/junctions
+        and fail closed to the dedicated default directory.
+        """
+        default = os.path.abspath(os.path.join(self._config_dir, "history"))
+        candidate = self.CAPTURE_HISTORY_DIR or default
+        try:
+            root = os.path.normcase(os.path.realpath(self._config_dir))
+            resolved = os.path.normcase(os.path.realpath(candidate))
+            inside_root = (os.path.commonpath([root, resolved]) == root
+                           and resolved != root)
+        except (OSError, TypeError, ValueError):
+            inside_root = False
+        if not inside_root:
+            self._log_warning(
+                "Ignoring CAPTURE_HISTORY_DIR outside SwiftShot's private "
+                "configuration directory"
+            )
+            candidate = default
+        self.CAPTURE_HISTORY_DIR = os.path.abspath(candidate)
+        try:
+            os.makedirs(self.CAPTURE_HISTORY_DIR, exist_ok=True)
+        except OSError as error:
+            self._log_warning(f"Could not create history directory: {error}")
 
     def _normalize_hotkeys(self):
         """Reject malformed/imported shortcuts and resolve physical collisions."""

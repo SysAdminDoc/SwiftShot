@@ -250,6 +250,24 @@ def test_oversized_config_is_quarantined_and_defaults_used(fresh_config):
     assert Path(str(path) + ".corrupt").exists()
 
 
+def test_persisted_history_directory_cannot_target_unrelated_images(
+        fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    unrelated = tmp_path / "Pictures"
+    unrelated.mkdir()
+    (unrelated / "family-photo.png").write_bytes(b"do not delete")
+    Path(cfg._config_file).write_text(
+        json.dumps({"CAPTURE_HISTORY_DIR": str(unrelated)}),
+        encoding="utf-8",
+    )
+
+    reloaded = fresh_config.Config()
+
+    expected = Path(reloaded._config_dir) / "history"
+    assert Path(reloaded.CAPTURE_HISTORY_DIR) == expected
+    assert (unrelated / "family-photo.png").read_bytes() == b"do not delete"
+
+
 def test_oversized_import_is_rejected_without_changing_runtime(fresh_config, tmp_path):
     cfg = fresh_config.Config()
     cfg.THEME = "light"

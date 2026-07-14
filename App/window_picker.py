@@ -154,6 +154,9 @@ class WindowPicker(QWidget):
         self.dwmapi = ctypes.windll.dwmapi
         self.user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
         self.user32.EnumWindows.restype = wintypes.BOOL
+        self.user32.EnumChildWindows.argtypes = [
+            wintypes.HWND, WNDENUMPROC, wintypes.LPARAM]
+        self.user32.EnumChildWindows.restype = wintypes.BOOL
         self.user32.IsWindowVisible.argtypes = [wintypes.HWND]
         self.user32.IsWindowVisible.restype = wintypes.BOOL
         self.user32.GetWindowRect.argtypes = [wintypes.HWND, POINTER(wintypes.RECT)]
@@ -164,6 +167,9 @@ class WindowPicker(QWidget):
         self.user32.GetWindowTextLengthW.restype = ctypes.c_int
         self.user32.GetParent.argtypes = [wintypes.HWND]
         self.user32.GetParent.restype = wintypes.HWND
+        self.dwmapi.DwmGetWindowAttribute.argtypes = [
+            wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        self.dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
 
     def showEvent(self, event):
         super().showEvent(event)

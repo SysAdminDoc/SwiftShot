@@ -823,8 +823,15 @@ class SettingsDialog(QDialog):
             else:
                 import subprocess
                 subprocess.Popen(['xdg-open', config.log_file])
-        except Exception:
-            pass
+        except Exception as error:
+            log.warning("Could not open the SwiftShot log", exc_info=True)
+            QMessageBox.warning(
+                self,
+                "Log Not Opened",
+                "SwiftShot could not open its log file with the default text "
+                "viewer. You can open it manually at:\n\n"
+                f"{config.log_file}\n\n{error}",
+            )
 
     def _reset_defaults(self):
         reply = QMessageBox.question(
@@ -1004,16 +1011,34 @@ class SettingsDialog(QDialog):
             return
 
         # Apply startup registry only after the configuration is durable.
+        startup_requested = config.LAUNCH_AT_STARTUP
+        startup_previous = snapshot["LAUNCH_AT_STARTUP"]
         try:
             from utils import set_startup_registry
-            if not set_startup_registry(config.LAUNCH_AT_STARTUP) and config.LAUNCH_AT_STARTUP:
+            if not set_startup_registry(startup_requested):
                 log.warning("Could not write the startup registry entry")
+                config.LAUNCH_AT_STARTUP = startup_previous
+                self.launch_startup.setChecked(startup_previous)
+                if not config.save():
+                    log.error(
+                        "Could not roll back the startup preference after the "
+                        "registry update failed"
+                    )
                 QMessageBox.warning(
-                    self, "Startup setting",
-                    "SwiftShot could not register itself to launch at startup.\n"
-                    "The rest of your settings were saved.")
+                    self, "Startup Setting Unchanged",
+                    "SwiftShot could not update its Windows startup entry. "
+                    "That setting was restored to its previous value; the "
+                    "rest of your settings were saved.")
         except Exception:
             log.warning("Startup registry update failed", exc_info=True)
+            config.LAUNCH_AT_STARTUP = startup_previous
+            self.launch_startup.setChecked(startup_previous)
+            config.save()
+            QMessageBox.warning(
+                self, "Startup Setting Unchanged",
+                "SwiftShot could not update its Windows startup entry. That "
+                "setting was restored to its previous value; the rest of "
+                "your settings were saved.")
 
         app = QApplication.instance()
         if app:

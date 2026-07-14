@@ -24,12 +24,23 @@ from PyQt5.QtCore import Qt, QTimer, QRect, QThread, pyqtSignal
 from config import config
 from logger import log
 from ocr_dialog import OcrResultDialog
-from safe_io import load_image
+from safe_io import MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, load_image
 from utils import pil_to_qpixmap
 
 
 def _load_file_pixmap(path):
     return pil_to_qpixmap(load_image(path))
+
+
+def _pixmap_within_safe_limits(pixmap):
+    if pixmap is None or pixmap.isNull():
+        return False
+    width, height = pixmap.width(), pixmap.height()
+    return (
+        0 < width <= MAX_IMAGE_DIMENSION
+        and 0 < height <= MAX_IMAGE_DIMENSION
+        and width * height <= MAX_IMAGE_PIXELS
+    )
 
 
 class _NotificationActionKind(Enum):
@@ -462,7 +473,8 @@ class SwiftShotApp:
                 if combo and not listener.register(combo, callback):
                     raise ValueError(f"{label} shortcut is invalid or duplicated")
 
-            self._hotkey_listener.start()
+            if not self._hotkey_listener.start():
+                raise OSError("Windows did not install the keyboard hook")
             log.info("Hotkeys registered successfully")
             return True
         except Exception as e:
@@ -1227,7 +1239,8 @@ class SwiftShotApp:
 
     def _on_ocr_done(self, text):
         if text:
-            QApplication.clipboard().setText(text)
+            # The result dialog owns auto-copy and keeps the extracted text
+            # recoverable even when the Windows clipboard is temporarily busy.
             OcrResultDialog(text).exec_()
         else:
             self._notify(
@@ -1282,6 +1295,12 @@ class SwiftShotApp:
     # -------------------------------------------------------------------
 
     def _handle_capture(self, pixmap, preserve_alpha=False):
+        if not _pixmap_within_safe_limits(pixmap):
+            self._capture_failed(
+                "The capture is empty or exceeds SwiftShot's safe image "
+                "limits. Capture a smaller area and try again."
+            )
+            return
         if config.PLAY_CAMERA_SOUND:
             try:
                 from utils import play_camera_sound
@@ -1389,6 +1408,14 @@ class SwiftShotApp:
         self._open_editor(px)
 
     def _open_editor(self, pixmap):
+        if not _pixmap_within_safe_limits(pixmap):
+            self._notify(
+                "Image could not be opened",
+                "The clipboard or capture image is empty or exceeds "
+                "SwiftShot's safe image limits. Try a smaller image.",
+                warning=True, required=True,
+            )
+            return False
         try:
             from editor import ImageEditor
             # Reuse an existing editor window if the user asked for it --
@@ -1402,7 +1429,7 @@ class SwiftShotApp:
                             existing.raise_()
                             existing.activateWindow()
                             log.info("Capture loaded into existing editor")
-                            return
+                            return True
                     except Exception:
                         continue
             editor = ImageEditor(pixmap, self)
@@ -1413,12 +1440,17 @@ class SwiftShotApp:
             if sys.platform == 'win32':
                 try:
                     import ctypes
+                    from ctypes import wintypes
                     hwnd = int(editor.winId())
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    set_foreground = ctypes.windll.user32.SetForegroundWindow
+                    set_foreground.argtypes = [wintypes.HWND]
+                    set_foreground.restype = wintypes.BOOL
+                    set_foreground(wintypes.HWND(hwnd))
                 except Exception:
                     pass
             self.editors.append(editor)
             log.info("Editor opened successfully")
+            return True
         except Exception as e:
             log.error(f"Could not open editor: {e}", exc_info=True)
             try:
@@ -1428,6 +1460,7 @@ class SwiftShotApp:
                 )
             except Exception:
                 pass
+            return False
 
     def _save_directly(self, pixmap):
         try:
@@ -1446,11 +1479,26 @@ class SwiftShotApp:
                 config.OUTPUT_JPEG_QUALITY,
             )
             if success:
-                self._notify(
-                    "Screenshot saved", f"Saved to {filepath}",
-                    duration_ms=2000)
                 if config.COPY_PATH_TO_CLIPBOARD:
-                    QApplication.clipboard().setText(filepath)
+                    try:
+                        QApplication.clipboard().setText(filepath)
+                    except Exception:
+                        log.warning("Saved screenshot path was not copied",
+                                    exc_info=True)
+                        self._notify(
+                            "Screenshot saved; path not copied",
+                            f"Saved to {filepath}, but Windows did not accept "
+                            "the file path on the clipboard.",
+                            warning=True, required=True,
+                        )
+                    else:
+                        self._notify(
+                            "Screenshot saved", f"Saved to {filepath}",
+                            duration_ms=2000)
+                else:
+                    self._notify(
+                        "Screenshot saved", f"Saved to {filepath}",
+                        duration_ms=2000)
                 log.info(f"Screenshot saved: {filepath}")
             else:
                 log.error(f"Direct save failed: {filepath}")
@@ -1468,10 +1516,21 @@ class SwiftShotApp:
                 warning=True, duration_ms=4000, required=True)
 
     def _copy_to_clipboard(self, pixmap):
-        QApplication.clipboard().setPixmap(pixmap)
-        self._notify(
-            "Screenshot copied", "The screenshot is ready to paste.",
-            duration_ms=1500)
+        try:
+            QApplication.clipboard().setPixmap(pixmap)
+            self._notify(
+                "Screenshot copied", "The screenshot is ready to paste.",
+                duration_ms=1500)
+        except Exception:
+            log.warning("Could not copy screenshot to the clipboard",
+                        exc_info=True)
+            self._notify(
+                "Screenshot not copied",
+                "Windows did not accept the clipboard image. The capture is "
+                "still available in any other selected destinations; try "
+                "copying it again from the editor or history.",
+                warning=True, required=True,
+            )
 
     # -------------------------------------------------------------------
     # Pin to Desktop

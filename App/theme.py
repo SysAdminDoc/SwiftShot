@@ -478,9 +478,14 @@ def _apply_palette(app: QApplication, colors):
     palette.setColor(QPalette.ButtonText, QColor(colors["TEXT_PRI"]))
     palette.setColor(QPalette.BrightText, QColor(colors["RED"]))
     palette.setColor(QPalette.Link, QColor(colors["ACCENT"]))
+    palette.setColor(QPalette.LinkVisited, QColor(colors["ACCENT_H"]))
     palette.setColor(QPalette.Highlight, QColor(colors["ACCENT"]))
     highlight_text = "#ffffff" if colors is LIGHT_COLORS else colors["BG1"]
     palette.setColor(QPalette.HighlightedText, QColor(highlight_text))
+    if hasattr(QPalette, "PlaceholderText"):
+        palette.setColor(QPalette.PlaceholderText, QColor(colors["TEXT_MUT"]))
+    palette.setColor(
+        QPalette.Disabled, QPalette.WindowText, QColor(colors["TEXT_MUT"]))
     palette.setColor(QPalette.Disabled, QPalette.Text, QColor(colors["TEXT_MUT"]))
     palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(colors["TEXT_MUT"]))
     app.setPalette(palette)

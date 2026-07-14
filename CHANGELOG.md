@@ -33,6 +33,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   a local, no-telemetry artifact to attach to a bug report.
 
 ### UX & feedback
+- Clipboard contention no longer hides OCR text, aborts a multi-action capture,
+  or falsely claims a successfully written screenshot was not saved. OCR,
+  history, image, and save-path copy flows retain the result and explain how
+  to retry; failed “Open Log” and Windows-startup changes are likewise visible
+  and the startup preference rolls back without discarding other settings.
 - Monitor selection now remains usable with many displays via a bounded,
   keyboard-focusable horizontal picker; single-display setups no longer offer
   a redundant “All Monitors” action. History and OCR dialogs provide explicit
@@ -84,6 +89,13 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Direct and CLI image output now encodes to a sibling temporary file, decodes
+  and format-verifies it, then atomically publishes it. An encoder, disk, or
+  replacement failure leaves an existing destination untouched.
+- Global-shortcut startup now waits for a real Windows hook handle and reports
+  asynchronous installation failure instead of treating Thread.start as
+  success. Pointer-sized Win32 signatures are declared across capture, window
+  enumeration, scrolling, foreground activation, and process metadata paths.
 - Global capture rectangles are now composed from each intersecting display in
   that display's local coordinate space, including negative origins and
   high-DPI grabs. Window, scrolling, and CLI region capture no longer return
@@ -219,6 +231,10 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   the installed Pillow was built with libavif (the 12.3.0+ wheels are).
 
 ### Security & dependencies
+- Persisted history storage is constrained to a resolved subdirectory of
+  SwiftShot's private configuration root. A stale, hand-edited, symlinked, or
+  malicious path can no longer make retention or Clear All process unrelated
+  images elsewhere on disk.
 - The installer control server now requests a same-user-only local socket and
   rejects oversized or malformed commands before dispatch. Cross-user local
   sessions and unbounded request buffering cannot reach the shutdown path.

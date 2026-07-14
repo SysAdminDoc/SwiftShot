@@ -60,3 +60,19 @@ def test_register_rejects_duplicate_physical_binding():
     manager = HotkeyManager()
     assert manager.register("Ctrl+Print", lambda: None)
     assert not manager.register("Control+PrtSc", lambda: None)
+
+
+def test_start_reports_hook_thread_initialization_failure(monkeypatch):
+    from hotkeys import HotkeyManager
+
+    manager = HotkeyManager()
+    assert manager.register("Print", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "_hook_thread",
+        lambda: (_ for _ in ()).throw(OSError("hook unavailable")),
+    )
+
+    assert manager.start() is False
+    assert manager._thread is None
+    assert manager._running is False

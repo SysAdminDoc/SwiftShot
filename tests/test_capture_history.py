@@ -486,3 +486,35 @@ def test_history_copy_reports_success_and_unreadable_image(
         assert warnings and warnings[0][1] == "Capture Not Copied"
     finally:
         dialog.close()
+
+
+def test_history_copy_reports_busy_clipboard(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("green"))
+    filepath = capture_history.save_to_history(pixmap)
+    dialog = capture_history.CaptureHistoryDialog()
+    warnings = []
+
+    class _FailingClipboard:
+        @staticmethod
+        def setPixmap(_pixmap):
+            raise RuntimeError("clipboard busy")
+
+    monkeypatch.setattr(
+        capture_history.QApplication,
+        "clipboard",
+        lambda: _FailingClipboard(),
+    )
+    monkeypatch.setattr(
+        capture_history.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+    try:
+        dialog._on_copy(filepath)
+        assert warnings and warnings[0][1] == "Capture Not Copied"
+        assert "clipboard busy" in warnings[0][2]
+    finally:
+        dialog.close()

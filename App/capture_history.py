@@ -745,7 +745,18 @@ class CaptureHistoryDialog(QDialog):
     def _on_copy(self, filepath):
         pixmap = _safe_pixmap(filepath)
         if not pixmap.isNull():
-            QApplication.clipboard().setPixmap(pixmap)
+            try:
+                QApplication.clipboard().setPixmap(pixmap)
+            except Exception as error:
+                log.warning("Could not copy history image", exc_info=True)
+                QMessageBox.warning(
+                    self,
+                    "Capture Not Copied",
+                    "Windows did not accept this image on the clipboard. "
+                    "Try opening it in the editor and copying again.\n\n"
+                    f"{error}",
+                )
+                return
             self.status_label.setText(
                 f"Copied {os.path.basename(filepath)} to the clipboard.")
             self.status_label.show()

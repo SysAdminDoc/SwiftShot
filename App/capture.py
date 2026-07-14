@@ -134,6 +134,9 @@ class CaptureManager:
                     ('ptScreenPos', wintypes.POINT),
                 ]
 
+            user32.GetCursorInfo.argtypes = [ctypes.POINTER(CURSORINFO)]
+            user32.GetCursorInfo.restype = wintypes.BOOL
+
             ci = CURSORINFO()
             ci.cbSize = ctypes.sizeof(CURSORINFO)
             if not user32.GetCursorInfo(ctypes.byref(ci)):
@@ -161,6 +164,10 @@ class CaptureManager:
                     ('hbmMask', wintypes.HBITMAP),
                     ('hbmColor', wintypes.HBITMAP),
                 ]
+
+            user32.GetIconInfo.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(ICONINFO)]
+            user32.GetIconInfo.restype = wintypes.BOOL
 
             ii = ICONINFO()
             if user32.GetIconInfo(ci.hCursor, ctypes.byref(ii)):
@@ -217,8 +224,37 @@ class CaptureManager:
             return None
         try:
             import ctypes
+            from ctypes import wintypes
             user32 = ctypes.windll.user32
             gdi32 = ctypes.windll.gdi32
+            user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+            user32.GetSystemMetrics.restype = ctypes.c_int
+            user32.GetDC.argtypes = [wintypes.HWND]
+            user32.GetDC.restype = wintypes.HDC
+            user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+            user32.ReleaseDC.restype = ctypes.c_int
+            user32.DrawIconEx.argtypes = [
+                wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.HANDLE,
+                ctypes.c_int, ctypes.c_int, wintypes.UINT, wintypes.HANDLE,
+                wintypes.UINT,
+            ]
+            user32.DrawIconEx.restype = wintypes.BOOL
+            gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+            gdi32.CreateCompatibleDC.restype = wintypes.HDC
+            gdi32.CreateDIBSection.argtypes = [
+                wintypes.HDC, ctypes.POINTER(BITMAPINFOHEADER), wintypes.UINT,
+                ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE,
+                wintypes.DWORD,
+            ]
+            gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+            gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
+            gdi32.SelectObject.restype = wintypes.HANDLE
+            gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+            gdi32.DeleteObject.restype = wintypes.BOOL
+            gdi32.DeleteDC.argtypes = [wintypes.HDC]
+            gdi32.DeleteDC.restype = wintypes.BOOL
+            gdi32.GdiFlush.argtypes = []
+            gdi32.GdiFlush.restype = wintypes.BOOL
 
             cx = user32.GetSystemMetrics(13) or 32   # SM_CXCURSOR
             cy = user32.GetSystemMetrics(14) or 32   # SM_CYCURSOR
@@ -233,20 +269,38 @@ class CaptureManager:
                 bmi.biBitCount = 32
                 bmi.biCompression = 0       # BI_RGB
                 hdc_screen = user32.GetDC(0)
+                if not hdc_screen:
+                    raise OSError("GetDC failed while rendering the cursor")
                 hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+                if not hdc_mem:
+                    user32.ReleaseDC(0, hdc_screen)
+                    raise OSError(
+                        "CreateCompatibleDC failed while rendering the cursor")
                 bits = ctypes.c_void_p()
                 hbmp = gdi32.CreateDIBSection(
                     hdc_screen, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+                old = None
                 try:
+                    if not hbmp or not bits.value:
+                        raise OSError(
+                            "CreateDIBSection failed while rendering the cursor")
                     old = gdi32.SelectObject(hdc_mem, hbmp)
+                    if not old or old == ctypes.c_void_p(-1).value:
+                        raise OSError(
+                            "SelectObject failed while rendering the cursor")
                     ctypes.memset(bits, fill_byte, cx * cy * 4)
-                    user32.DrawIconEx(hdc_mem, 0, 0, hcursor, cx, cy, 0, None, DI_NORMAL)
+                    if not user32.DrawIconEx(
+                            hdc_mem, 0, 0, hcursor, cx, cy, 0, None,
+                            DI_NORMAL):
+                        raise OSError("DrawIconEx failed")
                     gdi32.GdiFlush()
                     data = bytes((ctypes.c_ubyte * (cx * cy * 4)).from_address(bits.value))
-                    gdi32.SelectObject(hdc_mem, old)
                     return data
                 finally:
-                    gdi32.DeleteObject(hbmp)
+                    if old:
+                        gdi32.SelectObject(hdc_mem, old)
+                    if hbmp:
+                        gdi32.DeleteObject(hbmp)
                     gdi32.DeleteDC(hdc_mem)
                     user32.ReleaseDC(0, hdc_screen)
 
@@ -276,9 +330,38 @@ class CaptureManager:
     def _capture_fullscreen_win32():
         """Capture fullscreen using Win32 API for better DPI handling."""
         import ctypes
+        from ctypes import wintypes
 
         user32 = ctypes.windll.user32
         gdi32 = ctypes.windll.gdi32
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
+        user32.GetDC.argtypes = [wintypes.HWND]
+        user32.GetDC.restype = wintypes.HDC
+        user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        user32.ReleaseDC.restype = ctypes.c_int
+        gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        gdi32.CreateCompatibleDC.restype = wintypes.HDC
+        gdi32.CreateCompatibleBitmap.argtypes = [
+            wintypes.HDC, ctypes.c_int, ctypes.c_int]
+        gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+        gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
+        gdi32.SelectObject.restype = wintypes.HANDLE
+        gdi32.BitBlt.argtypes = [
+            wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, wintypes.HDC, ctypes.c_int, ctypes.c_int,
+            wintypes.DWORD,
+        ]
+        gdi32.BitBlt.restype = wintypes.BOOL
+        gdi32.GetDIBits.argtypes = [
+            wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+            ctypes.c_void_p, ctypes.POINTER(BITMAPINFOHEADER), wintypes.UINT,
+        ]
+        gdi32.GetDIBits.restype = ctypes.c_int
+        gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+        gdi32.DeleteObject.restype = wintypes.BOOL
+        gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        gdi32.DeleteDC.restype = wintypes.BOOL
 
         SM_XVIRTUALSCREEN = 76
         SM_YVIRTUALSCREEN = 77
@@ -309,7 +392,7 @@ class CaptureManager:
             if not hbmp:
                 raise OSError("CreateCompatibleBitmap failed")
             old_bmp = gdi32.SelectObject(hdc_mem, hbmp)
-            if not old_bmp:
+            if not old_bmp or old_bmp == ctypes.c_void_p(-1).value:
                 raise OSError("SelectObject failed")
             bitmap_selected = True
 
@@ -380,6 +463,14 @@ class CaptureManager:
 
         user32 = ctypes.windll.user32
         dwmapi = ctypes.windll.dwmapi
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowRect.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        dwmapi.DwmGetWindowAttribute.argtypes = [
+            wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
 
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
@@ -446,6 +537,16 @@ class CaptureManager:
                 EnumWindowsProc = ctypes.WINFUNCTYPE(
                     ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
                 )
+                user32.EnumWindows.argtypes = [
+                    EnumWindowsProc, wintypes.LPARAM]
+                user32.EnumWindows.restype = wintypes.BOOL
+                user32.IsWindowVisible.argtypes = [wintypes.HWND]
+                user32.IsWindowVisible.restype = wintypes.BOOL
+                user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+                user32.GetWindowTextLengthW.restype = ctypes.c_int
+                user32.GetWindowTextW.argtypes = [
+                    wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+                user32.GetWindowTextW.restype = ctypes.c_int
 
                 def callback(hwnd, lparam):
                     if user32.IsWindowVisible(hwnd):

@@ -91,6 +91,12 @@ def test_apply_theme_sets_palette_and_stylesheet(qapp):
 
     apply_theme(qapp, "dark")
     assert qapp.palette().color(QPalette.Window) == QColor(DARK_COLORS["BG1"])
+    if hasattr(QPalette, "PlaceholderText"):
+        assert qapp.palette().color(QPalette.PlaceholderText) == QColor(
+            DARK_COLORS["TEXT_MUT"])
+    assert qapp.palette().color(
+        QPalette.Disabled, QPalette.WindowText
+    ) == QColor(DARK_COLORS["TEXT_MUT"])
 
 
 def test_high_contrast_uses_native_system_palette(qapp, monkeypatch):

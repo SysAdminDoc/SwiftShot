@@ -94,6 +94,8 @@ class HotkeyManager:
         self._running = False
         self._hook = None
         self._bridge = None
+        self._startup_event = threading.Event()
+        self._startup_error = None
         # Store the HOOKPROC so it doesn't get garbage collected
         self._hook_proc = None
 
@@ -173,11 +175,32 @@ class HotkeyManager:
 
     def start(self):
         if sys.platform != 'win32' or not self._bindings:
-            return
+            return True
         self._bridge = _HotkeyBridge(self._callbacks)
         self._running = True
-        self._thread = threading.Thread(target=self._hook_thread, daemon=True)
+        self._startup_error = None
+        self._startup_event.clear()
+        self._thread = threading.Thread(
+            target=self._hook_thread_guard, daemon=True)
         self._thread.start()
+        if not self._startup_event.wait(2.0):
+            self._startup_error = "keyboard hook startup timed out"
+        if self._startup_error:
+            log.warning("Could not start global shortcuts: %s",
+                        self._startup_error)
+            self.stop()
+            return False
+        return True
+
+    def _hook_thread_guard(self):
+        try:
+            self._hook_thread()
+        except Exception as error:
+            self._startup_error = str(error) or type(error).__name__
+            log.warning("Global shortcut thread failed", exc_info=True)
+        finally:
+            self._running = False
+            self._startup_event.set()
 
     def _get_active_modifiers(self):
         """Check which modifier keys are currently held down."""
@@ -292,8 +315,13 @@ class HotkeyManager:
 
         if not self._hook:
             err = ctypes.get_last_error()
-            log.warning(f"Could not install keyboard hook (error {err})")
+            self._startup_error = f"keyboard hook installation failed (error {err})"
             return
+
+        # Do not tell the controller registration succeeded until Windows has
+        # actually returned a live hook handle. Thread.start() alone only
+        # proves that a Python thread was created.
+        self._startup_event.set()
 
         # Message pump -- required for LL hooks to work
         msg = wintypes.MSG()

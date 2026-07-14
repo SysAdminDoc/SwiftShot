@@ -127,6 +127,89 @@ def test_handle_capture_applies_beautification_before_workflow(qapp, monkeypatch
     assert sizes[0][1] > pixmap.height()
 
 
+def test_open_editor_rejects_unsafe_clipboard_dimensions_before_import(
+        qapp, monkeypatch):
+    import app as app_module
+    from app import SwiftShotApp
+
+    controller = SwiftShotApp(qapp)
+    notices = []
+    monkeypatch.setattr(app_module, "MAX_IMAGE_PIXELS", 1)
+    monkeypatch.setattr(
+        controller,
+        "_notify",
+        lambda title, message, **kwargs: notices.append((title, message, kwargs)),
+    )
+    pixmap = QPixmap(2, 2)
+    pixmap.fill(QColor("red"))
+
+    assert controller._open_editor(pixmap) is False
+    assert notices[0][0] == "Image could not be opened"
+    assert notices[0][2]["required"] is True
+
+
+def test_clipboard_copy_failure_is_visible(qapp, monkeypatch):
+    import app as app_module
+    from app import SwiftShotApp
+
+    class _FailingClipboard:
+        @staticmethod
+        def setPixmap(_pixmap):
+            raise RuntimeError("clipboard busy")
+
+    controller = SwiftShotApp(qapp)
+    notices = []
+    monkeypatch.setattr(
+        app_module.QApplication, "clipboard", lambda: _FailingClipboard())
+    monkeypatch.setattr(
+        controller,
+        "_notify",
+        lambda title, message, **kwargs: notices.append((title, message, kwargs)),
+    )
+    pixmap = QPixmap(2, 2)
+    pixmap.fill(QColor("blue"))
+
+    controller._copy_to_clipboard(pixmap)
+
+    assert notices[0][0] == "Screenshot not copied"
+    assert notices[0][2]["required"] is True
+
+
+def test_saved_capture_is_not_misreported_when_path_copy_fails(
+        qapp, monkeypatch, tmp_path):
+    import app as app_module
+    import utils
+    from app import SwiftShotApp
+    from config import config
+
+    class _FailingClipboard:
+        @staticmethod
+        def setText(_text):
+            raise RuntimeError("clipboard busy")
+
+    destination = tmp_path / "capture.png"
+    controller = SwiftShotApp(qapp)
+    notices = []
+    monkeypatch.setattr(config, "COPY_PATH_TO_CLIPBOARD", True)
+    monkeypatch.setattr(config, "get_filename", lambda **_kwargs: str(destination))
+    monkeypatch.setattr(utils, "save_pixmap", lambda *_args: True)
+    monkeypatch.setattr(
+        app_module.QApplication, "clipboard", lambda: _FailingClipboard())
+    monkeypatch.setattr(
+        controller,
+        "_notify",
+        lambda title, message, **kwargs: notices.append((title, message, kwargs)),
+    )
+    pixmap = QPixmap(2, 2)
+    pixmap.fill(QColor("green"))
+
+    controller._save_directly(pixmap)
+
+    assert notices[0][0] == "Screenshot saved; path not copied"
+    assert "Saved to" in notices[0][1]
+    assert notices[0][2]["required"] is True
+
+
 def test_ocr_worker_emits_ocr_file_result(qapp, monkeypatch):
     """OCR now runs off the GUI thread; the worker returns ocr_file's text."""
     import ocr
