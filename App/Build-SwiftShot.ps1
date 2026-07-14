@@ -94,7 +94,7 @@ $IconGenScript = Join-Path $ProjectDir "generate_icon.py"
 
 # Every .py file that ships with SwiftShot
 $SourceFiles = @(
-    "main.py", "app.py", "capture.py", "capture_menu.py", "config.py",
+    "main.py", "app.py", "app_control.py", "capture.py", "capture_menu.py", "config.py",
     "editor.py", "layers.py", "hotkeys.py", "monitor_picker.py", "ocr.py", "ocr_dialog.py",
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
@@ -104,13 +104,13 @@ $SourceFiles = @(
 
 # Hidden imports for PyInstaller (lazy imports it can't detect)
 $HiddenImports = @(
-    "app", "config", "theme", "hotkeys", "capture", "capture_menu",
+    "app", "app_control", "config", "theme", "hotkeys", "capture", "capture_menu",
     "overlay", "window_picker", "monitor_picker", "editor", "layers",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
     "capture_history", "countdown_overlay", "scrolling_capture", "utils", "safe_io",
     "logger", "updater", "cli", "diagnostics",
     "PyQt5.QtPrintSupport", "PyQt5.sip",
-    "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets"
+    "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets", "PyQt5.QtNetwork"
 )
 
 # -------------------------------------------------------------------

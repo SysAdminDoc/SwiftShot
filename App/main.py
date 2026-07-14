@@ -81,6 +81,15 @@ def main():
     setup_logger()
     _install_excepthook()
 
+    # Private installer handshake.  This must run before CLI routing and the
+    # single-instance mutex so a short-lived second process can ask the owning
+    # tray process to follow its normal Save/Discard/Cancel close path.
+    if "--shutdown-for-update" in sys.argv[1:]:
+        from app_control import request_shutdown
+        sys.exit(request_shutdown(
+            non_interactive="--non-interactive" in sys.argv[1:]
+        ))
+
     # Headless scriptable capture (swiftshot --region/--fullscreen/--monitor).
     # Runs and exits without the tray; DPI awareness must be set first so
     # region coordinates are physical pixels. Returns None for the GUI path.
@@ -124,6 +133,16 @@ def main():
     from app import SwiftShotApp
     swiftshot = SwiftShotApp(app)
     swiftshot.start()
+
+    # Hold the server wrapper for the lifetime of the event loop.  Failure is
+    # logged but does not make capture functionality unavailable.
+    try:
+        from app_control import ApplicationControlServer, register_application_restart
+        swiftshot._control_server = ApplicationControlServer(swiftshot, app)
+        if not register_application_restart():
+            log.debug("Windows application restart registration unavailable")
+    except Exception:
+        log.warning("Could not start application control channel", exc_info=True)
 
     # The installer's optional file association launches "SwiftShot.exe <image>";
     # its startup shortcut passes --minimized (a no-op for a tray app).

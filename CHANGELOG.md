@@ -56,6 +56,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Install and uninstall now request shutdown through SwiftShot's local control
+  channel and wait for the normal editor Save/Discard/Cancel flow. The former
+  `taskkill /F` paths are gone; unattended upgrades close only clean sessions,
+  cancellation leaves the running app and installation files untouched, and
+  legacy versions fail safely with manual-close guidance.
 - Capture-history deletion is now truthful: a row and dedupe marker disappear
   only after the file is confirmed gone, partial Clear All failures list every
   retained filename/error for retry, and retention keeps/retries undeletable

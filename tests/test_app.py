@@ -1,6 +1,73 @@
 from PyQt5.QtGui import QColor, QPixmap
 
 
+class _CloseableEditor:
+    def __init__(self, dirty=False, closes=True):
+        self._dirty = dirty
+        self.closes = closes
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+        return self.closes
+
+
+def _exit_controller(qapp, editors):
+    from app import SwiftShotApp
+
+    controller = SwiftShotApp.__new__(SwiftShotApp)
+    controller.app = qapp
+    controller.editors = editors
+    controller._hotkey_listener = None
+    controller._update_checker = None
+    controller._ocr_workers = []
+    controller._pin_windows = []
+    controller.tray_icon = None
+    controller._stop_clipboard_watcher = lambda: None
+    return controller
+
+
+def test_exit_app_returns_false_when_editor_cancels(qapp, monkeypatch):
+    import app as app_module
+
+    editor = _CloseableEditor(closes=False)
+    controller = _exit_controller(qapp, [editor])
+    quit_calls = []
+    monkeypatch.setattr(app_module.QApplication, "quit", lambda: quit_calls.append(True))
+
+    assert controller.exit_app() is False
+    assert editor.close_calls == 1
+    assert quit_calls == []
+
+
+def test_unattended_exit_refuses_dirty_editor_without_prompt(qapp, monkeypatch):
+    import app as app_module
+
+    editor = _CloseableEditor(dirty=True)
+    controller = _exit_controller(qapp, [editor])
+    quit_calls = []
+    monkeypatch.setattr(app_module.QApplication, "quit", lambda: quit_calls.append(True))
+
+    assert controller.exit_app(allow_prompts=False) is False
+    assert editor.close_calls == 0
+    assert quit_calls == []
+
+
+def test_unattended_exit_closes_clean_session(qapp, monkeypatch):
+    import app as app_module
+    from config import config
+
+    editor = _CloseableEditor(dirty=False)
+    controller = _exit_controller(qapp, [editor])
+    quit_calls = []
+    monkeypatch.setattr(app_module.QApplication, "quit", lambda: quit_calls.append(True))
+    monkeypatch.setattr(config, "save", lambda: None)
+
+    assert controller.exit_app(allow_prompts=False) is True
+    assert editor.close_calls == 1
+    assert quit_calls == [True]
+
+
 def test_handle_capture_runs_workflow_actions_in_order(qapp, monkeypatch):
     from app import SwiftShotApp
     from config import config

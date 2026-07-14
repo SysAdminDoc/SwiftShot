@@ -1171,16 +1171,22 @@ class SwiftShotApp:
         if editor in self.editors:
             self.editors.remove(editor)
 
-    def exit_app(self):
+    def exit_app(self, allow_prompts=True):
         # Give open editors the chance to prompt for unsaved changes;
         # an editor that refuses to close aborts the exit.
+        if not allow_prompts and any(
+                getattr(editor, "_dirty", False) for editor in self.editors):
+            log.info("Unattended exit refused because an editor is dirty")
+            return False
         for editor in list(self.editors):
             try:
                 if not editor.close():
                     log.info("Exit cancelled from editor close prompt")
-                    return
+                    return False
             except Exception:
-                pass
+                log.warning("Editor failed to close; refusing application exit",
+                            exc_info=True)
+                return False
         log.info("SwiftShot shutting down")
         if self._hotkey_listener:
             try:
@@ -1212,3 +1218,4 @@ class SwiftShotApp:
             self.tray_icon.hide()
         config.save()
         QApplication.quit()
+        return True

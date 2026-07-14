@@ -48,8 +48,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 MinVersion=10.0
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-AppMutex=SwiftShot_SingleInstance
-CloseApplications=yes
+CloseApplications=no
 RestartApplications=no
 CreateUninstallRegKey=yes
 VersionInfoVersion={#AppVersion}.0
@@ -92,28 +91,82 @@ Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}\shell\open\comma
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
-[UninstallRun]
-Filename: "taskkill.exe"; Parameters: "/F /IM {#AppExeName}"; Flags: runhidden; RunOnceId: "KillApp"
-
 [Code]
-procedure TaskKill(ExeName: String);
+function WaitForSwiftShotExit: Boolean;
 var
-  ResultCode: Integer;
+  Attempts: Integer;
 begin
-  Exec('taskkill.exe', '/F /IM ' + ExeName, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(500);
+  Result := not CheckForMutexes('SwiftShot_SingleInstance');
+  Attempts := 0;
+  while (not Result) and (Attempts < 100) do
+  begin
+    Sleep(100);
+    Attempts := Attempts + 1;
+    Result := not CheckForMutexes('SwiftShot_SingleInstance');
+  end;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+function RequestSwiftShotShutdown(NonInteractive: Boolean): Boolean;
+var
+  InstalledExe, Parameters: String;
+  ResultCode: Integer;
 begin
-  if CurStep = ssInstall then
-    TaskKill('{#AppExeName}');
+  if not CheckForMutexes('SwiftShot_SingleInstance') then
+  begin
+    Result := True;
+    exit;
+  end;
+
+  InstalledExe := ExpandConstant('{app}\{#AppExeName}');
+  Parameters := '--shutdown-for-update';
+  if NonInteractive then
+    Parameters := Parameters + ' --non-interactive';
+
+  if not FileExists(InstalledExe) then
+  begin
+    Result := False;
+    exit;
+  end;
+  if not Exec(InstalledExe, Parameters, '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+  begin
+    Result := False;
+    exit;
+  end;
+  if ResultCode <> 0 then
+  begin
+    Result := False;
+    exit;
+  end;
+  Result := WaitForSwiftShotExit;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  if RequestSwiftShotShutdown(WizardSilent) then
+    Result := ''
+  else
+    Result :=
+      'SwiftShot is still running. An editor may have unsaved changes, or '
+      + 'this installed version may not support automatic shutdown.' + #13#10
+      + #13#10
+      + 'No files were changed. Close SwiftShot from its tray menu, then '
+      + 'run Setup again.';
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := RequestSwiftShotShutdown(UninstallSilent);
+  if (not Result) and (not UninstallSilent) then
+    MsgBox(
+      'SwiftShot is still running. No files were removed.' + #13#10
+      + #13#10
+      + 'Close SwiftShot from its tray menu, then run Uninstall again.',
+      mbError, MB_OK);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usUninstall then
-    TaskKill('{#AppExeName}');
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'SwiftShot');
