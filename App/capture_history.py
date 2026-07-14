@@ -659,14 +659,15 @@ class CaptureHistoryDialog(QDialog):
         title_bar.addStretch()
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedWidth(80)
+        refresh_btn.setMinimumWidth(80)
         refresh_btn.clicked.connect(self._load_history)
         title_bar.addWidget(refresh_btn)
 
-        clear_btn = QPushButton("Clear All")
-        clear_btn.setFixedWidth(80)
-        clear_btn.clicked.connect(self._clear_history)
-        title_bar.addWidget(clear_btn)
+        self.clear_btn = QPushButton("Clear All")
+        self.clear_btn.setMinimumWidth(80)
+        self.clear_btn.setToolTip("Permanently delete every stored capture")
+        self.clear_btn.clicked.connect(self._clear_history)
+        title_bar.addWidget(self.clear_btn)
 
         layout.addLayout(title_bar)
 
@@ -683,12 +684,17 @@ class CaptureHistoryDialog(QDialog):
             lambda _: self._search_timer.start())
         layout.addWidget(self.search_box)
 
+        self.status_label = QLabel()
+        self.status_label.setTextFormat(Qt.PlainText)
+        self.status_label.setWordWrap(True)
+        self.status_label.setAccessibleName("Capture history status")
+        self.status_label.hide()
+        layout.addWidget(self.status_label)
+
         # Scroll area with grid of thumbnails
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        colors = colors_for_theme(config.THEME)
-        self.scroll.setStyleSheet(
-            f"QScrollArea {{ border: none; background-color: {colors['BG0']}; }}")
+        self.scroll.setFrameShape(QFrame.NoFrame)
         layout.addWidget(self.scroll)
 
         self._load_history()
@@ -705,6 +711,7 @@ class CaptureHistoryDialog(QDialog):
             entries = _history_entries(history_dir, search)
         else:
             entries = []   # dir not created yet — show the same empty guidance
+        self.clear_btn.setEnabled(bool(_history_files(history_dir)))
 
         if not entries:
             if search:
@@ -712,10 +719,11 @@ class CaptureHistoryDialog(QDialog):
             else:
                 lbl = QLabel("No captures yet.\n"
                              "Screenshots you take will show up here.")
+            lbl.setTextFormat(Qt.PlainText)
+            lbl.setWordWrap(True)
             lbl.setAlignment(Qt.AlignCenter)
-            colors = colors_for_theme(config.THEME)
-            lbl.setStyleSheet(f"color: {colors['TEXT_MUT']}; font-size: 12pt;")
             self.grid.addWidget(lbl, 0, 0)
+            self.status_label.hide()
         else:
             cols = 3
             for i, entry in enumerate(entries):
@@ -725,6 +733,9 @@ class CaptureHistoryDialog(QDialog):
                 thumb.pin_image.connect(self._on_pin)
                 thumb.delete_entry.connect(self._on_delete)
                 self.grid.addWidget(thumb, i // cols, i % cols)
+            suffix = "result" if len(entries) == 1 else "results"
+            self.status_label.setText(f"Showing {len(entries)} {suffix}.")
+            self.status_label.show()
 
         self.scroll.setWidget(container)
 
@@ -735,6 +746,16 @@ class CaptureHistoryDialog(QDialog):
         pixmap = _safe_pixmap(filepath)
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
+            self.status_label.setText(
+                f"Copied {os.path.basename(filepath)} to the clipboard.")
+            self.status_label.show()
+        else:
+            QMessageBox.warning(
+                self,
+                "Capture Not Copied",
+                "SwiftShot could not read this capture. Refresh history; if "
+                "the item remains, verify that the image file is intact.",
+            )
 
     def _on_pin(self, filepath):
         self.pin_to_desktop.emit(filepath)
@@ -765,6 +786,8 @@ class CaptureHistoryDialog(QDialog):
         except Exception as db_error:
             log.warning(f"Deleted capture but could not update history index: {db_error}")
         self._load_history()
+        self.status_label.setText(f"Deleted {filename}.")
+        self.status_label.show()
 
     def _clear_history(self):
         history_dir = config.CAPTURE_HISTORY_DIR
@@ -816,6 +839,10 @@ class CaptureHistoryDialog(QDialog):
                 f"Deleted {len(removed_paths)} of {stored} stored capture "
                 f"file(s). {len(failures)} remain in history for retry.\n\n{details}",
             )
+        else:
+            self.status_label.setText(
+                f"Deleted all {len(removed_paths)} stored capture file(s).")
+            self.status_label.show()
 
 
 def save_to_history(pixmap, ocr_text=""):

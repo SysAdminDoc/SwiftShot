@@ -21,6 +21,11 @@ from logger import log
 from utils import exclude_window_from_capture
 
 
+MAX_SCROLL_RAW_PIXELS = 75_000_000
+MAX_SCROLL_RESULT_PIXELS = 100_000_000
+MAX_SCROLL_RESULT_HEIGHT = 32_768
+
+
 class ScrollingCaptureDialog(QDialog):
     """Dialog that orchestrates the scrolling capture."""
 
@@ -38,6 +43,8 @@ class ScrollingCaptureDialog(QDialog):
         self._max_scrolls = 50
         self._scroll_count = 0
         self._result_pixmap = None
+        self._raw_pixels = 0
+        self._truncated_for_safety = False
         self._generation = 0
         self._awaiting_target = False
 
@@ -194,6 +201,8 @@ class ScrollingCaptureDialog(QDialog):
         self._awaiting_target = False
         self._capturing = True
         self._frames = []
+        self._raw_pixels = 0
+        self._truncated_for_safety = False
         self._scroll_count = 0
         self._dodge_target()
 
@@ -208,22 +217,30 @@ class ScrollingCaptureDialog(QDialog):
             return
 
         # Capture the current visible area
-        screen = QApplication.primaryScreen()
-        if screen is None:
+        from capture import CaptureManager
+        frame = CaptureManager.capture_rect(self._target_rect)
+        if frame is None or frame.isNull():
             self._finish(generation)
             return
 
-        frame = screen.grabWindow(
-            0,
-            self._target_rect.x(), self._target_rect.y(),
-            self._target_rect.width(), self._target_rect.height()
-        )
-
-        if frame.isNull():
+        frame_pixels = frame.width() * frame.height()
+        if self._raw_pixels + frame_pixels > MAX_SCROLL_RAW_PIXELS:
+            if not self._frames:
+                self._invalidate_capture()
+                self.stop_btn.setEnabled(False)
+                self.start_btn.setEnabled(True)
+                self.status_label.setText(
+                    "The selected window is too large for a safe scrolling "
+                    "capture. Resize it and try again.")
+                log.warning("Scrolling capture rejected an oversized frame")
+                return
+            self._truncated_for_safety = True
+            log.info("Scrolling capture reached the in-memory frame limit")
             self._finish(generation)
             return
 
         self._frames.append(frame)
+        self._raw_pixels += frame_pixels
         self._scroll_count += 1
         self.progress.setValue(self._scroll_count)
 
@@ -387,12 +404,22 @@ class ScrollingCaptureDialog(QDialog):
         # by comparing bottom of frame N with top of frame N+1
         result_height = base.height()
         offsets = [0]
+        max_height = min(
+            MAX_SCROLL_RESULT_HEIGHT,
+            MAX_SCROLL_RESULT_PIXELS // max(1, w),
+        )
+        if result_height > max_height:
+            return None
 
         for i in range(1, len(frames)):
             overlap = self._find_overlap(frames[i - 1], frames[i])
             new_content = frames[i].height() - overlap
             if new_content <= 5:
                 # No new content, stop here
+                break
+            if result_height + new_content > max_height:
+                self._truncated_for_safety = True
+                log.info("Scrolling output reached the decoded-image limit")
                 break
             offsets.append(result_height - overlap)
             result_height += new_content
@@ -452,3 +479,6 @@ class ScrollingCaptureDialog(QDialog):
 
     def get_result(self):
         return self._result_pixmap
+
+    def was_truncated(self):
+        return self._truncated_for_safety

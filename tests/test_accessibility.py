@@ -42,8 +42,30 @@ def test_capture_menu_has_accessible_names(qapp):
     assert menu.accessibleName() == "SwiftShot capture menu"
     assert menu._timer_cb.accessibleName() == "Enable timed capture"
     assert menu._timer_spin.accessibleName() == "Timed capture countdown seconds"
+    assert "QCheckBox::indicator" not in menu.styleSheet()
     for action in menu._selectable_actions():
         assert action.toolTip()
+
+
+def test_capture_menu_timer_rolls_back_when_config_save_fails(qapp, monkeypatch):
+    import capture_menu
+
+    menu = capture_menu.CaptureMenu(clipboard_watching=False)
+    previous = capture_menu.config.CAPTURE_TIMER_ENABLED
+    warnings = []
+    monkeypatch.setattr(capture_menu.config, "save", lambda: False)
+    monkeypatch.setattr(
+        capture_menu.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+
+    menu._timer_cb.setChecked(not previous)
+
+    assert menu._timer_enabled == previous
+    assert menu._timer_cb.isChecked() == previous
+    assert capture_menu.config.CAPTURE_TIMER_ENABLED == previous
+    assert warnings and warnings[0][1] == "Timer Setting Unchanged"
 
 
 def test_settings_controls_have_accessible_names(qapp):

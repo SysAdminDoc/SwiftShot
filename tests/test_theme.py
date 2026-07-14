@@ -70,6 +70,17 @@ def test_light_stylesheet_borders_use_border_token():
     assert "solid #dbeafe" not in LIGHT_STYLESHEET
 
 
+def test_checkbox_indicator_keeps_native_checkmark_shape():
+    """A filled square alone relies on color; native drawing keeps a visible
+    checkmark and follows Windows accessibility/high-contrast preferences."""
+    import editor
+    from theme import DARK_STYLESHEET, LIGHT_STYLESHEET
+
+    assert "QCheckBox::indicator" not in DARK_STYLESHEET
+    assert "QCheckBox::indicator" not in LIGHT_STYLESHEET
+    assert "QCheckBox::indicator" not in editor.build_ss()
+
+
 def test_apply_theme_sets_palette_and_stylesheet(qapp):
     from PyQt5.QtGui import QPalette, QColor
     from theme import DARK_COLORS, LIGHT_COLORS, apply_theme, stylesheet_for_theme

@@ -27,7 +27,7 @@ from recovery import (
     RECOVERY_IDLE_MS, RECOVERY_MAX_INTERVAL_MS, discard_recovery,
     encode_preview, new_recovery_path, recovery_metadata, safe_document_name,
 )
-from utils import atomic_replace
+from utils import atomic_replace, atomic_write_bytes
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -62,6 +62,29 @@ except ImportError:
 
 # ── DPI / UI Scale helpers ───────────────────────────────────────────────────
 _UI_SCALE = 1.0   # set by init_ui_scale() at startup, overridable from View menu
+EDITOR_STATE_MAX_BYTES = 64 * 1024
+
+
+def _load_editor_json(path):
+    with open(path, "rb") as handle:
+        payload = handle.read(EDITOR_STATE_MAX_BYTES + 1)
+    if len(payload) > EDITOR_STATE_MAX_BYTES:
+        raise ValueError("editor state exceeds the 64 KiB safety limit")
+    data = json.loads(payload.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("editor state must contain a JSON object")
+    return data
+
+
+def _save_editor_json(path, data):
+    payload = json.dumps(data, indent=2).encode("utf-8")
+    if len(payload) > EDITOR_STATE_MAX_BYTES:
+        raise ValueError("editor state exceeds the 64 KiB safety limit")
+
+    def _verify(temp_path):
+        _load_editor_json(temp_path)
+
+    atomic_write_bytes(path, payload, _verify)
 
 def _dpi():
     app = QApplication.instance()
@@ -83,8 +106,13 @@ def init_ui_scale(force=None):
     """Auto-detect best UI scale from screen resolution + DPI, or use forced value."""
     global _UI_SCALE
     if force is not None:
-        _UI_SCALE = float(force)
-        return _UI_SCALE
+        try:
+            value = float(force)
+            if math.isfinite(value):
+                _UI_SCALE = max(0.75, min(3.0, value))
+                return _UI_SCALE
+        except (TypeError, ValueError):
+            pass
     dpi = _dpi()
     dpi_scale = dpi / 96.0          # Windows/system scaling
     sw = _screen_w()
@@ -128,6 +156,11 @@ def pil_to_qimage(pil_image):
     data = img.tobytes("raw", "RGBA")
     return QImage(data, img.width, img.height, 4 * img.width,
                   QImage.Format_RGBA8888).copy()
+
+
+def load_pixmap_safely(path):
+    """Load one bounded image for standalone/file-association editor entry."""
+    return pil_to_qpixmap(load_image(path))
 
 def pil_to_qpixmap(pil_image):
     return QPixmap.fromImage(pil_to_qimage(pil_image))
@@ -484,17 +517,6 @@ QListWidget::item:selected {{
 }}
 QListWidget::item:hover {{ background-color: {C.BG2}; }}
 QCheckBox {{ color: {C.TEXT_PRI}; spacing: 6px; }}
-QCheckBox::indicator {{
-    width: {dp(14)}px;
-    height: {dp(14)}px;
-    border: 1px solid {C.BORDER};
-    border-radius: 2px;
-    background: {C.BG0};
-}}
-QCheckBox::indicator:checked {{
-    background: {C.ACCENT};
-    border-color: {C.ACCENT};
-}}
 QGroupBox {{
     color: {C.TEXT_SEC};
     border: 1px solid {C.BORDER};
@@ -5456,19 +5478,26 @@ class ImageEditor(QMainWindow):
         try:
             cfg = os.path.join(self._config_dir(), "recent.json")
             if os.path.exists(cfg):
-                with open(cfg) as f:
-                    data = json.load(f)
-                self._recent_files = [p for p in data.get("recent", []) if os.path.exists(p)][:10]
+                data = _load_editor_json(cfg)
+                recent = data.get("recent", [])
+                if not isinstance(recent, list):
+                    raise ValueError("recent files must be a list")
+                self._recent_files = [
+                    path for path in recent
+                    if (isinstance(path, str) and len(path) <= 32_767
+                        and os.path.isfile(path))
+                ][:10]
         except Exception:
-            pass
+            log.warning("Could not load editor recent files", exc_info=True)
 
     def _save_recent_files(self):
         try:
             cfg = os.path.join(self._config_dir(), "recent.json")
-            with open(cfg, "w") as f:
-                json.dump({"recent": self._recent_files[:10]}, f, indent=2)
+            _save_editor_json(cfg, {"recent": self._recent_files[:10]})
+            return True
         except Exception:
-            pass
+            log.warning("Could not save editor recent files", exc_info=True)
+            return False
 
     def _add_recent(self, path):
         path = os.path.abspath(path)
@@ -6255,13 +6284,11 @@ class ImageEditor(QMainWindow):
 
     def _set_ui_scale(self, scale_val):
         """Change UI scale and restart editor to apply."""
-        import json
         cfg_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "SwiftShot")
         os.makedirs(cfg_dir, exist_ok=True)
         cfg_path = os.path.join(cfg_dir, "config.json")
         try:
-            with open(cfg_path) as f:
-                cfg = json.load(f)
+            cfg = _load_editor_json(cfg_path)
         except Exception:
             cfg = {}
         if scale_val is None:
@@ -6271,11 +6298,17 @@ class ImageEditor(QMainWindow):
             cfg["ui_scale"] = scale_val
             label = f"{scale_val*100:.0f}%"
         try:
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-        except Exception:
-            pass
-        from PyQt5.QtWidgets import QMessageBox
+            _save_editor_json(cfg_path, cfg)
+        except Exception as error:
+            log.warning("Could not save editor UI scale", exc_info=True)
+            QMessageBox.warning(
+                self,
+                "UI Scale Not Saved",
+                "SwiftShot could not save the UI scale. Check that the "
+                "configuration folder is writable, then try again.\n\n"
+                f"{error}",
+            )
+            return
         mb = QMessageBox(self)
         mb.setWindowTitle("UI Scale Changed")
         mb.setText("UI Scale set to %s. Restart to apply." % label)
@@ -8748,27 +8781,37 @@ def main():
     scale_override = None
     cfg = {}
     try:
-        import json
         cfg_path = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
                                 "SwiftShot", "config.json")
         if os.path.exists(cfg_path):
-            with open(cfg_path) as f:
-                cfg = json.load(f)
+            cfg = _load_editor_json(cfg_path)
         scale_override = cfg.get("ui_scale")
     except Exception:
-        pass
+        log.warning("Could not load standalone editor UI scale", exc_info=True)
     detected = init_ui_scale(force=scale_override)
     log.info(f"UI scale: {detected:.2f}x  (screen {_screen_w()}px wide, DPI {_dpi():.0f})")
 
     # CLI: python editor.py [path/to/image.png]
     initial_pixmap = None
+    initial_load_error = None
     for arg in sys.argv[1:]:
         if not arg.startswith("-") and os.path.isfile(arg):
-            px = QPixmap(arg)
-            if not px.isNull():
-                initial_pixmap = px
+            try:
+                initial_pixmap = load_pixmap_safely(arg)
+            except Exception as error:
+                log.warning("Standalone image load failed: %s", arg,
+                            exc_info=True)
+                initial_load_error = str(error)
             break
     editor = ImageEditor(pixmap=initial_pixmap)  # noqa: F841 -- keeps the window alive
+    if initial_load_error:
+        QMessageBox.warning(
+            editor,
+            "Image Could Not Be Opened",
+            "The image is unsupported, damaged, or exceeds SwiftShot's safe "
+            "image limits.\n\n"
+            f"{initial_load_error}",
+        )
     sys.exit(app.exec_())
 
 

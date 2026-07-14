@@ -21,8 +21,12 @@ class _FakeSocket:
     def canReadLine(self):
         return b"\n" in self.request
 
-    def readLine(self):
-        request, self.request = self.request, b""
+    def bytesAvailable(self):
+        return len(self.request)
+
+    def readLine(self, limit=-1):
+        request = self.request if limit < 0 else self.request[:limit]
+        self.request = self.request[len(request):]
         return request
 
     def write(self, data):
@@ -88,6 +92,17 @@ def test_unknown_control_request_never_exits_application():
     assert socket.response == b"unsupported\n"
 
 
+def test_oversized_control_request_is_rejected_before_parsing():
+    from app_control import MAX_CONTROL_REQUEST_BYTES
+
+    controller = _Controller()
+    socket = _FakeSocket(b"x" * (MAX_CONTROL_REQUEST_BYTES + 1))
+    _bare_server(controller)._read_request(socket)
+
+    assert controller.prompt_modes == []
+    assert socket.response == b"unsupported\n"
+
+
 def test_local_control_round_trip(qapp):
     from PyQt5.QtNetwork import QLocalServer
     from app_control import (
@@ -100,6 +115,7 @@ def test_local_control_round_trip(qapp):
     QLocalServer.removeServer(SERVER_NAME)
     controller = _Controller(accepted=True)
     server = ApplicationControlServer(controller, qapp)
+    assert server.server.socketOptions() & QLocalServer.UserAccessOption
     result = []
     client = threading.Thread(
         target=lambda: result.append(request_shutdown(timeout_ms=3000))

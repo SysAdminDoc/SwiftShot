@@ -5,6 +5,7 @@ configuration file, history database, capture, or malformed input verbatim.
 """
 
 import glob
+import io
 import json
 import os
 import platform
@@ -13,10 +14,12 @@ import sqlite3
 import sys
 import zipfile
 from datetime import datetime
+from utils import atomic_write_bytes
 
 
 DIAGNOSTICS_SCHEMA_VERSION = 2
 MAX_TEXT_FILE_BYTES = 512 * 1024
+MAX_JSON_FILE_BYTES = 1024 * 1024
 
 # This is the complete configuration export surface. Path/state/geometry,
 # filename templates, recent colors, and unknown future keys are deliberately
@@ -288,8 +291,15 @@ class PathPseudonymizer:
 def _load_json_object(path):
     """Parse an object without ever returning malformed source text."""
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        with open(path, "rb") as handle:
+            payload = handle.read(MAX_JSON_FILE_BYTES + 1)
+        if len(payload) > MAX_JSON_FILE_BYTES:
+            return {
+                "status": "unreadable",
+                "error": "file exceeds the 1 MiB safety limit",
+                "data": {},
+            }
+        data = json.loads(payload.decode("utf-8"))
         if not isinstance(data, dict):
             return {
                 "status": "malformed",
@@ -437,7 +447,8 @@ def build_diagnostics_zip(dest_path=None, config_dir=None):
         # bundle-local aliases are used everywhere they appear.
         recent_record = _recent_file_aliases(recent_path, pseudonymizer)
 
-    with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
         for index, log_path in enumerate(sorted(
                 glob.glob(os.path.join(cfg_dir, "swiftshot.log*"))), start=1):
             text = _read_sanitized_text(log_path, pseudonymizer)
@@ -489,4 +500,14 @@ def build_diagnostics_zip(dest_path=None, config_dir=None):
         archive.writestr(
             "manifest.json", json.dumps(_privacy_manifest(preview), indent=2)
         )
+
+    def _verify_bundle(path):
+        with zipfile.ZipFile(path) as check:
+            if check.testzip() is not None:
+                raise ValueError("Diagnostics ZIP verification failed")
+            names = set(check.namelist())
+            if not {"versions.json", "manifest.json"} <= names:
+                raise ValueError("Diagnostics ZIP is incomplete")
+
+    atomic_write_bytes(dest_path, bundle.getvalue(), _verify_bundle)
     return dest_path

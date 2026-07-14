@@ -441,33 +441,26 @@ class SwiftShotApp:
             listener = HotkeyManager()
             self._hotkey_listener = listener
 
-            # Primary hotkeys
-            if config.CAPTURE_REGION_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_REGION_HOTKEY, self.show_capture_menu)
-            if config.CAPTURE_WINDOW_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_WINDOW_HOTKEY, self.capture_window)
-            if config.CAPTURE_FULLSCREEN_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_FULLSCREEN_HOTKEY, self.capture_fullscreen)
-            if config.CAPTURE_LAST_REGION_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_LAST_REGION_HOTKEY, self.capture_last_region)
-
-            # Additional hotkeys (only register if user has set them)
-            if config.CAPTURE_OCR_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_OCR_HOTKEY, self.capture_ocr)
-            if config.CAPTURE_FREEHAND_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_FREEHAND_HOTKEY, self.capture_freehand)
-            if config.CAPTURE_SCROLLING_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_SCROLLING_HOTKEY, self.capture_scrolling)
-            if config.CAPTURE_COLOR_PICKER_HOTKEY:
-                self._hotkey_listener.register(
-                    config.CAPTURE_COLOR_PICKER_HOTKEY, self.pick_color)
+            bindings = (
+                ("Capture menu", config.CAPTURE_REGION_HOTKEY,
+                 self.show_capture_menu),
+                ("Window capture", config.CAPTURE_WINDOW_HOTKEY,
+                 self.capture_window),
+                ("Fullscreen capture", config.CAPTURE_FULLSCREEN_HOTKEY,
+                 self.capture_fullscreen),
+                ("Last region", config.CAPTURE_LAST_REGION_HOTKEY,
+                 self.capture_last_region),
+                ("OCR", config.CAPTURE_OCR_HOTKEY, self.capture_ocr),
+                ("Freehand capture", config.CAPTURE_FREEHAND_HOTKEY,
+                 self.capture_freehand),
+                ("Scrolling capture", config.CAPTURE_SCROLLING_HOTKEY,
+                 self.capture_scrolling),
+                ("Color picker", config.CAPTURE_COLOR_PICKER_HOTKEY,
+                 self.pick_color),
+            )
+            for label, combo, callback in bindings:
+                if combo and not listener.register(combo, callback):
+                    raise ValueError(f"{label} shortcut is invalid or duplicated")
 
             self._hotkey_listener.start()
             log.info("Hotkeys registered successfully")
@@ -1266,6 +1259,14 @@ class SwiftShotApp:
                 result = dlg.get_result()
                 if result and not result.isNull():
                     self._handle_capture(result)
+                    if dlg.was_truncated():
+                        self._notify(
+                            "Scrolling capture size limited",
+                            "SwiftShot captured the page up to its safe image "
+                            "size limit. Capture the remaining section "
+                            "separately if needed.",
+                            warning=True,
+                        )
                 else:
                     self._capture_failed(
                         "The scrolling capture did not produce an image. Keep "
@@ -1648,9 +1649,20 @@ class SwiftShotApp:
             from settings_dialog import SettingsDialog
             from theme import apply_theme, stylesheet_for_theme
 
+            previous_theme = config.THEME
             dialog = SettingsDialog()
             if dialog.exec_() == QDialog.Accepted:
                 apply_theme(self.app, config.THEME)
+                if (config.THEME != previous_theme
+                        and any(editor.isVisible() for editor in self.editors)):
+                    self._notify(
+                        "Theme saved",
+                        "Tray windows and new editors now use the selected "
+                        "theme. Existing editor windows keep their current "
+                        "theme until reopened so unsaved workspace state is "
+                        "not rebuilt.",
+                        duration_ms=5000,
+                    )
                 if not self._reregister_hotkeys():
                     self._notify(
                         "Capture shortcuts unavailable",

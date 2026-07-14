@@ -4,6 +4,8 @@ Always-on-top borderless mini-window for pinned screenshots.
 Drag to move, scroll to resize, right-click context menu.
 """
 
+import math
+
 from PyQt5.QtWidgets import (
     QWidget, QApplication, QMenu, QToolButton
 )
@@ -15,6 +17,11 @@ from PyQt5.QtCore import Qt, QPoint, QRect, pyqtSignal
 from config import config
 
 
+MAX_PIN_RENDER_PIXELS = 16_000_000
+MAX_PIN_RENDER_DIMENSION = 8_192
+PIN_SCREEN_FRACTION = 0.85
+
+
 class PinWindow(QWidget):
     """Always-on-top floating screenshot window."""
 
@@ -22,11 +29,29 @@ class PinWindow(QWidget):
 
     def __init__(self, pixmap: QPixmap, parent=None):
         super().__init__(parent)
+        if pixmap is None or pixmap.isNull():
+            raise ValueError("A pinned screenshot must contain image pixels")
         self._original_pixmap = pixmap.copy()
         self._pixmap = pixmap.copy()
-        self._scale = 1.0
-        self._min_scale = 0.1
-        self._max_scale = 5.0
+        original_pixels = pixmap.width() * pixmap.height()
+        pixel_scale = math.sqrt(MAX_PIN_RENDER_PIXELS / original_pixels)
+        dimension_scale = min(
+            MAX_PIN_RENDER_DIMENSION / pixmap.width(),
+            MAX_PIN_RENDER_DIMENSION / pixmap.height(),
+        )
+        self._max_scale = max(0.01, min(5.0, pixel_scale, dimension_scale))
+
+        cursor_screen = QApplication.screenAt(QCursor.pos())
+        cursor_screen = cursor_screen or QApplication.primaryScreen()
+        fit_scale = 1.0
+        if cursor_screen is not None:
+            available = cursor_screen.availableGeometry()
+            fit_scale = min(
+                available.width() * PIN_SCREEN_FRACTION / pixmap.width(),
+                available.height() * PIN_SCREEN_FRACTION / pixmap.height(),
+            )
+        self._scale = max(0.01, min(1.0, self._max_scale, fit_scale))
+        self._min_scale = min(0.1, self._scale)
         self._dragging = False
         self._drag_start = QPoint()
         self._hovered = False
@@ -73,9 +98,19 @@ class PinWindow(QWidget):
 
     def _center_on_cursor(self):
         pos = QCursor.pos()
-        self.move(pos.x() - self.width() // 2, pos.y() - self.height() // 2)
+        x = pos.x() - self.width() // 2
+        y = pos.y() - self.height() // 2
+        screen = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            x = min(max(x, available.left()),
+                    available.right() - self.width() + 1)
+            y = min(max(y, available.top()),
+                    available.bottom() - self.height() + 1)
+        self.move(x, y)
 
     def _update_size(self):
+        self._scale = max(self._min_scale, min(self._max_scale, self._scale))
         w = max(50, int(self._original_pixmap.width() * self._scale))
         h = max(50, int(self._original_pixmap.height() * self._scale))
         self._pixmap = self._original_pixmap.scaled(
@@ -214,8 +249,11 @@ class PinWindow(QWidget):
         self.setWindowOpacity(val)
 
     def _set_scale(self, val):
-        self._scale = val
+        old_center = self.geometry().center()
+        self._scale = max(self._min_scale, min(self._max_scale, val))
         self._update_size()
+        self.move(old_center.x() - self.width() // 2,
+                  old_center.y() - self.height() // 2)
 
     def closeEvent(self, event):
         self.closed.emit(self)

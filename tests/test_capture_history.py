@@ -300,6 +300,10 @@ def _seen_paths(capture_history, history_dir):
 class _HistoryDialogStub:
     def __init__(self):
         self.reloads = 0
+        self.status_label = SimpleNamespace(
+            setText=lambda _text: None,
+            show=lambda: None,
+        )
 
     def _load_history(self):
         self.reloads += 1
@@ -444,3 +448,41 @@ def test_delete_missing_file_still_purges_stale_row(
 
     assert filepath not in _indexed_paths(capture_history, tmp_path)
     assert dialog.reloads == 1
+
+
+def test_history_empty_and_search_states_are_plain_responsive_text(
+        fresh_config, qapp, tmp_path):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    dialog = capture_history.CaptureHistoryDialog()
+    try:
+        assert not dialog.clear_btn.isEnabled()
+        dialog.search_box.setText("<b>nothing</b>" * 20)
+        dialog._load_history()
+        label = dialog.grid.itemAtPosition(0, 0).widget()
+        assert label.textFormat() == capture_history.Qt.PlainText
+        assert label.wordWrap()
+        assert "<b>nothing</b>" in label.text()
+    finally:
+        dialog.close()
+
+
+def test_history_copy_reports_success_and_unreadable_image(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("green"))
+    filepath = capture_history.save_to_history(pixmap)
+    dialog = capture_history.CaptureHistoryDialog()
+    warnings = []
+    monkeypatch.setattr(
+        capture_history.QMessageBox,
+        "warning",
+        staticmethod(lambda *args: warnings.append(args)),
+    )
+    try:
+        dialog._on_copy(filepath)
+        assert Path(filepath).name in dialog.status_label.text()
+        dialog._on_copy(str(tmp_path / "missing.png"))
+        assert warnings and warnings[0][1] == "Capture Not Copied"
+    finally:
+        dialog.close()

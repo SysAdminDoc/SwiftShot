@@ -1,8 +1,10 @@
 """Coverage for previously-untested modules: the editor compositor
 (get_composite blend/opacity/mask) and pin_window scaling (R-04)."""
 
+import pytest
 from PIL import Image
 from PyQt5.QtGui import QColor, QImage, QPixmap
+from PyQt5.QtWidgets import QApplication
 
 
 def _solid_pixmap(w, h, color):
@@ -163,3 +165,88 @@ def test_pin_window_scale_resizes(qapp, fresh_config):
         assert pin.width() == pin._pixmap.width() + 4
     finally:
         pin.close()
+
+
+def test_pin_window_clamps_render_size_to_memory_budget(
+        qapp, fresh_config, monkeypatch):
+    import pin_window
+
+    monkeypatch.setattr(pin_window, "MAX_PIN_RENDER_PIXELS", 10_000)
+    pixmap = _solid_pixmap(200, 200, (10, 20, 30, 255))
+    pin = pin_window.PinWindow(pixmap)
+    try:
+        assert pin._pixmap.width() * pin._pixmap.height() <= 10_000
+        pin._set_scale(5.0)
+        assert pin._scale == pin._max_scale
+        assert pin._pixmap.width() * pin._pixmap.height() <= 10_000
+    finally:
+        pin.close()
+
+
+def test_ocr_dialog_reports_clipboard_state_after_edits(qapp):
+    from ocr_dialog import OcrResultDialog
+
+    dialog = OcrResultDialog("original text")
+    try:
+        assert QApplication.clipboard().text() == "original text"
+        assert "automatically" in dialog.status_label.text()
+
+        dialog.text_edit.setPlainText("edited text")
+        assert "has not been copied" in dialog.status_label.text()
+        dialog._copy()
+
+        assert QApplication.clipboard().text() == "edited text"
+        assert "current text" in dialog.status_label.text()
+    finally:
+        dialog.close()
+
+
+def test_editor_state_json_is_bounded_and_atomic(tmp_path, monkeypatch):
+    import editor
+    import utils
+
+    path = tmp_path / "recent.json"
+    editor._save_editor_json(str(path), {"recent": ["C:/one.png"]})
+    assert editor._load_editor_json(str(path)) == {"recent": ["C:/one.png"]}
+
+    path.write_text("original", encoding="utf-8")
+    monkeypatch.setattr(
+        utils.os,
+        "replace",
+        lambda *_args: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+    with pytest.raises(OSError):
+        editor._save_editor_json(str(path), {"recent": []})
+    assert path.read_text(encoding="utf-8") == "original"
+    assert list(tmp_path.glob(".recent.json.*.tmp")) == []
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b"x" * (editor.EDITOR_STATE_MAX_BYTES + 1))
+    with pytest.raises(ValueError, match="safety limit"):
+        editor._load_editor_json(str(oversized))
+
+
+def test_invalid_editor_ui_scale_falls_back_and_valid_values_are_clamped(
+        qapp, monkeypatch):
+    import editor
+
+    monkeypatch.setattr(editor, "_dpi", lambda: 96.0)
+    monkeypatch.setattr(editor, "_screen_w", lambda: 1920)
+
+    assert editor.init_ui_scale(force="not-a-number") == 1.0
+    assert editor.init_ui_scale(force=100) == 3.0
+    assert editor.init_ui_scale(force=0.1) == 0.75
+
+
+def test_standalone_editor_image_loader_uses_bounded_decoder(qapp, tmp_path):
+    import editor
+
+    valid = tmp_path / "valid.png"
+    _solid_pixmap(12, 8, (1, 2, 3, 255)).save(str(valid), "PNG")
+    loaded = editor.load_pixmap_safely(str(valid))
+    assert loaded.width() == 12 and loaded.height() == 8
+
+    invalid = tmp_path / "invalid.png"
+    invalid.write_bytes(b"not an image")
+    with pytest.raises(ValueError):
+        editor.load_pixmap_safely(str(invalid))

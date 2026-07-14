@@ -78,10 +78,7 @@ def _capture(args, parser):
         return CaptureManager.capture_monitor(args.monitor)
     from PyQt5.QtCore import QRect
     x, y, w, h = _parse_region(parser, args.region)
-    full = CaptureManager.capture_fullscreen()
-    if full is None:
-        return None
-    return CaptureManager.crop_image(full, QRect(x, y, w, h))
+    return CaptureManager.capture_rect(QRect(x, y, w, h))
 
 
 def run(argv):

@@ -102,13 +102,21 @@ class HotkeyManager:
         key_combo: "Print", "Alt+Print", "Ctrl+Print", "Shift+Print"
         """
         if sys.platform != 'win32':
-            return
+            return True
         modifiers, vk = self._parse_combo(key_combo)
         if vk is None:
             log.warning(f"Could not parse hotkey: {key_combo}")
-            return
-        self._bindings[(modifiers, vk)] = key_combo
+            return False
+        binding = (modifiers, vk)
+        if binding in self._bindings:
+            log.warning(
+                "Hotkey collision: %s and %s resolve to the same keys",
+                self._bindings[binding], key_combo,
+            )
+            return False
+        self._bindings[binding] = key_combo
         self._callbacks[key_combo] = callback
+        return True
 
     # Every key name the settings HotkeyRecorderWidget can produce must be
     # resolvable here, or the recorded binding silently never fires.
@@ -125,21 +133,42 @@ class HotkeyManager:
     }
 
     def _parse_combo(self, combo):
+        if not isinstance(combo, str) or not combo or len(combo) > 64:
+            return MOD_NONE, None
         parts = [p.strip() for p in combo.split('+')]
+        if any(not part for part in parts):
+            return MOD_NONE, None
         modifiers = MOD_NONE
         vk = None
+        seen_modifiers = set()
+        key_names = {name.casefold(): value for name, value in self.VK_MAP.items()}
         for part in parts:
             low = part.lower()
             if low in ('alt', 'menu'):
+                if "alt" in seen_modifiers:
+                    return MOD_NONE, None
+                seen_modifiers.add("alt")
                 modifiers |= MOD_ALT
             elif low in ('ctrl', 'control'):
+                if "ctrl" in seen_modifiers:
+                    return MOD_NONE, None
+                seen_modifiers.add("ctrl")
                 modifiers |= MOD_CTRL
             elif low == 'shift':
+                if "shift" in seen_modifiers:
+                    return MOD_NONE, None
+                seen_modifiers.add("shift")
                 modifiers |= MOD_SHIFT
-            elif part in self.VK_MAP:
-                vk = self.VK_MAP[part]
+            elif low in key_names:
+                if vk is not None:
+                    return MOD_NONE, None
+                vk = key_names[low]
             elif len(part) == 1 and (part.isalpha() or part.isdigit()):
+                if vk is not None:
+                    return MOD_NONE, None
                 vk = ord(part.upper())
+            else:
+                return MOD_NONE, None
         return modifiers, vk
 
     def start(self):

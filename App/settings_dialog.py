@@ -21,6 +21,7 @@ from config import (
     AFTER_CAPTURE_ACTION_CHOICES,
     BEAUTIFICATION_PRESETS,
     FILENAME_TEMPLATE_HELP,
+    MAX_FILENAME_PATTERN_LENGTH,
     OUTPUT_FILE_FORMAT_CHOICES,
     config,
 )
@@ -516,6 +517,7 @@ class SettingsDialog(QDialog):
         layout.addRow("JPEG quality:", self.jpeg_quality)
 
         self.filename_pattern = QLineEdit(config.OUTPUT_FILENAME_PATTERN)
+        self.filename_pattern.setMaxLength(MAX_FILENAME_PATTERN_LENGTH)
         self.filename_pattern.setToolTip(FILENAME_TEMPLATE_HELP)
         self.filename_pattern.textChanged.connect(self._update_filename_preview)
         layout.addRow("Filename pattern:", self.filename_pattern)

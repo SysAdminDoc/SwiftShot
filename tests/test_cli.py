@@ -3,6 +3,8 @@ screen, so these cover argument routing, region parsing, and the fall-through
 to the GUI — the parts that are deterministic headless."""
 
 import pytest
+from argparse import Namespace
+from PyQt5.QtCore import QRect
 
 
 def test_non_cli_argv_falls_through_to_gui():
@@ -41,6 +43,28 @@ def test_region_parses_valid_spec():
     import cli
     parser = cli._build_parser()
     assert cli._parse_region(parser, "5,6,7,8") == (5, 6, 7, 8)
+
+
+def test_region_capture_preserves_negative_global_desktop_coordinates(
+        qapp, monkeypatch):
+    import capture
+    import cli
+
+    requested = []
+    marker = object()
+    monkeypatch.setattr(
+        capture.CaptureManager,
+        "capture_rect",
+        lambda rect: requested.append(QRect(rect)) or marker,
+    )
+    args = Namespace(
+        fullscreen=False,
+        monitor=None,
+        region="-1200,40,800,600",
+    )
+
+    assert cli._capture(args, cli._build_parser()) is marker
+    assert requested == [QRect(-1200, 40, 800, 600)]
 
 
 def test_cli_requires_something_to_do():

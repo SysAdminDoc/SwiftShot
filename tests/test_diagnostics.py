@@ -226,3 +226,52 @@ def test_cli_diagnostics_writes_sanitized_bundle(qapp, tmp_path):
     assert dest.exists()
     with zipfile.ZipFile(dest) as archive:
         assert {"versions.json", "manifest.json"} <= set(archive.namelist())
+
+
+def test_oversized_json_is_not_loaded_or_copied_into_bundle(qapp, tmp_path):
+    import diagnostics
+
+    cfg_dir = tmp_path / "SwiftShot"
+    cfg_dir.mkdir()
+    secret = b"private-marker-should-not-appear"
+    (cfg_dir / "swiftshot.json").write_bytes(
+        b'{"THEME":"dark","padding":"'
+        + b"x" * diagnostics.MAX_JSON_FILE_BYTES
+        + secret
+        + b'"}'
+    )
+    dest = tmp_path / "bundle.zip"
+
+    diagnostics.build_diagnostics_zip(str(dest), str(cfg_dir))
+    files = _zip_text(dest)
+
+    record = json.loads(files["configuration.json"])["swiftshot.json"]
+    assert record["status"] == "unreadable"
+    assert "1 MiB safety limit" in record["error"]
+    assert secret.decode() not in "\n".join(files.values())
+
+
+def test_failed_diagnostics_publish_preserves_existing_bundle(
+        qapp, tmp_path, monkeypatch):
+    import diagnostics
+    import utils
+
+    cfg_dir = tmp_path / "SwiftShot"
+    cfg_dir.mkdir()
+    dest = tmp_path / "bundle.zip"
+    dest.write_bytes(b"existing operator file")
+    monkeypatch.setattr(
+        utils.os,
+        "replace",
+        lambda *_args: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+
+    try:
+        diagnostics.build_diagnostics_zip(str(dest), str(cfg_dir))
+    except OSError:
+        pass
+    else:
+        raise AssertionError("publish failure should be reported")
+
+    assert dest.read_bytes() == b"existing operator file"
+    assert list(tmp_path.glob(".bundle.zip.*.tmp")) == []

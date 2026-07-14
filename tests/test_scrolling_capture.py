@@ -147,3 +147,67 @@ def test_cancel_during_finish_prevents_stitch_and_accept(qapp, monkeypatch):
 
     assert stitched == []
     assert dialog.result() == dialog.Rejected
+
+
+def test_capture_frame_uses_monitor_aware_global_rect(qapp, monkeypatch):
+    import capture
+    import scrolling_capture
+    from PyQt5.QtCore import QRect
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._generation = 4
+    dialog._capturing = True
+    dialog._target_rect = QRect(-800, 50, 120, 90)
+    frame = QPixmap(120, 90)
+    frame.fill(QColor("navy"))
+    captured = []
+    callbacks = []
+    monkeypatch.setattr(
+        capture.CaptureManager,
+        "capture_rect",
+        lambda rect: captured.append(QRect(rect)) or frame,
+    )
+    monkeypatch.setattr(
+        scrolling_capture.QTimer,
+        "singleShot",
+        lambda _delay, callback: callbacks.append(callback),
+    )
+    monkeypatch.setattr(dialog, "_scroll_window", lambda *_args: None)
+
+    dialog._capture_frame(4)
+
+    assert captured == [QRect(-800, 50, 120, 90)]
+    assert dialog._frames == [frame]
+    assert callbacks
+    dialog.close()
+
+
+def test_capture_frame_stops_before_exceeding_memory_budget(qapp, monkeypatch):
+    import capture
+    import scrolling_capture
+    from PyQt5.QtCore import QRect
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._generation = 6
+    dialog._capturing = True
+    dialog._target_rect = QRect(0, 0, 10, 10)
+    existing = QPixmap(10, 10)
+    existing.fill(QColor("red"))
+    dialog._frames = [existing]
+    dialog._raw_pixels = 100
+    next_frame = QPixmap(10, 10)
+    next_frame.fill(QColor("blue"))
+    finished = []
+    monkeypatch.setattr(scrolling_capture, "MAX_SCROLL_RAW_PIXELS", 150)
+    monkeypatch.setattr(
+        capture.CaptureManager, "capture_rect", lambda _rect: next_frame)
+    monkeypatch.setattr(dialog, "_finish", lambda generation: finished.append(generation))
+
+    dialog._capture_frame(6)
+
+    assert dialog._frames == [existing]
+    assert dialog.was_truncated()
+    assert finished == [6]
+    dialog.close()

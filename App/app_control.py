@@ -22,6 +22,7 @@ REPLY_CANCELLED = b"cancelled"
 EXIT_ACCEPTED = 0
 EXIT_CANCELLED = 2
 EXIT_UNAVAILABLE = 3
+MAX_CONTROL_REQUEST_BYTES = 64
 
 
 def register_application_restart():
@@ -47,6 +48,9 @@ class ApplicationControlServer:
     def __init__(self, controller, parent=None):
         self.controller = controller
         self.server = QLocalServer(parent)
+        # Installer control is a per-user operation. Do not expose the named
+        # pipe to other logged-on users on shared Windows hosts.
+        self.server.setSocketOptions(QLocalServer.UserAccessOption)
         self.server.newConnection.connect(self._accept_connections)
         if not self.server.listen(SERVER_NAME):
             raise RuntimeError(
@@ -66,9 +70,13 @@ class ApplicationControlServer:
     def _read_request(self, socket):
         if socket.property("swiftshotHandled"):
             return
+        if socket.bytesAvailable() > MAX_CONTROL_REQUEST_BYTES:
+            socket.setProperty("swiftshotHandled", True)
+            self._reply(socket, b"unsupported")
+            return
         if not socket.canReadLine():
             return
-        command = bytes(socket.readLine()).strip()
+        command = bytes(socket.readLine(MAX_CONTROL_REQUEST_BYTES + 1)).strip()
         if command not in (SHUTDOWN_COMMAND, SHUTDOWN_SILENT_COMMAND):
             socket.setProperty("swiftshotHandled", True)
             self._reply(socket, b"unsupported")

@@ -146,3 +146,14 @@ def test_apply_failure_keeps_dialog_open_and_restores_runtime_settings(
     assert dialog.result() == 0
     assert warnings and warnings[0][1] == "Settings Not Saved"
     dialog.close()
+
+
+def test_filename_pattern_editor_enforces_safe_component_budget(qapp):
+    from config import MAX_FILENAME_PATTERN_LENGTH
+    from settings_dialog import SettingsDialog
+
+    dialog = SettingsDialog()
+    try:
+        assert dialog.filename_pattern.maxLength() == MAX_FILENAME_PATTERN_LENGTH
+    finally:
+        dialog.close()

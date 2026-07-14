@@ -190,6 +190,45 @@ def test_recent_colors_reset_after_mutation(fresh_config):
     assert cfg.EDITOR_RECENT_COLORS == []
 
 
+def test_recent_colors_reject_invalid_values(fresh_config):
+    cfg = fresh_config.Config()
+
+    assert cfg.add_recent_color("not-a-color") is False
+    assert cfg.add_recent_color(123) is False
+    assert cfg.EDITOR_RECENT_COLORS == []
+
+
+def test_import_normalizes_colors_hotkeys_and_bounded_filename_pattern(
+        fresh_config, tmp_path):
+    cfg = fresh_config.Config()
+    import_path = tmp_path / "settings.json"
+    import_path.write_text(json.dumps({
+        "EDITOR_DEFAULT_COLOR": "javascript:red",
+        "BORDER_COLOR": "#ABCDEF",
+        "EDITOR_RECENT_COLORS": ["#ABCDEF", 7, "bad", "#abcdef"],
+        "CAPTURE_REGION_HOTKEY": "Ctrl++S",
+        "CAPTURE_WINDOW_HOTKEY": "Alt+Print",
+        "OUTPUT_FILENAME_PATTERN": "x" * 1000,
+    }), encoding="utf-8")
+
+    assert cfg.import_settings(str(import_path))
+    assert cfg.EDITOR_DEFAULT_COLOR == fresh_config.Config.EDITOR_DEFAULT_COLOR
+    assert cfg.BORDER_COLOR == "#ABCDEF"
+    assert cfg.EDITOR_RECENT_COLORS == ["#abcdef"]
+    assert cfg.CAPTURE_REGION_HOTKEY == fresh_config.Config.CAPTURE_REGION_HOTKEY
+    assert cfg.CAPTURE_WINDOW_HOTKEY == "Alt+Print"
+    assert len(cfg.OUTPUT_FILENAME_PATTERN) == fresh_config.MAX_FILENAME_PATTERN_LENGTH
+
+
+def test_filename_sanitizer_bounds_components_and_avoids_windows_devices(
+        fresh_config):
+    cfg = fresh_config.Config()
+
+    assert cfg.preview_filename(pattern="CON", file_format="png") == "_CON.png"
+    long_name = cfg.preview_filename(pattern="x" * 1000, file_format="png")
+    assert len(Path(long_name).stem) == fresh_config.MAX_FILENAME_STEM_LENGTH
+
+
 def test_corrupt_config_backed_up_and_defaults_used(fresh_config, tmp_path):
     cfg = fresh_config.Config()
     Path(cfg._config_file).write_text("{not json", encoding="utf-8")

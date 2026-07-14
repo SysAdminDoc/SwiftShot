@@ -8,11 +8,12 @@ Includes mouse pointer overlay and camera sound support.
 import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QCursor
-from PyQt5.QtCore import QPoint
+from PyQt5.QtCore import QPoint, QRect, Qt
 
 from utils import virtual_geometry
 from config import config
 from logger import log
+from safe_io import MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS
 
 
 # Win32 BITMAPINFOHEADER
@@ -49,12 +50,7 @@ class CaptureManager:
             log.warning(f"Win32 fullscreen capture failed, falling back to Qt: {e}")
 
         if pixmap is None:
-            screen = QApplication.primaryScreen()
-            if screen is None:
-                return None
-            geometry = virtual_geometry()
-            pixmap = screen.grabWindow(0, geometry.x(), geometry.y(),
-                                       geometry.width(), geometry.height())
+            pixmap = CaptureManager.capture_rect(virtual_geometry())
 
         if pixmap and config.CAPTURE_MOUSE_POINTER:
             pixmap = CaptureManager._draw_cursor(pixmap)
@@ -62,6 +58,61 @@ class CaptureManager:
         # Camera sound is played by the app when a capture completes,
         # not here: this method also grabs overlay backdrops.
         return pixmap
+
+    @staticmethod
+    def capture_rect(rect):
+        """Capture a global desktop rectangle through each intersecting screen.
+
+        ``QScreen.grabWindow`` coordinates are local to that QScreen on mixed
+        DPI desktops. Routing global coordinates through the primary screen
+        returns the wrong pixels for secondary monitors, so composite the
+        visible intersections from their owning screens instead.
+        """
+        if rect is None:
+            return None
+        target = QRect(rect).intersected(virtual_geometry())
+        if target.width() < 1 or target.height() < 1:
+            return None
+        if (target.width() > MAX_IMAGE_DIMENSION
+                or target.height() > MAX_IMAGE_DIMENSION
+                or target.width() * target.height() > MAX_IMAGE_PIXELS):
+            log.warning(
+                "Capture rectangle exceeds safe image limits: %dx%d",
+                target.width(), target.height(),
+            )
+            return None
+
+        result = QPixmap(target.size())
+        if result.isNull():
+            return None
+        result.fill(Qt.black)
+        painter = QPainter(result)
+        drew_pixels = False
+        try:
+            for screen in QApplication.screens():
+                screen_rect = screen.geometry()
+                overlap = target.intersected(screen_rect)
+                if overlap.width() < 1 or overlap.height() < 1:
+                    continue
+                local_x = overlap.x() - screen_rect.x()
+                local_y = overlap.y() - screen_rect.y()
+                screen_pixmap = screen.grabWindow(
+                    0, local_x, local_y, overlap.width(), overlap.height())
+                if screen_pixmap.isNull():
+                    continue
+                # A high-DPI QScreen can return more device pixels than the
+                # requested logical size. Draw the complete grab into the
+                # logical destination instead of cropping its top-left corner.
+                destination = QRect(
+                    overlap.x() - target.x(), overlap.y() - target.y(),
+                    overlap.width(), overlap.height(),
+                )
+                painter.drawPixmap(destination, screen_pixmap,
+                                   screen_pixmap.rect())
+                drew_pixels = True
+        finally:
+            painter.end()
+        return result if drew_pixels else None
 
     @staticmethod
     def _draw_cursor(pixmap):
@@ -239,41 +290,73 @@ class CaptureManager:
         w = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
         h = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
 
+        if (w < 1 or h < 1 or w > MAX_IMAGE_DIMENSION
+                or h > MAX_IMAGE_DIMENSION or w * h > MAX_IMAGE_PIXELS):
+            raise ValueError(f"Virtual desktop size is unsafe: {w}x{h}")
+
         hdc_screen = user32.GetDC(None)
-        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-        hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
-        old_bmp = gdi32.SelectObject(hdc_mem, hbmp)
+        if not hdc_screen:
+            raise OSError("GetDC failed")
+        hdc_mem = None
+        hbmp = None
+        old_bmp = None
+        bitmap_selected = False
+        try:
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+            if not hdc_mem:
+                raise OSError("CreateCompatibleDC failed")
+            hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+            if not hbmp:
+                raise OSError("CreateCompatibleBitmap failed")
+            old_bmp = gdi32.SelectObject(hdc_mem, hbmp)
+            if not old_bmp:
+                raise OSError("SelectObject failed")
+            bitmap_selected = True
 
-        # CAPTUREBLT includes layered/transparent windows (tooltips, some
-        # overlays) that plain SRCCOPY misses; without it they capture black.
-        SRCCOPY = 0x00CC0020
-        CAPTUREBLT = 0x40000000
-        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY | CAPTUREBLT)
+            # CAPTUREBLT includes layered/transparent windows (tooltips, some
+            # overlays) that plain SRCCOPY misses; without it they capture black.
+            SRCCOPY = 0x00CC0020
+            CAPTUREBLT = 0x40000000
+            if not gdi32.BitBlt(
+                    hdc_mem, 0, 0, w, h, hdc_screen, x, y,
+                    SRCCOPY | CAPTUREBLT):
+                raise OSError("BitBlt failed")
 
-        bmi = BITMAPINFOHEADER()
-        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.biWidth = w
-        bmi.biHeight = -h
-        bmi.biPlanes = 1
-        bmi.biBitCount = 32
-        bmi.biCompression = 0
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.biWidth = w
+            bmi.biHeight = -h
+            bmi.biPlanes = 1
+            bmi.biBitCount = 32
+            bmi.biCompression = 0
 
-        buf_size = w * h * 4
-        buf = ctypes.create_string_buffer(buf_size)
-        # GetDIBits requires the bitmap NOT to be selected into a DC.
-        gdi32.SelectObject(hdc_mem, old_bmp)
-        gdi32.GetDIBits(hdc_mem, hbmp, 0, h, buf, ctypes.byref(bmi), 0)
+            buf_size = w * h * 4
+            buf = ctypes.create_string_buffer(buf_size)
+            # GetDIBits requires the bitmap NOT to be selected into a DC.
+            if not gdi32.SelectObject(hdc_mem, old_bmp):
+                raise OSError("Could not deselect capture bitmap")
+            bitmap_selected = False
+            scan_lines = gdi32.GetDIBits(
+                hdc_mem, hbmp, 0, h, buf, ctypes.byref(bmi), 0)
+            if scan_lines != h:
+                raise OSError(
+                    f"GetDIBits returned {scan_lines} of {h} scan lines")
 
-        # Screen blits carry undefined alpha bytes (layered windows can leave
-        # alpha < 255); RGB32 ignores them instead of saving transparent holes.
-        img = QImage(buf, w, h, w * 4, QImage.Format_RGB32)
-        pixmap = QPixmap.fromImage(img.copy())
-
-        gdi32.DeleteObject(hbmp)
-        gdi32.DeleteDC(hdc_mem)
-        user32.ReleaseDC(None, hdc_screen)
-
-        return pixmap
+            # Screen blits carry undefined alpha bytes (layered windows can leave
+            # alpha < 255); RGB32 ignores them instead of saving transparent holes.
+            img = QImage(buf, w, h, w * 4, QImage.Format_RGB32)
+            pixmap = QPixmap.fromImage(img.copy())
+            if pixmap.isNull():
+                raise OSError("Qt could not create the captured image")
+            return pixmap
+        finally:
+            if bitmap_selected and hdc_mem and old_bmp:
+                gdi32.SelectObject(hdc_mem, old_bmp)
+            if hbmp:
+                gdi32.DeleteObject(hbmp)
+            if hdc_mem:
+                gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(None, hdc_screen)
 
     @staticmethod
     def capture_active_window():
@@ -318,10 +401,7 @@ class CaptureManager:
         if w <= 0 or h <= 0:
             return CaptureManager.capture_fullscreen()
 
-        screen = QApplication.primaryScreen()
-        if screen:
-            return screen.grabWindow(0, x, y, w, h)
-        return None
+        return CaptureManager.capture_rect(QRect(x, y, w, h))
 
     @staticmethod
     def capture_monitor(monitor_index=0):

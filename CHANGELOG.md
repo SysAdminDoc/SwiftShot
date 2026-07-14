@@ -33,6 +33,14 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   a local, no-telemetry artifact to attach to a bug report.
 
 ### UX & feedback
+- Monitor selection now remains usable with many displays via a bounded,
+  keyboard-focusable horizontal picker; single-display setups no longer offer
+  a redundant “All Monitors” action. History and OCR dialogs provide explicit
+  empty/result/clipboard status, wrap long guidance, and keep native checkbox
+  marks visible in every theme.
+- Pins auto-fit the active work area and enforce decoded/rendered pixel limits.
+  Oversized scrolling captures stop safely with clear partial-result guidance
+  instead of continuing until the process exhausts memory.
 - Tray notifications now carry a one-shot typed action instead of sharing a
   persistent update URL. Unrelated messages cannot open stale links, the
   notification preference is enforced in one place, and capture, save,
@@ -76,6 +84,18 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Global capture rectangles are now composed from each intersecting display in
+  that display's local coordinate space, including negative origins and
+  high-DPI grabs. Window, scrolling, and CLI region capture no longer return
+  primary-monitor pixels when the requested area is on another display.
+- Hotkey configuration rejects malformed, aliased-duplicate, and conflicting
+  physical shortcuts before installing the low-level hook. Imported color and
+  filename settings are bounded and normalized, including Windows reserved
+  device names.
+- Standalone-editor state and recent-file data use bounded, verified atomic
+  JSON writes, and standalone image arguments use the shared safe decoder.
+  Diagnostic ZIPs are likewise assembled, verified, and atomically published,
+  preserving an existing support bundle if publication fails.
 - Settings and exports now use bounded UTF-8 JSON input and same-directory
   atomic replacement. Oversized or non-object files are rejected, failed
   imports roll back live state, corrupt startup files are preserved for
@@ -199,6 +219,9 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   the installed Pillow was built with libavif (the 12.3.0+ wheels are).
 
 ### Security & dependencies
+- The installer control server now requests a same-user-only local socket and
+  rejects oversized or malformed commands before dispatch. Cross-user local
+  sessions and unbounded request buffering cannot reach the shutdown path.
 - The update checker only surfaces a genuine GitHub release URL for this
   repository; any other `html_url` in the API response is ignored and
   replaced with the releases page, so a tampered response can't hand a

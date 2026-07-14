@@ -2,6 +2,8 @@
 picker's rectangle animator (R-04)."""
 
 from PyQt5.QtCore import QPoint, QRectF
+from PyQt5.QtGui import QColor, QPixmap
+from PyQt5.QtWidgets import QPushButton
 from pathlib import Path
 
 
@@ -111,3 +113,51 @@ def test_cancelled_countdown_rejects_stale_timer_tick(qapp):
     assert overlay._remaining_ms == remaining
     assert not overlay._timer.isActive()
     assert not overlay.isVisible()
+
+
+def test_monitor_picker_scrolls_large_monitor_sets_within_work_area(
+        qapp, monkeypatch):
+    import monitor_picker
+
+    screen = qapp.primaryScreen()
+    screens = [screen] * 10
+    thumbnail = QPixmap(20, 12)
+    thumbnail.fill(QColor("blue"))
+    monkeypatch.setattr(monitor_picker.QApplication, "screens", lambda: screens)
+    monkeypatch.setattr(
+        monitor_picker.MonitorPicker,
+        "_capture_monitor_thumbnail",
+        lambda _self, _screen: thumbnail,
+    )
+
+    picker = monitor_picker.MonitorPicker()
+    picker.show()
+    qapp.processEvents()
+    try:
+        assert picker.cards_scroll.horizontalScrollBar().maximum() > 0
+        assert picker.width() <= screen.availableGeometry().width()
+        assert picker._cards[0].hasFocus()
+    finally:
+        picker.close()
+
+
+def test_monitor_picker_omits_redundant_all_button_for_one_screen(
+        qapp, monkeypatch):
+    import monitor_picker
+
+    screen = qapp.primaryScreen()
+    thumbnail = QPixmap(20, 12)
+    thumbnail.fill(QColor("blue"))
+    monkeypatch.setattr(monitor_picker.QApplication, "screens", lambda: [screen])
+    monkeypatch.setattr(
+        monitor_picker.MonitorPicker,
+        "_capture_monitor_thumbnail",
+        lambda _self, _screen: thumbnail,
+    )
+
+    picker = monitor_picker.MonitorPicker()
+    try:
+        button_texts = {button.text() for button in picker.findChildren(QPushButton)}
+        assert not any(text.startswith("All Monitors") for text in button_texts)
+    finally:
+        picker.close()

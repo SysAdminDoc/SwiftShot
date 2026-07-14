@@ -41,3 +41,22 @@ def test_parse_combo_letters_and_digits():
 
 def test_parse_combo_unknown_key_returns_none():
     assert _parse("Ctrl+NotAKey")[1] is None
+
+
+@pytest.mark.parametrize("combo", [
+    "Ctrl++S",
+    "Ctrl+Ctrl+S",
+    "Ctrl+S+F5",
+    "Ctrl+Nope+Print",
+    "Win+Print",
+])
+def test_parse_combo_rejects_ambiguous_or_partially_valid_input(combo):
+    assert _parse(combo)[1] is None
+
+
+def test_register_rejects_duplicate_physical_binding():
+    from hotkeys import HotkeyManager
+
+    manager = HotkeyManager()
+    assert manager.register("Ctrl+Print", lambda: None)
+    assert not manager.register("Control+PrtSc", lambda: None)

@@ -13,6 +13,14 @@ import tempfile
 
 
 MAX_CONFIG_BYTES = 1024 * 1024
+MAX_FILENAME_PATTERN_LENGTH = 512
+MAX_FILENAME_STEM_LENGTH = 180
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 def _read_json_object(path):
@@ -196,6 +204,16 @@ class Config:
     # (Older builds saved APP_VERSION into swiftshot.json, which pinned the
     # running version string to the release the config was written by.)
     _IDENTITY_KEYS = {"APP_NAME", "APP_VERSION"}
+    _COLOR_KEYS = {
+        "EDITOR_DEFAULT_COLOR", "BORDER_COLOR", "SHADOW_COLOR",
+        "BACKDROP_COLOR", "BACKDROP_COLOR2", "PIN_BORDER_COLOR",
+    }
+    _HOTKEY_KEYS = (
+        "CAPTURE_REGION_HOTKEY", "CAPTURE_WINDOW_HOTKEY",
+        "CAPTURE_FULLSCREEN_HOTKEY", "CAPTURE_LAST_REGION_HOTKEY",
+        "CAPTURE_OCR_HOTKEY", "CAPTURE_FREEHAND_HOTKEY",
+        "CAPTURE_SCROLLING_HOTKEY", "CAPTURE_COLOR_PICKER_HOTKEY",
+    )
     # Numeric keys are clamped to their Settings-UI ranges on load/import —
     # e.g. a hand-edited CAPTURE_HISTORY_MAX of 0 made the history pruner
     # delete every capture immediately after saving it.
@@ -286,6 +304,42 @@ class Config:
             val = getattr(self, key, None)
             if isinstance(val, int) and not isinstance(val, bool):
                 setattr(self, key, min(max(val, lo), hi))
+        for key in self._COLOR_KEYS:
+            value = getattr(self, key, "")
+            if not isinstance(value, str) or not _HEX_COLOR_RE.fullmatch(value):
+                setattr(self, key, getattr(Config, key))
+        recent_colors = []
+        for value in self.EDITOR_RECENT_COLORS:
+            if (isinstance(value, str) and _HEX_COLOR_RE.fullmatch(value)
+                    and value.lower() not in recent_colors):
+                recent_colors.append(value.lower())
+        self.EDITOR_RECENT_COLORS = recent_colors[:12]
+        self.OUTPUT_FILENAME_PATTERN = self.OUTPUT_FILENAME_PATTERN[
+            :MAX_FILENAME_PATTERN_LENGTH]
+        self._normalize_hotkeys()
+
+    def _normalize_hotkeys(self):
+        """Reject malformed/imported shortcuts and resolve physical collisions."""
+        try:
+            from hotkeys import HotkeyManager
+            parser = HotkeyManager()
+        except Exception:
+            return
+
+        seen = set()
+        for key in self._HOTKEY_KEYS:
+            combo = getattr(self, key)
+            if not combo:
+                continue
+            binding = parser._parse_combo(combo)
+            if binding[1] is None:
+                combo = getattr(Config, key)
+                binding = parser._parse_combo(combo) if combo else (0, None)
+            if binding[1] is None or binding in seen:
+                combo = ""
+            elif combo:
+                seen.add(binding)
+            setattr(self, key, combo)
 
     def _load(self):
         if not os.path.exists(self._config_file):
@@ -400,12 +454,15 @@ class Config:
 
     def add_recent_color(self, hex_color):
         """Track recently used colors (max 12, most recent first)."""
+        if not isinstance(hex_color, str) or not _HEX_COLOR_RE.fullmatch(hex_color):
+            return False
         hex_color = hex_color.lower()
         if hex_color in self.EDITOR_RECENT_COLORS:
             self.EDITOR_RECENT_COLORS.remove(hex_color)
         self.EDITOR_RECENT_COLORS.insert(0, hex_color)
         if len(self.EDITOR_RECENT_COLORS) > 12:
             self.EDITOR_RECENT_COLORS = self.EDITOR_RECENT_COLORS[:12]
+        return True
 
     def _normalize_after_capture_actions(self):
         configured = getattr(self, "AFTER_CAPTURE_ACTIONS", None)
@@ -454,7 +511,11 @@ class Config:
         name = _FILENAME_UNSAFE_RE.sub("_", str(name))
         name = " ".join(name.split())
         name = name.strip(" ._")
-        return name or "SwiftShot"
+        name = name[:MAX_FILENAME_STEM_LENGTH].rstrip(" ._")
+        name = name or "SwiftShot"
+        if name.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+            name = f"_{name}"
+        return name
 
     def _render_filename_pattern(
         self,

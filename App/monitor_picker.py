@@ -6,7 +6,7 @@ which one to capture for fullscreen mode.
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QApplication, QFrame
+    QApplication, QFrame, QScrollArea, QWidget
 )
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QCursor
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -157,6 +157,10 @@ class MonitorPicker(QDialog):
         )
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self._selected_index = -1
+        self._cards = []
+        self.setAccessibleName("Monitor picker")
+        self.setAccessibleDescription(
+            "Choose one monitor or the full desktop to capture.")
 
         self._build_ui()
         self._center_on_cursor()
@@ -204,7 +208,9 @@ class MonitorPicker(QDialog):
         layout.addWidget(subtitle)
 
         # Monitor cards row
-        cards_layout = QHBoxLayout()
+        cards_container = QWidget()
+        cards_layout = QHBoxLayout(cards_container)
+        cards_layout.setContentsMargins(0, 0, 0, 0)
         cards_layout.setSpacing(12)
 
         for i, screen in enumerate(screens):
@@ -212,16 +218,34 @@ class MonitorPicker(QDialog):
             card = MonitorCard(i, screen, thumbnail)
             card.clicked.connect(self._on_card_clicked)
             cards_layout.addWidget(card)
+            self._cards.append(card)
 
-        layout.addLayout(cards_layout)
+        cards_container.adjustSize()
+        cards_scroll = QScrollArea()
+        cards_scroll.setAccessibleName("Available monitors")
+        cards_scroll.setWidget(cards_container)
+        cards_scroll.setWidgetResizable(False)
+        cards_scroll.setFrameShape(QFrame.NoFrame)
+        cards_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        cards_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        cards_scroll.setFixedHeight(216)
+        active_screen = (QApplication.screenAt(QCursor.pos())
+                         or QApplication.primaryScreen())
+        available_width = (active_screen.availableGeometry().width()
+                           if active_screen is not None else 960)
+        cards_scroll.setMaximumWidth(max(300, int(available_width * 0.9)))
+        self.cards_scroll = cards_scroll
+        layout.addWidget(cards_scroll, alignment=Qt.AlignCenter)
 
         # "All Monitors" button + Cancel
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        all_btn = QPushButton(f"All Monitors ({len(screens)})")
-        all_btn.clicked.connect(lambda: self._on_card_clicked(-1))
-        btn_layout.addWidget(all_btn)
+        if len(screens) > 1:
+            all_btn = QPushButton(f"All Monitors ({len(screens)})")
+            all_btn.setToolTip("Capture the complete virtual desktop")
+            all_btn.clicked.connect(lambda: self._on_card_clicked(-1))
+            btn_layout.addWidget(all_btn)
 
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -232,6 +256,8 @@ class MonitorPicker(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         exclude_window_from_capture(self)
+        if self._cards:
+            self._cards[0].setFocus(Qt.OtherFocusReason)
 
     def _capture_monitor_thumbnail(self, screen):
         """Capture a quick thumbnail of a monitor.

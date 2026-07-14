@@ -6,7 +6,7 @@ Includes embedded timer controls for delayed capture after region selection.
 
 from PyQt5.QtWidgets import (
     QMenu, QApplication, QWidgetAction,
-    QWidget, QHBoxLayout, QCheckBox, QSpinBox, QLabel
+    QWidget, QHBoxLayout, QCheckBox, QSpinBox, QLabel, QMessageBox
 )
 from PyQt5.QtGui import QCursor
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -199,16 +199,6 @@ class CaptureMenu(QMenu):
                 spacing: 6px;
                 font-size: 10pt;
             }}
-            QCheckBox::indicator {{
-                width: 15px; height: 15px;
-                border: 1px solid {colors['BORDER']};
-                border-radius: 3px;
-                background-color: {colors['BG2']};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {colors['ACCENT']};
-                border-color: {colors['ACCENT']};
-            }}
             QSpinBox {{
                 background-color: {colors['BG2']}; color: {colors['TEXT_PRI']};
                 border: 1px solid {colors['BORDER']}; border-radius: 3px;
@@ -264,21 +254,47 @@ class CaptureMenu(QMenu):
         self.addAction(widget_action)
 
     def _on_timer_toggled(self, checked):
+        previous = config.CAPTURE_TIMER_ENABLED
         self._timer_enabled = checked
         self._timer_spin.setEnabled(checked)
         self._timer_hint.setVisible(checked)
 
         # Persist immediately so captures in this session use the value
         config.CAPTURE_TIMER_ENABLED = checked
-        config.save()
+        if not config.save():
+            config.CAPTURE_TIMER_ENABLED = previous
+            self._timer_enabled = previous
+            self._timer_cb.blockSignals(True)
+            self._timer_cb.setChecked(previous)
+            self._timer_cb.blockSignals(False)
+            self._timer_spin.setEnabled(previous)
+            self._timer_hint.setVisible(previous)
+            self._show_save_failure()
+            return
 
         self.timer_changed.emit(checked, self._timer_spin.value())
 
     def _on_timer_value_changed(self, val):
+        previous = config.CAPTURE_TIMER_SECONDS
         self._timer_seconds = val
         config.CAPTURE_TIMER_SECONDS = val
-        config.save()
+        if not config.save():
+            config.CAPTURE_TIMER_SECONDS = previous
+            self._timer_seconds = previous
+            self._timer_spin.blockSignals(True)
+            self._timer_spin.setValue(previous)
+            self._timer_spin.blockSignals(False)
+            self._show_save_failure()
+            return
         self.timer_changed.emit(self._timer_enabled, val)
+
+    def _show_save_failure(self):
+        QMessageBox.warning(
+            self,
+            "Timer Setting Unchanged",
+            "SwiftShot could not save the timer preference. Check that the "
+            "configuration folder is writable, then try again.",
+        )
 
     def popup_at_cursor(self):
         self.popup(QCursor.pos())
