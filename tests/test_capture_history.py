@@ -115,3 +115,41 @@ def test_save_to_history_prunes_sqlite_and_files(fresh_config, qapp, tmp_path):
     assert len(entries) == 1
     assert entries[0]["path"] == second_path
     assert not Path(first_path).exists()
+
+
+def test_history_write_failure_does_not_create_row_or_partial_file(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    import utils
+
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("yellow"))
+    real_replace = utils.os.replace
+
+    def fail_png_replace(source, destination):
+        if str(destination).endswith(".png"):
+            raise OSError("injected replace failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(utils.os, "replace", fail_png_replace)
+
+    assert capture_history.save_to_history(pixmap) is None
+    assert capture_history._history_entries(str(tmp_path)) == []
+    assert list(tmp_path.glob("*.png")) == []
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_history_index_failure_removes_published_file(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(QColor("cyan"))
+
+    def fail_thumbnail(_pixmap):
+        raise OSError("injected database payload failure")
+
+    monkeypatch.setattr(capture_history, "_thumbnail_blob", fail_thumbnail)
+
+    assert capture_history.save_to_history(pixmap) is None
+    assert capture_history._history_entries(str(tmp_path)) == []
+    assert list(tmp_path.glob("*.png")) == []

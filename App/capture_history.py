@@ -22,6 +22,7 @@ from PyQt5.QtCore import (
 from config import config
 from logger import log
 from theme import colors_for_theme
+from utils import atomic_write_bytes
 
 
 IMAGE_EXTENSIONS = [
@@ -96,9 +97,18 @@ def _pixmap_png_bytes(pixmap):
     data = QByteArray()
     buffer = QBuffer(data)
     buffer.open(QIODevice.WriteOnly)
-    pixmap.save(buffer, "PNG")
+    saved = pixmap.save(buffer, "PNG")
     buffer.close()
-    return bytes(data)
+    payload = bytes(data)
+    if not saved or not payload:
+        raise OSError("Failed to encode capture as PNG")
+    return payload
+
+
+def _verify_png(path):
+    image = QPixmap(path)
+    if image.isNull():
+        raise OSError("Encoded capture failed PNG verification")
 
 
 def _thumbnail_blob(pixmap):
@@ -557,41 +567,49 @@ def save_to_history(pixmap, ocr_text=""):
                 history_dir, f"capture_{timestamp}_{counter}.png"
             )
             counter += 1
-        with open(filepath, "wb") as f:
-            f.write(png_bytes)
+        atomic_write_bytes(filepath, png_bytes, _verify_png)
 
         created_at = datetime.now().isoformat(timespec="seconds")
-        with _db(history_dir) as conn:
-            conn.execute(
-                """
-                INSERT INTO captures
-                    (path, created_at, width, height, sha256, ocr_text, thumbnail_blob)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    filepath,
-                    created_at,
-                    pixmap.width(),
-                    pixmap.height(),
-                    digest,
-                    ocr_text or "",
-                    _thumbnail_blob(pixmap),
-                ),
-            )
-            old_entries = conn.execute(
-                """
-                SELECT path FROM captures
-                ORDER BY created_at DESC, id DESC
-                LIMIT -1 OFFSET ?
-                """,
-                (config.CAPTURE_HISTORY_MAX,),
-            ).fetchall()
-            for row in old_entries:
-                try:
-                    os.remove(row["path"])
-                except Exception:
-                    pass
-                conn.execute("DELETE FROM captures WHERE path = ?", (row["path"],))
+        try:
+            with _db(history_dir) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO captures
+                        (path, created_at, width, height, sha256, ocr_text, thumbnail_blob)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        filepath,
+                        created_at,
+                        pixmap.width(),
+                        pixmap.height(),
+                        digest,
+                        ocr_text or "",
+                        _thumbnail_blob(pixmap),
+                    ),
+                )
+                old_entries = conn.execute(
+                    """
+                    SELECT path FROM captures
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT -1 OFFSET ?
+                    """,
+                    (config.CAPTURE_HISTORY_MAX,),
+                ).fetchall()
+                for row in old_entries:
+                    try:
+                        os.remove(row["path"])
+                    except Exception:
+                        pass
+                    conn.execute("DELETE FROM captures WHERE path = ?", (row["path"],))
+        except Exception:
+            # The image is published before the DB transaction. Compensate if
+            # indexing/commit fails so history never accumulates hidden files.
+            try:
+                os.remove(filepath)
+            except FileNotFoundError:
+                pass
+            raise
 
         log.info(f"Saved to history: {filepath}")
         return filepath

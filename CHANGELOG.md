@@ -56,6 +56,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Image saves/exports, `.swiftshot` projects, and capture-history PNGs now
+  write to a same-directory temporary file, flush and decode/CRC-verify it,
+  then atomically replace the destination. Failed or cancelled Save As keeps
+  the original document identity, dirty state, JPEG quality and last valid
+  file; failed history indexing removes the newly published capture.
 - Configuration written by a newer build is preserved when an older build
   saves, so a downgrade→upgrade round-trip no longer silently resets settings
   the older build didn't recognize.

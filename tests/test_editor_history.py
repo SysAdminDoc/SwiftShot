@@ -1,5 +1,7 @@
 """Regression tests for editor undo snapshots and numpy image helpers."""
 
+from pathlib import Path
+
 import numpy as np
 from PIL import Image
 
@@ -280,6 +282,51 @@ def test_jpeg_save_uses_white_matte(qapp, tmp_path):
         editor._save_to(str(out))
         assert Image.open(out).convert("RGB").getpixel((5, 5)) == (255, 255, 255)
     finally:
+        editor.close()
+
+
+def test_failed_save_as_preserves_document_identity(qapp, tmp_path, monkeypatch):
+    """A failed atomic replace must not retarget the open document."""
+    from editor import ImageEditor, QFileDialog, QMessageBox
+    from PyQt5.QtGui import QPixmap, QColor
+    import utils
+
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    pm = QPixmap(8, 8)
+    pm.fill(QColor("red"))
+    editor = ImageEditor(pm)
+    target = tmp_path / "replacement.png"
+    target.write_bytes(b"last-good")
+    editor.file_path = "original.png"
+    editor.saved_path = "original.swiftshot"
+    editor._jpeg_quality = 77
+    editor._set_dirty(True)
+    original_title = editor.windowTitle()
+
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(target), "PNG (*.png)")),
+    )
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *args: None))
+    real_replace = utils.os.replace
+
+    def fail_target_replace(source, destination):
+        if Path(destination) == target:
+            raise OSError("injected replace failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(utils.os, "replace", fail_target_replace)
+    try:
+        editor.save_image_as()
+        assert target.read_bytes() == b"last-good"
+        assert editor.file_path == "original.png"
+        assert editor.saved_path == "original.swiftshot"
+        assert editor._jpeg_quality == 77
+        assert editor._dirty is True
+        assert editor.windowTitle() == original_title
+        assert list(tmp_path.glob(".replacement.png.*.tmp")) == []
+    finally:
+        editor._set_dirty(False)
         editor.close()
 
 

@@ -10,6 +10,7 @@ metadata entirely.
 import io
 import json
 import zipfile
+from pathlib import Path
 
 from PIL import Image
 
@@ -139,3 +140,60 @@ def test_legacy_v2_group_size_comes_from_composite(qapp):
     assert (group._w, group._h) == (1000, 700)
     assert group.mask is not None and group.mask.getpixel((0, 0)) == 200
     assert len(group.children) == 1
+
+
+def test_project_save_atomically_replaces_and_verifies(qapp, tmp_path, monkeypatch):
+    from editor import ImageEditor
+    from PyQt5.QtGui import QColor, QPixmap
+
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    pixmap = QPixmap(12, 9)
+    pixmap.fill(QColor("blue"))
+    editor = ImageEditor(pixmap)
+    target = tmp_path / "document.swiftshot"
+    target.write_bytes(b"old-project")
+    editor._set_dirty(True)
+    try:
+        assert editor._save_project_to(str(target)) is True
+        with zipfile.ZipFile(target) as zf:
+            assert zf.testzip() is None
+            metadata = json.loads(zf.read("project.json"))
+        assert metadata["magic"] == "SWIFTSHOT_PROJECT"
+        assert metadata["version"] == 3
+        assert editor.saved_path == str(target)
+        assert editor._dirty is False
+    finally:
+        editor.close()
+
+
+def test_project_save_failure_preserves_last_good_file(qapp, tmp_path, monkeypatch):
+    from editor import ImageEditor, QMessageBox
+    from PyQt5.QtGui import QColor, QPixmap
+    import utils
+
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    pixmap = QPixmap(12, 9)
+    pixmap.fill(QColor("green"))
+    editor = ImageEditor(pixmap)
+    target = tmp_path / "document.swiftshot"
+    target.write_bytes(b"last-good-project")
+    editor.saved_path = "previous.swiftshot"
+    editor._set_dirty(True)
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *args: None))
+    real_replace = utils.os.replace
+
+    def fail_target_replace(source, destination):
+        if Path(destination) == target:
+            raise OSError("injected replace failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(utils.os, "replace", fail_target_replace)
+    try:
+        assert editor._save_project_to(str(target)) is False
+        assert target.read_bytes() == b"last-good-project"
+        assert editor.saved_path == "previous.swiftshot"
+        assert editor._dirty is True
+        assert list(tmp_path.glob(".document.swiftshot.*.tmp")) == []
+    finally:
+        editor._set_dirty(False)
+        editor.close()

@@ -12,6 +12,7 @@ import json
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont, ImageOps, ImageChops
+from utils import atomic_replace
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -115,6 +116,29 @@ def pil_to_qimage(pil_image):
 
 def pil_to_qpixmap(pil_image):
     return QPixmap.fromImage(pil_to_qimage(pil_image))
+
+
+def _output_format(path):
+    """Resolve a Pillow format without relying on the temporary file suffix."""
+    extension = os.path.splitext(path)[1].lower()
+    format_name = Image.registered_extensions().get(extension)
+    if not format_name:
+        raise ValueError(f"Unsupported output file extension: {extension or '(none)'}")
+    return format_name
+
+
+def _verify_saved_image(path):
+    with Image.open(path) as image:
+        image.verify()
+
+
+def _atomic_save_image(image, path, format_name=None, **options):
+    format_name = format_name or _output_format(path)
+    atomic_replace(
+        path,
+        lambda temp_path: image.save(temp_path, format_name, **options),
+        _verify_saved_image,
+    )
 
 
 def compute_image_diff(base, other, threshold=16):
@@ -6570,44 +6594,49 @@ class ImageEditor(QMainWindow):
             "WebP Lossless (*.webp);;" + avif_filter + "BMP (*.bmp);;"
             "TIFF (*.tiff *.tif);;All Files (*)")
         if path:
-            self.file_path = path
-            # Clear the project path — otherwise Ctrl+S after Save-As-PNG from a
-            # loaded .swiftshot silently overwrites the project file, not the PNG.
-            self.saved_path = None
-            self._jpeg_quality = None   # fresh Save As re-prompts for quality
-            self._save_to(path)
-            self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
+            if self._save_to(path, force_jpeg_prompt=True):
+                self.file_path = path
+                # Clear the project path only after the image is durable — a
+                # cancelled/failed Save As must keep the original document.
+                self.saved_path = None
+                self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
 
-    def _save_to(self, path):
+    def _save_to(self, path, force_jpeg_prompt=False):
         try:
             c = self.get_composite()
-            if c:
-                if path.lower().endswith((".jpg", ".jpeg")):
-                    # Ask for quality once per document; plain Ctrl+S re-saves
-                    # reuse it silently.
-                    if self._jpeg_quality is None:
-                        quality, ok = QInputDialog.getInt(self, "JPEG Quality",
-                            "Quality (1–100):", 90, 1, 100)
-                        if not ok: return
-                        self._jpeg_quality = quality
-                    # JPEG has no alpha — matte transparency onto white (black
-                    # via a bare convert('RGB') is a surprising dark fringe).
-                    if c.mode == "RGBA":
-                        matte = Image.new("RGB", c.size, (255, 255, 255))
-                        matte.paste(c, mask=c.split()[3])
-                        c = matte
-                    else:
-                        c = c.convert("RGB")
-                    c.save(path, quality=self._jpeg_quality)
-                elif path.lower().endswith(".webp"):
-                    c.save(path, "WEBP", lossless=True, quality=100, method=6)
+            if not c:
+                return False
+            format_name = _output_format(path)
+            options = {}
+            jpeg_quality = self._jpeg_quality
+            if format_name == "JPEG":
+                # Ask for quality once per document; plain Ctrl+S re-saves
+                # reuse it silently.
+                if force_jpeg_prompt or jpeg_quality is None:
+                    quality, ok = QInputDialog.getInt(self, "JPEG Quality",
+                        "Quality (1–100):", 90, 1, 100)
+                    if not ok: return False
+                    jpeg_quality = quality
+                # JPEG has no alpha — matte transparency onto white (black
+                # via a bare convert('RGB') is a surprising dark fringe).
+                if c.mode == "RGBA":
+                    matte = Image.new("RGB", c.size, (255, 255, 255))
+                    matte.paste(c, mask=c.split()[3])
+                    c = matte
                 else:
-                    c.save(path)
-                self._add_recent(path)
-                self._status(f"Saved: {path}")
-                self._set_dirty(False)
+                    c = c.convert("RGB")
+                options["quality"] = jpeg_quality
+            elif format_name == "WEBP":
+                options = {"lossless": True, "quality": 100, "method": 6}
+            _atomic_save_image(c, path, format_name, **options)
+            self._jpeg_quality = jpeg_quality if format_name == "JPEG" else None
+            self._add_recent(path)
+            self._status(f"Saved: {path}")
+            self._set_dirty(False)
+            return True
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
+            return False
 
     def export_png(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export PNG", "", "PNG (*.png)")
@@ -6615,7 +6644,7 @@ class ImageEditor(QMainWindow):
             try:
                 c = self.get_composite()
                 if c:
-                    c.save(path, "PNG")
+                    _atomic_save_image(c, path, "PNG")
                     self._status(f"Exported: {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
@@ -6627,7 +6656,8 @@ class ImageEditor(QMainWindow):
             try:
                 c = self.get_composite()
                 if c:
-                    c.save(path, "WEBP", lossless=True, quality=100, method=6)
+                    _atomic_save_image(c, path, "WEBP",
+                                       lossless=True, quality=100, method=6)
                     self._status(f"Exported: {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
@@ -6660,7 +6690,7 @@ class ImageEditor(QMainWindow):
             try:
                 c = self.get_composite()
                 if c:
-                    c.save(path, "AVIF", quality=90)
+                    _atomic_save_image(c, path, "AVIF", quality=90)
                     self._status(f"Exported: {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
@@ -8091,15 +8121,32 @@ class ImageEditor(QMainWindow):
         try:
             meta = {"magic": "SWIFTSHOT_PROJECT", "version": 3,
                     "active_index": self.active_layer_index, "layers": []}
-            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for i, layer in enumerate(self.layers):
-                    meta["layers"].append(self._serialize_layer(zf, layer, f"layer_{i}"))
-                zf.writestr("project.json", json.dumps(meta, indent=2))
+            def _write_project(temp_path):
+                with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for i, layer in enumerate(self.layers):
+                        meta["layers"].append(
+                            self._serialize_layer(zf, layer, f"layer_{i}")
+                        )
+                    zf.writestr("project.json", json.dumps(meta, indent=2))
+
+            def _verify_project(temp_path):
+                with zipfile.ZipFile(temp_path) as zf:
+                    bad_member = zf.testzip()
+                    if bad_member:
+                        raise OSError(f"Project archive CRC failed: {bad_member}")
+                    saved_meta = json.loads(zf.read("project.json"))
+                    if (saved_meta.get("magic") != "SWIFTSHOT_PROJECT" or
+                            saved_meta.get("version") != 3):
+                        raise ValueError("Project archive metadata verification failed")
+
+            atomic_replace(path, _write_project, _verify_project)
             self.saved_path = path; self._status(f"Project saved: {path}")
             self._set_dirty(False)
+            return True
         except Exception as e:
             log.warning(f"Project save failed: {path}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to save project:\n{e}")
+            return False
 
     def open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "SwiftShot Project (*.swiftshot)")

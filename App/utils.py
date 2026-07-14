@@ -6,10 +6,57 @@ Common helpers used across multiple modules.
 import sys
 import math
 import os
+import tempfile
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QRect, QPoint
 
 from logger import log
+
+
+def atomic_replace(path, writer, verifier=None):
+    """Write and verify a sibling temporary file before replacing ``path``.
+
+    ``writer`` receives the temporary path and must close everything it opens.
+    Keeping the temporary file beside the destination makes ``os.replace`` an
+    atomic same-filesystem operation. The old destination is left untouched if
+    writing, flushing, verification, or replacement fails.
+    """
+    target = os.path.abspath(os.fspath(path))
+    directory = os.path.dirname(target) or os.curdir
+    basename = os.path.basename(target) or "swiftshot"
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{basename}.", suffix=".tmp", dir=directory
+    )
+    os.close(fd)
+    try:
+        writer(temp_path)
+        # The writer has closed its handle; force buffered data to the storage
+        # layer before validating and publishing the file.
+        with open(temp_path, "rb+") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        if verifier is not None:
+            verifier(temp_path)
+        os.replace(temp_path, target)
+        return target
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            log.warning(f"Could not remove failed atomic-write temp {temp_path}: "
+                        f"{cleanup_error}")
+        raise
+
+
+def atomic_write_bytes(path, data, verifier=None):
+    """Atomically publish a byte payload, optionally validating the temp file."""
+    def _write(temp_path):
+        with open(temp_path, "wb") as handle:
+            handle.write(data)
+
+    return atomic_replace(path, _write, verifier)
 
 
 def virtual_geometry():
