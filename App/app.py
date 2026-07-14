@@ -22,6 +22,12 @@ from PyQt5.QtCore import Qt, QTimer, QRect, QThread, pyqtSignal
 from config import config
 from logger import log
 from ocr_dialog import OcrResultDialog
+from safe_io import load_image
+from utils import pil_to_qpixmap
+
+
+def _load_file_pixmap(path):
+    return pil_to_qpixmap(load_image(path))
 
 
 class _OcrWorker(QThread):
@@ -881,7 +887,11 @@ class SwiftShotApp:
 
     def open_image_file(self, path):
         """Open an image file in the editor (file-association / CLI entry)."""
-        px = QPixmap(path)
+        try:
+            px = _load_file_pixmap(path)
+        except Exception as error:
+            log.warning(f"Could not load image file {path}: {error}")
+            return
         if px.isNull():
             log.warning(f"Could not load image file: {path}")
             return
@@ -1010,14 +1020,16 @@ class SwiftShotApp:
             log.error(f"History dialog failed: {e}")
 
     def _open_history_image(self, filepath):
-        pixmap = QPixmap(filepath)
-        if not pixmap.isNull():
-            self._open_editor(pixmap)
+        try:
+            self._open_editor(_load_file_pixmap(filepath))
+        except Exception as error:
+            log.warning(f"Could not open history image {filepath}: {error}")
 
     def _pin_history_image(self, filepath):
-        pixmap = QPixmap(filepath)
-        if not pixmap.isNull():
-            self.pin_pixmap(pixmap)
+        try:
+            self.pin_pixmap(_load_file_pixmap(filepath))
+        except Exception as error:
+            log.warning(f"Could not pin history image {filepath}: {error}")
 
     # -------------------------------------------------------------------
     # Clipboard Watcher
@@ -1090,9 +1102,10 @@ class SwiftShotApp:
             "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp);;All Files (*)"
         )
         if filepath:
-            pixmap = QPixmap(filepath)
-            if not pixmap.isNull():
-                self._open_editor(pixmap)
+            try:
+                self._open_editor(_load_file_pixmap(filepath))
+            except Exception as error:
+                log.warning(f"Could not open image file {filepath}: {error}")
 
     def open_from_clipboard(self):
         clipboard = QApplication.clipboard()

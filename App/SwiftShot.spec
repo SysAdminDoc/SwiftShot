@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 _here = os.path.dirname(os.path.abspath(SPEC))
 
-hiddenimports = ['app', 'config', 'theme', 'hotkeys', 'capture', 'capture_menu', 'overlay', 'window_picker', 'monitor_picker', 'editor', 'settings_dialog', 'ocr', 'ocr_dialog', 'pin_window', 'capture_history', 'countdown_overlay', 'scrolling_capture', 'utils', 'logger', 'updater', 'PyQt5.QtPrintSupport', 'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets']
+hiddenimports = ['app', 'config', 'theme', 'hotkeys', 'capture', 'capture_menu', 'overlay', 'window_picker', 'monitor_picker', 'editor', 'settings_dialog', 'ocr', 'ocr_dialog', 'pin_window', 'capture_history', 'countdown_overlay', 'scrolling_capture', 'utils', 'safe_io', 'logger', 'updater', 'PyQt5.QtPrintSupport', 'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets']
 hiddenimports += collect_submodules('PyQt5.QtCore')
 hiddenimports += collect_submodules('PyQt5.QtGui')
 hiddenimports += collect_submodules('PyQt5.QtWidgets')

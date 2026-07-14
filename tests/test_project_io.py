@@ -197,3 +197,33 @@ def test_project_save_failure_preserves_last_good_file(qapp, tmp_path, monkeypat
     finally:
         editor._set_dirty(False)
         editor.close()
+
+
+def test_future_project_load_preserves_open_document(qapp, tmp_path, monkeypatch):
+    from editor import ImageEditor, QMessageBox
+    from PyQt5.QtGui import QColor, QPixmap
+
+    path = tmp_path / "future.swiftshot"
+    meta = {
+        "magic": "SWIFTSHOT_PROJECT", "version": 4, "active_index": 0,
+        "layers": [{"name": "Future", "is_group": False}],
+    }
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("project.json", json.dumps(meta))
+
+    pixmap = QPixmap(5, 5)
+    pixmap.fill(QColor("magenta"))
+    editor = ImageEditor(pixmap)
+    old_layer = editor.layers[0]
+    editor.file_path = "original.png"
+    editor.saved_path = "original.swiftshot"
+    old_title = editor.windowTitle()
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *args: None))
+    try:
+        assert editor._load_project_from(str(path)) is False
+        assert editor.layers == [old_layer]
+        assert editor.file_path == "original.png"
+        assert editor.saved_path == "original.swiftshot"
+        assert editor.windowTitle() == old_title
+    finally:
+        editor.close()

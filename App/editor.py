@@ -12,6 +12,9 @@ import json
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont, ImageOps, ImageChops
+from safe_io import (
+    DecodeBudget, load_image, load_project_image, validate_project_archive,
+)
 from utils import atomic_replace
 
 from PyQt5.QtWidgets import (
@@ -6549,7 +6552,7 @@ class ImageEditor(QMainWindow):
         else:
             if not self._confirm_discard(): return
             try:
-                img = Image.open(path).convert("RGBA")
+                img = load_image(path)
                 self.layers = [Layer("Background", image=img)]
                 self.active_layer_index = 0
                 self.file_path = path; self._reset_document_state()
@@ -6566,7 +6569,7 @@ class ImageEditor(QMainWindow):
         if path:
             if not self._confirm_discard(): return
             try:
-                img = Image.open(path).convert("RGBA")
+                img = load_image(path)
                 self.layers = [Layer("Background", image=img)]
                 self.active_layer_index = 0
                 self.file_path = path; self._reset_document_state()
@@ -6671,7 +6674,7 @@ class ImageEditor(QMainWindow):
             "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff);;All Files (*)")
         if not path: return
         try:
-            other = Image.open(path)
+            other = load_image(path)
             overlay, pct = compute_image_diff(self.get_composite(), other)
         except Exception as e:
             QMessageBox.critical(self, "Compare Error", f"Failed to compare:\n{e}")
@@ -7777,7 +7780,7 @@ class ImageEditor(QMainWindow):
             result_bytes = rembg.remove(buf.read())
             progress.set_progress(80, "Applying result...")
             QApplication.processEvents()
-            result_img = Image.open(io.BytesIO(result_bytes)).convert("RGBA")
+            result_img = load_image(result_bytes)
             layer.image = result_img.resize(layer.image.size, Image.LANCZOS)
             self.canvas.update()
             self.update_layer_panel()
@@ -8131,12 +8134,8 @@ class ImageEditor(QMainWindow):
 
             def _verify_project(temp_path):
                 with zipfile.ZipFile(temp_path) as zf:
-                    bad_member = zf.testzip()
-                    if bad_member:
-                        raise OSError(f"Project archive CRC failed: {bad_member}")
-                    saved_meta = json.loads(zf.read("project.json"))
-                    if (saved_meta.get("magic") != "SWIFTSHOT_PROJECT" or
-                            saved_meta.get("version") != 3):
+                    saved_meta, _names = validate_project_archive(zf, temp_path)
+                    if saved_meta["version"] != 3:
                         raise ValueError("Project archive metadata verification failed")
 
             atomic_replace(path, _write_project, _verify_project)
@@ -8162,14 +8161,14 @@ class ImageEditor(QMainWindow):
         layer.mask_enabled = lmeta.get("mask_enabled", True)
         layer.effects = [dict(fx) for fx in lmeta.get("effects", []) if isinstance(fx, dict)]
 
-    def _deserialize_layer(self, zf, lmeta, key, names):
+    def _deserialize_layer(self, zf, lmeta, key, names, budget=None):
         """Rebuild one layer (or group, recursively) from a v3 project zip."""
-        import io
         img = None
         if f"{key}.png" in names:
-            img = Image.open(io.BytesIO(zf.read(f"{key}.png"))).convert("RGBA")
+            img = load_project_image(zf, f"{key}.png", budget=budget)
         if lmeta.get("is_group"):
-            children = [self._deserialize_layer(zf, cm, f"{key}_child_{ci}", names)
+            children = [self._deserialize_layer(
+                            zf, cm, f"{key}_child_{ci}", names, budget)
                         for ci, cm in enumerate(lmeta.get("children", []))]
             size = lmeta.get("group_size")
             if isinstance(size, (list, tuple)) and len(size) == 2:
@@ -8189,18 +8188,21 @@ class ImageEditor(QMainWindow):
             layer = Layer(lmeta.get("name", "Layer"), image=img)
         self._apply_layer_meta(layer, lmeta)
         if lmeta.get("has_mask") and f"{key}.mask.png" in names:
-            layer.mask = Image.open(io.BytesIO(zf.read(f"{key}.mask.png"))).convert("L")
+            layer.mask = load_project_image(
+                zf, f"{key}.mask.png", mode="L", budget=budget
+            )
+            if layer.mask.size != layer.image.size:
+                raise ValueError(f"{key}.mask.png dimensions do not match its layer")
         return layer
 
-    def _load_layers_v2(self, zf, meta, names):
+    def _load_layers_v2(self, zf, meta, names, budget=None):
         """Legacy loader for version<=2 projects (flat child images, masks at
         mask_{i}.png, no per-child metadata, no stored group size)."""
-        import io
         layers = []
         for i, lmeta in enumerate(meta["layers"]):
             img = None
             if f"layer_{i}.png" in names:
-                img = Image.open(io.BytesIO(zf.read(f"layer_{i}.png"))).convert("RGBA")
+                img = load_project_image(zf, f"layer_{i}.png", budget=budget)
             if lmeta.get("is_group"):
                 # v2 saved the group's own composite at layer_{i}.png — its size
                 # IS the group size (older builds derived it from the previous
@@ -8209,7 +8211,7 @@ class ImageEditor(QMainWindow):
                 for ci in range(lmeta.get("group_child_count", 0)):
                     cname = f"layer_{i}_child_{ci}.png"
                     if cname in names:
-                        cimg = Image.open(io.BytesIO(zf.read(cname))).convert("RGBA")
+                        cimg = load_project_image(zf, cname, budget=budget)
                         children.append(Layer(f"Layer {ci + 1}", image=cimg))
                 if img is not None:
                     iw, ih = img.size
@@ -8226,26 +8228,27 @@ class ImageEditor(QMainWindow):
                 layer = Layer(lmeta.get("name", "Layer"), image=img)
             self._apply_layer_meta(layer, lmeta)
             if lmeta.get("has_mask") and f"mask_{i}.png" in names:
-                layer.mask = Image.open(io.BytesIO(zf.read(f"mask_{i}.png"))).convert("L")
+                layer.mask = load_project_image(
+                    zf, f"mask_{i}.png", mode="L", budget=budget
+                )
+                if layer.mask.size != layer.image.size:
+                    raise ValueError(f"mask_{i}.png dimensions do not match its layer")
             layers.append(layer)
         return layers
 
     def _load_project_from(self, path):
-        if not self._confirm_discard(): return
+        if not self._confirm_discard(): return False
         import zipfile
         try:
             with zipfile.ZipFile(path) as zf:
-                meta = json.loads(zf.read("project.json"))
-                if meta.get("magic") != "SWIFTSHOT_PROJECT":
-                    QMessageBox.critical(self, "Error", "Not a valid SwiftShot project"); return
-                names = set(zf.namelist())
-                if meta.get("version", 1) >= 3:
-                    layers = [self._deserialize_layer(zf, lmeta, f"layer_{i}", names)
+                meta, names = validate_project_archive(zf, path)
+                budget = DecodeBudget()
+                if meta["version"] >= 3:
+                    layers = [self._deserialize_layer(
+                                  zf, lmeta, f"layer_{i}", names, budget)
                               for i, lmeta in enumerate(meta["layers"])]
                 else:
-                    layers = self._load_layers_v2(zf, meta, names)
-            if not layers:
-                QMessageBox.critical(self, "Error", "Project contains no layers"); return
+                    layers = self._load_layers_v2(zf, meta, names, budget)
             self.layers = layers
             idx = meta.get("active_index", 0)
             self.active_layer_index = min(max(0, idx if isinstance(idx, int) else 0), len(layers) - 1)
@@ -8256,9 +8259,11 @@ class ImageEditor(QMainWindow):
             self.setWindowTitle(f"SwiftShot Editor — {os.path.basename(path)}")
             self._add_recent(path)
             self._reset_history()
+            return True
         except Exception as e:
             log.warning(f"Project load failed: {path}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to open project:\n{e}")
+            return False
 
     def insert_note_at(self, x, y):
         """Insert a colored sticky note annotation on the canvas."""

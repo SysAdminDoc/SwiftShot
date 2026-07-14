@@ -98,7 +98,7 @@ $SourceFiles = @(
     "editor.py", "layers.py", "hotkeys.py", "monitor_picker.py", "ocr.py", "ocr_dialog.py",
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
-    "scrolling_capture.py", "utils.py", "logger.py", "updater.py",
+    "scrolling_capture.py", "utils.py", "safe_io.py", "logger.py", "updater.py",
     "cli.py", "diagnostics.py", "generate_icon.py"
 )
 
@@ -107,7 +107,7 @@ $HiddenImports = @(
     "app", "config", "theme", "hotkeys", "capture", "capture_menu",
     "overlay", "window_picker", "monitor_picker", "editor", "layers",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
-    "capture_history", "countdown_overlay", "scrolling_capture", "utils",
+    "capture_history", "countdown_overlay", "scrolling_capture", "utils", "safe_io",
     "logger", "updater", "cli", "diagnostics",
     "PyQt5.QtPrintSupport", "PyQt5.sip",
     "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets"

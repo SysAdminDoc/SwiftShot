@@ -56,6 +56,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Image/file-association/history imports now share a bounded Pillow decoder
+  with format, byte, frame, dimension and pixel limits. `.swiftshot` loading
+  additionally preflights ZIP paths, duplicates, compression/encryption, CRCs,
+  member/expanded/JSON sizes, schema, versions, layer count/depth, aggregate
+  decoded pixels and mask dimensions before replacing the open document.
 - Image saves/exports, `.swiftshot` projects, and capture-history PNGs now
   write to a same-directory temporary file, flush and decode/CRC-verify it,
   then atomically replace the destination. Failed or cancelled Save As keeps

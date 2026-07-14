@@ -21,8 +21,9 @@ from PyQt5.QtCore import (
 
 from config import config
 from logger import log
+from safe_io import load_image
 from theme import colors_for_theme
-from utils import atomic_write_bytes
+from utils import atomic_write_bytes, pil_to_qpixmap
 
 
 IMAGE_EXTENSIONS = [
@@ -106,9 +107,15 @@ def _pixmap_png_bytes(pixmap):
 
 
 def _verify_png(path):
-    image = QPixmap(path)
-    if image.isNull():
-        raise OSError("Encoded capture failed PNG verification")
+    load_image(path, allowed_formats={"PNG"})
+
+
+def _safe_pixmap(path):
+    try:
+        return pil_to_qpixmap(load_image(path))
+    except Exception as error:
+        log.warning(f"Rejected history image {path}: {error}")
+        return QPixmap()
 
 
 def _thumbnail_blob(pixmap):
@@ -117,8 +124,11 @@ def _thumbnail_blob(pixmap):
 
 
 def _index_file(conn, filepath, mtime):
-    pixmap = QPixmap(filepath)
+    pixmap = _safe_pixmap(filepath)
     if pixmap.isNull():
+        conn.execute(
+            "INSERT OR REPLACE INTO seen_files (path, mtime) VALUES (?, ?)",
+            (filepath, mtime))
         return
     with open(filepath, "rb") as f:
         digest = hashlib.sha256(f.read()).hexdigest()
@@ -242,7 +252,7 @@ class HistoryThumbnail(QFrame):
         if isinstance(entry, dict) and entry.get("thumbnail_blob"):
             self._pixmap.loadFromData(entry["thumbnail_blob"])
         if self._pixmap.isNull():
-            self._pixmap = QPixmap(self.filepath)
+            self._pixmap = _safe_pixmap(self.filepath)
         self._filename = os.path.basename(self.filepath)
 
         # Parse timestamp from filename or file mod time
@@ -475,7 +485,7 @@ class CaptureHistoryDialog(QDialog):
         self.open_in_editor.emit(filepath)
 
     def _on_copy(self, filepath):
-        pixmap = QPixmap(filepath)
+        pixmap = _safe_pixmap(filepath)
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
 
