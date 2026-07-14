@@ -56,6 +56,11 @@ findings live in ROADMAP.md as the prioritized "Audit Backlog").
   layer count, last action) to make reports reproducible.
 
 ### Reliability
+- Capture-history startup now runs a time- and error-bounded SQLite
+  `quick_check`. Proven corruption quarantines the database/sidecars and
+  rebuilds metadata from untouched image files with a visible outcome; health
+  and recovery status are included safely in diagnostics. Release builds pin,
+  hash-verify, freeze, and post-build probe the official SQLite 3.53.3 DLL.
 - Dirty editor documents now journal atomically after a short idle period and
   at a bounded maximum interval. Startup previews each valid recovery once;
   restore opens an unsaved copy, save/discard removes its journal, and corrupt

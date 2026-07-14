@@ -1,4 +1,5 @@
 import sys
+import json
 from pathlib import Path
 
 from PyQt5.QtGui import QColor, QPixmap
@@ -37,6 +38,92 @@ def test_save_to_history_indexes_sqlite_and_dedupes(fresh_config, qapp, tmp_path
     assert capture_history._history_entries(str(tmp_path), date_prefix)
     assert capture_history._history_entries(str(tmp_path), "invoice")
     assert capture_history._history_entries(str(tmp_path), "2999-01-01") == []
+
+
+def test_startup_quick_check_is_cached_after_success(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(8, 8)
+    pixmap.fill(QColor("navy"))
+    capture_history.save_to_history(pixmap)
+    calls = []
+    real_check = capture_history._run_quick_check
+
+    def counted_check(path):
+        calls.append(path)
+        return real_check(path)
+
+    monkeypatch.setattr(capture_history, "_run_quick_check", counted_check)
+    first = capture_history.ensure_history_health(str(tmp_path), force=True)
+    second = capture_history.ensure_history_health(str(tmp_path))
+
+    assert first["status"] == "healthy"
+    assert first["quick_check"] == "ok"
+    assert second == first
+    assert calls == [str(tmp_path / "history.sqlite3")]
+
+
+def test_corrupt_database_is_quarantined_and_rebuilt_from_images(
+        fresh_config, qapp, tmp_path):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(18, 12)
+    pixmap.fill(QColor("purple"))
+    capture_path = Path(capture_history.save_to_history(pixmap))
+    unreadable_image = tmp_path / "keep-even-if-unreadable.png"
+    unreadable_image.write_bytes(b"not a PNG")
+    database = tmp_path / "history.sqlite3"
+    corrupt_bytes = b"corrupt history database with operator evidence"
+    database.write_bytes(corrupt_bytes)
+    sidecar = tmp_path / "history.sqlite3-wal"
+    sidecar.write_bytes(b"corrupt sidecar")
+
+    result = capture_history.ensure_history_health(str(tmp_path), force=True)
+
+    assert result["status"] == "recovered"
+    assert result["quick_check"] == "failed"
+    assert result["recovered_file_count"] == 1
+    assert capture_path.exists()
+    assert unreadable_image.exists()
+    quarantine = Path(result["quarantine_path"])
+    assert (quarantine / "history.sqlite3").read_bytes() == corrupt_bytes
+    assert (quarantine / "history.sqlite3-wal").read_bytes() == b"corrupt sidecar"
+    assert database.exists()
+    entries = capture_history._history_entries(str(tmp_path))
+    assert [entry["path"] for entry in entries] == [str(capture_path)]
+
+    report = json.loads(Path(
+        capture_history._health_report_path(str(tmp_path))
+    ).read_text(encoding="utf-8"))
+    assert report == {
+        "schema_version": 1,
+        "status": "recovered",
+        "checked_at": result["checked_at"],
+        "sqlite_version": capture_history.sqlite3.sqlite_version,
+        "quick_check": "failed",
+        "quarantined_database": True,
+        "recovered_file_count": 1,
+    }
+
+
+def test_timed_out_quick_check_preserves_database_without_rebuild(
+        fresh_config, qapp, tmp_path, monkeypatch):
+    capture_history = _load_capture_history(fresh_config, tmp_path)
+    pixmap = QPixmap(8, 8)
+    pixmap.fill(QColor("orange"))
+    capture_history.save_to_history(pixmap)
+    database = tmp_path / "history.sqlite3"
+    before = database.read_bytes()
+    monkeypatch.setattr(
+        capture_history,
+        "_run_quick_check",
+        lambda _path: (_ for _ in ()).throw(capture_history._HistoryCheckTimeout()),
+    )
+
+    result = capture_history.ensure_history_health(str(tmp_path), force=True)
+
+    assert result["status"] == "check_timeout"
+    assert database.read_bytes() == before
+    assert not (tmp_path / "DatabaseQuarantine").exists()
 
 
 def test_search_escapes_like_wildcards(fresh_config, qapp, tmp_path):

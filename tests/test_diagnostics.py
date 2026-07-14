@@ -58,6 +58,17 @@ def test_bundle_uses_allowlist_and_consistent_path_aliases(
     (cfg_dir / "recent.json").write_text(json.dumps({
         "recent": [private, private, other],
     }), encoding="utf-8")
+    (cfg_dir / "history-health.json").write_text(json.dumps({
+        "schema_version": 1,
+        "status": "recovered",
+        "checked_at": "2026-07-14T16:45:10.123456Z",
+        "sqlite_version": "3.53.3",
+        "quick_check": "failed",
+        "quarantined_database": True,
+        "recovered_file_count": 2,
+        "database_path": r"C:\Users\Alice\SecretCaptures\history.sqlite3",
+        "error_detail": "operator evidence must stay local",
+    }), encoding="utf-8")
 
     dest = tmp_path / "bundle.zip"
     diagnostics.build_diagnostics_zip(
@@ -69,6 +80,7 @@ def test_bundle_uses_allowlist_and_consistent_path_aliases(
         "logs/swiftshot.log",
         "logs/crash.log",
         "configuration.json",
+        "history-health.json",
         "recent-files.json",
         "versions.json",
         "manifest.json",
@@ -89,6 +101,20 @@ def test_bundle_uses_allowlist_and_consistent_path_aliases(
         ],
     }
     assert config["config.json"]["settings"] == {"ui_scale": 1.25}
+    health = json.loads(files["history-health.json"])
+    assert health == {
+        "status": "ok",
+        "settings": {
+            "checked_at": "2026-07-14T16:45:10.123456Z",
+            "quarantined_database": True,
+            "quick_check": "failed",
+            "recovered_file_count": 2,
+            "schema_version": 1,
+            "sqlite_version": "3.53.3",
+            "status": "recovered",
+        },
+        "invalid_fields": [],
+    }
 
     recent = json.loads(files["recent-files.json"])
     assert recent["items"][0] == recent["items"][1]
@@ -107,6 +133,7 @@ def test_bundle_uses_allowlist_and_consistent_path_aliases(
         "leaked-hotkey",
         "private-value",
         "malicious-safe-key",
+        "operator evidence",
         "private-window-geometry",
         "10,20,640,480",
         "secretcaptures",
@@ -125,6 +152,9 @@ def test_malformed_files_never_enter_bundle_verbatim(qapp, tmp_path):
     (cfg_dir / "recent.json").write_text(
         "raw-recent-secret C:\\Users\\Alice\\private.png", encoding="utf-8"
     )
+    (cfg_dir / "history-health.json").write_text(
+        '{"status":"raw-health-secret"', encoding="utf-8"
+    )
 
     dest = tmp_path / "bundle.zip"
     diagnostics.build_diagnostics_zip(
@@ -134,12 +164,16 @@ def test_malformed_files_never_enter_bundle_verbatim(qapp, tmp_path):
 
     config = json.loads(files["configuration.json"])["swiftshot.json"]
     recent = json.loads(files["recent-files.json"])
+    health = json.loads(files["history-health.json"])
     assert config["status"] == "malformed"
     assert config["settings"] == {}
     assert recent == {"status": "malformed", "items": []}
+    assert health["status"] == "malformed"
+    assert health["settings"] == {}
     combined = "\n".join(files.values())
     assert "raw-secret" not in combined
     assert "raw-recent-secret" not in combined
+    assert "raw-health-secret" not in combined
     assert r"C:\Users\Alice" not in combined
 
 
@@ -151,6 +185,7 @@ def test_preview_names_included_and_excluded_categories(qapp, tmp_path):
     (cfg_dir / "swiftshot.log").write_text("safe log", encoding="utf-8")
     (cfg_dir / "swiftshot.json").write_text("{}", encoding="utf-8")
     (cfg_dir / "recent.json").write_text('{"recent": []}', encoding="utf-8")
+    (cfg_dir / "history-health.json").write_text("{}", encoding="utf-8")
 
     preview = diagnostics.diagnostics_preview(str(cfg_dir))
     copy = diagnostics.format_diagnostics_preview(preview)
@@ -160,6 +195,7 @@ def test_preview_names_included_and_excluded_categories(qapp, tmp_path):
         "Sanitized application/crash logs (1)",
         "Allowlisted non-path settings",
         "Pseudonymized recent-file entries",
+        "Capture-history database health and recovery outcome",
     ]
     assert "Never included" in copy
     assert "Screenshots" in copy

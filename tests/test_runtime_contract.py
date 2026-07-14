@@ -60,3 +60,18 @@ def test_runtime_contract_is_in_release_manifests():
     assert '"runtime_contract.py"' in build
     assert '"runtime_contract"' in build
     assert "'runtime_contract'" in spec
+
+
+def test_release_build_pins_and_probes_supported_sqlite():
+    build = (APP / "Build-SwiftShot.ps1").read_text(encoding="utf-8")
+    spec = (APP / "SwiftShot.spec").read_text(encoding="utf-8")
+
+    assert "$SQLiteMinimumVersion = [version]'3.53.2'" in build
+    assert "$SQLitePinnedVersion = '3.53.3'" in build
+    assert "sqlite.org/2026/sqlite-dll-win-x64-" in build
+    assert "hashlib.sha3_256" in build
+    assert "--add-binary=$SQLiteDllPath;." in build
+    assert "Assert-BundledSQLite $portableExe" in build
+    assert "Assert-BundledSQLite $onedirExe" in build
+    assert "sqlite-3.53.3" in spec
+    assert "os.path.basename(entry[0]).casefold() != 'sqlite3.dll'" in spec

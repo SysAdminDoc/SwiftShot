@@ -93,6 +93,7 @@ class SwiftShotApp:
         self._create_tray_icon()
         self._register_hotkeys()
         self.tray_icon.show()
+        self._check_history_health()
 
         # Defer recovery discovery until the tray is live. Corrupt journals
         # are quarantined and valid documents are offered once per startup.
@@ -121,6 +122,35 @@ class SwiftShotApp:
             self._check_for_updates()
 
         log.info("SwiftShot started successfully")
+
+    def _check_history_health(self):
+        """Run the bounded startup check and surface any recovery outcome."""
+        try:
+            from capture_history import ensure_history_health
+            result = ensure_history_health(config.CAPTURE_HISTORY_DIR)
+        except Exception:
+            log.warning("Capture-history health check failed", exc_info=True)
+            self._notify(
+                "Capture history check failed",
+                "History images were left untouched. See diagnostics for details.",
+                warning=True,
+            )
+            return None
+        status = result["status"]
+        if status == "recovered":
+            self._notify(
+                "Capture history rebuilt",
+                f"Recovered {result['recovered_file_count']} capture file(s). "
+                "The damaged database was preserved in quarantine.",
+            )
+        elif status in ("recovery_failed", "check_unavailable", "check_timeout"):
+            self._notify(
+                "Capture history needs attention",
+                "The database check could not complete; capture images were "
+                "left untouched. Export diagnostics for details.",
+                warning=True,
+            )
+        return result
 
     # -------------------------------------------------------------------
     # Editor crash recovery

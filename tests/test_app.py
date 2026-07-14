@@ -134,8 +134,8 @@ def test_ocr_worker_emits_ocr_file_result(qapp, monkeypatch):
 
 
 def test_update_history_ocr_writes_row(qapp, tmp_path, monkeypatch):
-    from config import config
     import capture_history
+    config = capture_history.config
 
     monkeypatch.setattr(config, "CAPTURE_HISTORY_ENABLED", True)
     monkeypatch.setattr(config, "CAPTURE_HISTORY_DIR", str(tmp_path))
@@ -206,3 +206,36 @@ def test_diagnostics_export_previews_privacy_categories_before_writing(
     assert built == []
     assert "Included:" in messages[0]
     assert "Never included:" in messages[0]
+
+
+def test_history_rebuild_outcome_is_visible_at_startup(qapp, monkeypatch):
+    import capture_history
+    from app import SwiftShotApp
+
+    controller = SwiftShotApp(qapp)
+    notices = []
+    monkeypatch.setattr(
+        capture_history,
+        "ensure_history_health",
+        lambda _path: {
+            "status": "recovered",
+            "recovered_file_count": 3,
+        },
+    )
+    monkeypatch.setattr(
+        controller,
+        "_notify",
+        lambda title, message, warning=False: notices.append(
+            (title, message, warning)
+        ),
+    )
+
+    result = controller._check_history_health()
+
+    assert result["status"] == "recovered"
+    assert notices == [(
+        "Capture history rebuilt",
+        "Recovered 3 capture file(s). The damaged database was preserved in "
+        "quarantine.",
+        False,
+    )]

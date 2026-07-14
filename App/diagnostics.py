@@ -91,7 +91,20 @@ CONFIG_FIELD_ALLOWLIST = frozenset(
 )
 
 LEGACY_EDITOR_FIELD_ALLOWLIST = frozenset({"ui_scale"})
+HISTORY_HEALTH_FIELD_ALLOWLIST = frozenset({
+    "schema_version",
+    "status",
+    "checked_at",
+    "sqlite_version",
+    "quick_check",
+    "quarantined_database",
+    "recovered_file_count",
+})
 _HOTKEY_VALUE_RE = re.compile(r"[A-Za-z0-9+ _-]{0,64}\Z")
+_VERSION_VALUE_RE = re.compile(r"\d{1,3}(?:\.\d{1,3}){2}\Z")
+_UTC_TIMESTAMP_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z"
+)
 
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b([a-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|authorization)"
@@ -130,6 +143,29 @@ def _valid_legacy_editor_value(key, value):
         and type(value) in (int, float)
         and 0.5 <= value <= 3.0
     )
+
+
+def _valid_history_health_value(key, value):
+    if key == "schema_version":
+        return type(value) is int and value == 1
+    if key == "status":
+        return isinstance(value, str) and value in {
+            "new", "healthy", "recovered", "recovery_failed",
+            "check_timeout", "check_unavailable",
+        }
+    if key == "checked_at":
+        return isinstance(value, str) and bool(_UTC_TIMESTAMP_RE.fullmatch(value))
+    if key == "sqlite_version":
+        return isinstance(value, str) and bool(_VERSION_VALUE_RE.fullmatch(value))
+    if key == "quick_check":
+        return isinstance(value, str) and value in {
+            "not_needed", "ok", "failed", "timeout", "unavailable",
+        }
+    if key == "quarantined_database":
+        return type(value) is bool
+    if key == "recovered_file_count":
+        return type(value) is int and 0 <= value <= 1_000_000
+    return False
 
 
 def _config_dir():
@@ -343,6 +379,9 @@ def diagnostics_preview(config_dir=None):
         for name in ("swiftshot.json", "config.json")
     )
     recent = os.path.isfile(os.path.join(cfg_dir, "recent.json"))
+    history_health = os.path.isfile(
+        os.path.join(cfg_dir, "history-health.json")
+    )
     included = ["Runtime and dependency versions"]
     if log_count:
         included.append(f"Sanitized application/crash logs ({log_count})")
@@ -350,6 +389,8 @@ def diagnostics_preview(config_dir=None):
         included.append("Allowlisted non-path settings")
     if recent:
         included.append("Pseudonymized recent-file entries")
+    if history_health:
+        included.append("Capture-history database health and recovery outcome")
     return {
         "included": included,
         "excluded": [
@@ -425,6 +466,17 @@ def build_diagnostics_zip(dest_path=None, config_dir=None):
         if config_records:
             archive.writestr(
                 "configuration.json", json.dumps(config_records, indent=2)
+            )
+
+        health_path = os.path.join(cfg_dir, "history-health.json")
+        if os.path.isfile(health_path):
+            health_record = _safe_json_file(
+                health_path,
+                HISTORY_HEALTH_FIELD_ALLOWLIST,
+                _valid_history_health_value,
+            )
+            archive.writestr(
+                "history-health.json", json.dumps(health_record, indent=2)
             )
 
         if recent_record is not None:

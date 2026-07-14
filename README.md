@@ -73,7 +73,12 @@ Pin any screenshot as an always-on-top borderless floating window. Drag to repos
 
 ### Capture History
 
-A SQLite-backed thumbnail panel of recent captures with duplicate detection, thumbnail caching, date/filename/OCR search, and quick actions: re-open in editor, copy to clipboard, pin to desktop, or delete. Auto-OCR indexing can be enabled in Advanced settings.
+A SQLite-backed thumbnail panel of recent captures with duplicate detection,
+thumbnail caching, date/filename/OCR search, and quick actions: re-open in
+editor, copy to clipboard, pin to desktop, or delete. Startup runs a bounded
+database health check; a damaged index is quarantined and rebuilt from the
+untouched capture files with a visible notice. Auto-OCR indexing can be enabled
+in Advanced settings.
 
 ### Clipboard Watcher
 
@@ -152,10 +157,11 @@ first on `PATH`) and recreates an older build virtual environment automatically.
 
 The script will:
 1. Verify CPython 3.12.x and Inno Setup 6 (optional)
-2. Create an isolated build venv with PyInstaller
+2. Create an isolated build venv with PyInstaller and stage the official,
+   SHA3-verified SQLite 3.53.3 Windows runtime
 3. Generate multi-resolution icon from source
-4. Build `SwiftShot-Portable.exe` (single file)
-5. Build `SwiftShot-Setup.exe` via Inno Setup (if available)
+4. Build and SQLite-version-probe `SwiftShot-Portable.exe` (single file)
+5. Build and probe `SwiftShot-Setup.exe` via Inno Setup (if available)
 
 Both outputs are fully self-contained — no Python or runtime needed on end-user machines.
 

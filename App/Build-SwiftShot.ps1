@@ -91,6 +91,11 @@ $IconName    = "swiftshot.ico"
 $IconPath    = Join-Path $ProjectDir $IconName
 $IssFile     = Join-Path $ProjectDir "SwiftShot.iss"
 $IconGenScript = Join-Path $ProjectDir "generate_icon.py"
+$SQLiteMinimumVersion = [version]'3.53.2'
+$SQLitePinnedVersion = '3.53.3'
+$SQLitePackageVersion = '3530300'
+$SQLitePackageSha3 = '3a494861ce24d1f330efbc6c3fb58ce4972f2cf8df4e43122246ed987109dc8a'
+$SQLitePackageUrl = "https://sqlite.org/2026/sqlite-dll-win-x64-$SQLitePackageVersion.zip"
 
 # Every .py file that ships with SwiftShot
 $SourceFiles = @(
@@ -99,7 +104,7 @@ $SourceFiles = @(
     "overlay.py", "settings_dialog.py", "theme.py", "window_picker.py",
     "pin_window.py", "capture_history.py", "countdown_overlay.py",
     "scrolling_capture.py", "utils.py", "safe_io.py", "logger.py", "updater.py",
-    "cli.py", "diagnostics.py", "generate_icon.py"
+    "cli.py", "diagnostics.py", "recovery.py", "generate_icon.py"
 )
 
 # Hidden imports for PyInstaller (lazy imports it can't detect)
@@ -108,7 +113,7 @@ $HiddenImports = @(
     "overlay", "window_picker", "monitor_picker", "editor", "layers",
     "settings_dialog", "ocr", "ocr_dialog", "pin_window",
     "capture_history", "countdown_overlay", "scrolling_capture", "utils", "safe_io",
-    "logger", "updater", "cli", "diagnostics",
+    "logger", "updater", "cli", "diagnostics", "recovery",
     "PyQt5.QtPrintSupport", "PyQt5.sip",
     "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets", "PyQt5.QtNetwork"
 )
@@ -300,22 +305,62 @@ if ($pyiVer -match '^(\d+)\.(\d+)') {
 }
 Write-OK "PyInstaller: $pyiVer"
 
-# --- Bundled SQLite version (history DB; CVE-2025-6965 fixed in 3.50.2) ---
-# PyInstaller freezes whatever SQLite the interpreter links, so the guard
-# runs against the build venv's interpreter.
-$ErrorActionPreference = 'Continue'
-$sqliteVer = (& $VenvPython -c "import sqlite3; print(sqlite3.sqlite_version)" 2>&1).ToString().Trim()
-$ErrorActionPreference = 'Stop'
-if ($sqliteVer -match '^(\d+)\.(\d+)\.(\d+)') {
-    $sv = [version]$sqliteVer
-    if ($sv -lt [version]'3.50.2') {
-        Write-Warn "Bundled SQLite is $sqliteVer (< 3.50.2, CVE-2025-6965). Upgrade the Python 3.12 runtime before a security release."
-    } else {
-        Write-OK "SQLite: $sqliteVer"
+# --- Pinned SQLite runtime for capture-history durability/security ---
+# Python 3.12.10 is the final 3.12 Windows installer and embeds SQLite 3.49.1.
+# Stage SQLite's official x64 DLL, verify the publisher's SHA3-256, and pass it
+# explicitly to PyInstaller. Post-build probes below verify what was frozen.
+$SQLiteCacheDir = Join-Path $env:LOCALAPPDATA "SwiftShot\BuildCache"
+$SQLiteZip = Join-Path $SQLiteCacheDir "sqlite-dll-win-x64-$SQLitePackageVersion.zip"
+$SQLiteVendorDir = Join-Path $BuildDir "vendor\sqlite-$SQLitePinnedVersion"
+$SQLiteDllPath = Join-Path $SQLiteVendorDir "sqlite3.dll"
+New-Item -Path $SQLiteCacheDir -ItemType Directory -Force | Out-Null
+
+$hashScript = "import hashlib,sys; print(hashlib.sha3_256(open(sys.argv[1], 'rb').read()).hexdigest())"
+$cachedHash = ''
+if (Test-Path -LiteralPath $SQLiteZip) {
+    $cachedHash = (& $VenvPython -c $hashScript $SQLiteZip).ToString().Trim()
+    if ($cachedHash -ne $SQLitePackageSha3) {
+        Write-Warn "Discarding SQLite package with a mismatched SHA3-256."
+        Remove-Item -LiteralPath $SQLiteZip -Force
     }
-} else {
-    Write-Warn "Could not parse SQLite version: $sqliteVer"
 }
+if (-not (Test-Path -LiteralPath $SQLiteZip)) {
+    Write-Step "Downloading official SQLite $SQLitePinnedVersion runtime..."
+    $downloadPath = "$SQLiteZip.download-$PID"
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $SQLitePackageUrl -OutFile $downloadPath
+        $downloadHash = (& $VenvPython -c $hashScript $downloadPath).ToString().Trim()
+        if ($downloadHash -ne $SQLitePackageSha3) {
+            throw "SQLite package SHA3-256 mismatch."
+        }
+        Move-Item -LiteralPath $downloadPath -Destination $SQLiteZip -Force
+    } finally {
+        Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$vendorFull = [IO.Path]::GetFullPath($SQLiteVendorDir)
+$buildFull = [IO.Path]::GetFullPath($BuildDir).TrimEnd('\') + '\'
+if (-not $vendorFull.StartsWith($buildFull, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to replace SQLite staging directory outside build\."
+}
+if (Test-Path -LiteralPath $SQLiteVendorDir) {
+    Remove-Item -LiteralPath $SQLiteVendorDir -Recurse -Force
+}
+New-Item -Path $SQLiteVendorDir -ItemType Directory -Force | Out-Null
+Expand-Archive -LiteralPath $SQLiteZip -DestinationPath $SQLiteVendorDir -Force
+if (-not (Test-Path -LiteralPath $SQLiteDllPath)) {
+    Write-Err "Official SQLite package did not contain sqlite3.dll."
+    exit 1
+}
+$dllProbe = "import ctypes,sys; d=ctypes.CDLL(sys.argv[1]); d.sqlite3_libversion.restype=ctypes.c_char_p; print(d.sqlite3_libversion().decode())"
+$sqliteVer = (& $VenvPython -c $dllProbe $SQLiteDllPath).ToString().Trim()
+if (($sqliteVer -notmatch '^\d+\.\d+\.\d+$') -or
+        ([version]$sqliteVer -lt $SQLiteMinimumVersion)) {
+    Write-Err "Staged SQLite $sqliteVer does not meet $SQLiteMinimumVersion."
+    exit 1
+}
+Write-OK "SQLite: $sqliteVer (official DLL; SHA3-256 verified)"
 
 # ===================================================================
 # STEP 4: Generate Application Icon
@@ -363,6 +408,7 @@ $commonArgs += "--collect-submodules=PyQt5.QtGui"
 $commonArgs += "--collect-submodules=PyQt5.QtWidgets"
 $commonArgs += "--collect-submodules=PyQt5.QtPrintSupport"
 $commonArgs += "--collect-submodules=PyQt5.sip"
+$commonArgs += "--add-binary=$SQLiteDllPath;."
 
 # Bundle the .ico alongside the exe so the app can load it at runtime
 if (Test-Path $IconPath) {
@@ -492,6 +538,9 @@ if ($UnsafePath) {
     $commonArgs += "--collect-submodules=PyQt5.QtWidgets"
     $commonArgs += "--collect-submodules=PyQt5.QtPrintSupport"
     $commonArgs += "--collect-submodules=PyQt5.sip"
+    $SQLiteDllSafe = Join-Path $SafeBuildRoot "sqlite3.dll"
+    Copy-Item -LiteralPath $SQLiteDllPath -Destination $SQLiteDllSafe -Force
+    $commonArgs += "--add-binary=$SQLiteDllSafe;."
     if (Test-Path $IconPathSafe) {
         $commonArgs += "--icon=$IconPathSafe"
         $commonArgs += "--add-data=$IconPathSafe;."
@@ -521,6 +570,31 @@ if ($UnsafePath) {
     Write-OK "Safe build path: $SafeBuildRoot"
 } else {
     $BuildProjectDir = $ProjectDir
+}
+
+function Assert-BundledSQLite([string]$Executable, [string]$Label) {
+    $safeLabel = $Label -replace '[^A-Za-z0-9_-]', '-'
+    $probeZip = Join-Path $env:TEMP "swiftshot-$safeLabel-sqlite-$PID.zip"
+    Remove-Item -LiteralPath $probeZip -Force -ErrorAction SilentlyContinue
+    try {
+        $process = Start-Process -FilePath $Executable -ArgumentList @(
+            '--diagnostics', '--out', $probeZip
+        ) -Wait -PassThru -WindowStyle Hidden
+        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $probeZip)) {
+            Write-Err "$Label SQLite probe failed (exit $($process.ExitCode))."
+            exit 1
+        }
+        $readProbe = "import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.loads(z.read('versions.json'))['sqlite'])"
+        $frozenVersion = (& $VenvPython -c $readProbe $probeZip).ToString().Trim()
+        if (($frozenVersion -notmatch '^\d+\.\d+\.\d+$') -or
+                ([version]$frozenVersion -lt $SQLiteMinimumVersion)) {
+            Write-Err "$Label froze SQLite $frozenVersion; $SQLiteMinimumVersion+ is required."
+            exit 1
+        }
+        Write-OK "$Label runtime SQLite: $frozenVersion"
+    } finally {
+        Remove-Item -LiteralPath $probeZip -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ===================================================================
@@ -562,6 +636,7 @@ if (-not $InstallerOnly) {
         Move-Item $tmpExe $portableExe -Force
         Remove-Item $portableTmpDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-FileSize "Portable" $portableExe
+        Assert-BundledSQLite $portableExe "Portable"
     } else {
         Write-Err "Portable build output not found."
         exit 1
@@ -613,6 +688,7 @@ if (-not $PortableOnly) {
         }
         $totalSize = [math]::Round(((Get-ChildItem (Join-Path $DistDir "SwiftShot") -Recurse | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
         Write-OK "Installer package: dist\SwiftShot\ (${totalSize} MB total)"
+        Assert-BundledSQLite $onedirExe "Installer package"
     } else {
         Write-Err "Onedir build output not found."
         exit 1

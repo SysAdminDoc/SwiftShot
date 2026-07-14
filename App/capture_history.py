@@ -6,9 +6,13 @@ Panel showing thumbnails of recent captures with quick actions.
 import os
 import glob
 import hashlib
+import json
 import sqlite3
+import threading
+import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QApplication, QGridLayout, QFrame,
@@ -30,6 +34,19 @@ IMAGE_EXTENSIONS = [
     '*.png', '*.jpg', '*.jpeg', '*.bmp',
     '*.gif', '*.tiff', '*.tif', '*.webp',
 ]
+HISTORY_QUICK_CHECK_MAX_ERRORS = 10
+HISTORY_QUICK_CHECK_TIMEOUT_SECONDS = 1.0
+HISTORY_HEALTH_SCHEMA_VERSION = 1
+_health_results = {}
+_health_lock = threading.Lock()
+
+
+class _HistoryDatabaseCorrupt(RuntimeError):
+    pass
+
+
+class _HistoryCheckTimeout(RuntimeError):
+    pass
 
 
 def _history_files(history_dir):
@@ -44,7 +61,7 @@ def _db_path(history_dir):
     return os.path.join(history_dir, "history.sqlite3")
 
 
-def _connect_db(history_dir):
+def _open_schema_db(history_dir):
     os.makedirs(history_dir, exist_ok=True)
     conn = sqlite3.connect(_db_path(history_dir))
     conn.row_factory = sqlite3.Row
@@ -78,6 +95,165 @@ def _connect_db(history_dir):
         )
     """)
     return conn
+
+
+def _health_report_path(history_dir):
+    config_dir = getattr(config, "_config_dir", None)
+    return os.path.join(config_dir or os.path.dirname(history_dir),
+                        "history-health.json")
+
+
+def _persist_health_report(history_dir, result):
+    public = {
+        "schema_version": HISTORY_HEALTH_SCHEMA_VERSION,
+        "status": result["status"],
+        "checked_at": result["checked_at"],
+        "sqlite_version": sqlite3.sqlite_version,
+        "quick_check": result["quick_check"],
+        "quarantined_database": bool(result.get("quarantine_path")),
+        "recovered_file_count": int(result.get("recovered_file_count", 0)),
+    }
+    try:
+        atomic_write_bytes(
+            _health_report_path(history_dir),
+            json.dumps(public, indent=2).encode("utf-8"),
+        )
+    except Exception:
+        log.warning("Could not persist history health report", exc_info=True)
+
+
+def _run_quick_check(database_path):
+    """Run a read-only, error-count- and time-bounded SQLite quick check."""
+    deadline = time.monotonic() + HISTORY_QUICK_CHECK_TIMEOUT_SECONDS
+    uri = Path(database_path).resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+    try:
+        conn.set_progress_handler(
+            lambda: int(time.monotonic() >= deadline), 1_000
+        )
+        try:
+            rows = conn.execute(
+                f"PRAGMA quick_check({HISTORY_QUICK_CHECK_MAX_ERRORS})"
+            ).fetchall()
+        except sqlite3.OperationalError as error:
+            if "interrupted" in str(error).casefold():
+                raise _HistoryCheckTimeout from error
+            raise
+        if rows != [("ok",)]:
+            raise _HistoryDatabaseCorrupt("quick_check reported corruption")
+    finally:
+        conn.set_progress_handler(None, 0)
+        conn.close()
+
+
+def _quarantine_database(history_dir):
+    """Atomically move the DB and live sidecars together, rolling back on error."""
+    database_path = _db_path(history_dir)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    quarantine_dir = os.path.join(
+        history_dir, "DatabaseQuarantine", stamp
+    )
+    os.makedirs(quarantine_dir, exist_ok=False)
+    sources = [
+        database_path + "-wal",
+        database_path + "-shm",
+        database_path,
+    ]
+    moved = []
+    try:
+        for source in sources:
+            if not os.path.exists(source):
+                continue
+            destination = os.path.join(quarantine_dir, os.path.basename(source))
+            os.replace(source, destination)
+            moved.append((source, destination))
+    except OSError:
+        for source, destination in reversed(moved):
+            try:
+                if not os.path.exists(source):
+                    os.replace(destination, source)
+            except OSError:
+                log.error("Could not roll back history quarantine move",
+                          exc_info=True)
+        raise
+    return quarantine_dir
+
+
+def _rebuild_history_index(history_dir):
+    conn = _open_schema_db(history_dir)
+    try:
+        _ensure_history_index(conn, history_dir)
+        count = conn.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+        conn.commit()
+        return count
+    finally:
+        conn.close()
+
+
+def _is_corruption_error(error):
+    message = str(error).casefold()
+    return any(marker in message for marker in (
+        "database disk image is malformed",
+        "file is not a database",
+        "file is encrypted",
+        "malformed database schema",
+    ))
+
+
+def ensure_history_health(history_dir, force=False):
+    """Check once per startup and rebuild only after proven corruption."""
+    key = os.path.normcase(os.path.abspath(history_dir))
+    with _health_lock:
+        if not force and key in _health_results:
+            return dict(_health_results[key])
+
+        checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        database_path = _db_path(history_dir)
+        result = {
+            "status": "new",
+            "checked_at": checked_at,
+            "quick_check": "not_needed",
+            "recovered_file_count": 0,
+        }
+        if os.path.isfile(database_path):
+            try:
+                _run_quick_check(database_path)
+                result.update(status="healthy", quick_check="ok")
+            except _HistoryCheckTimeout:
+                result.update(status="check_timeout", quick_check="timeout")
+                log.warning("History database quick_check reached its time limit")
+            except (sqlite3.DatabaseError, _HistoryDatabaseCorrupt) as error:
+                if (not isinstance(error, _HistoryDatabaseCorrupt) and
+                        not _is_corruption_error(error)):
+                    result.update(status="check_unavailable",
+                                  quick_check="unavailable")
+                    log.warning("History database health check unavailable",
+                                exc_info=True)
+                else:
+                    log.warning("History database failed quick_check; rebuilding",
+                                exc_info=True)
+                    try:
+                        quarantine_path = _quarantine_database(history_dir)
+                        recovered_count = _rebuild_history_index(history_dir)
+                        result.update(
+                            status="recovered",
+                            quick_check="failed",
+                            quarantine_path=quarantine_path,
+                            recovered_file_count=recovered_count,
+                        )
+                    except Exception:
+                        result.update(status="recovery_failed",
+                                      quick_check="failed")
+                        log.error("History database recovery failed", exc_info=True)
+
+        _health_results[key] = dict(result)
+        _persist_health_report(history_dir, result)
+        return dict(result)
+
+
+def _connect_db(history_dir):
+    ensure_history_health(history_dir)
+    return _open_schema_db(history_dir)
 
 
 @contextmanager
@@ -184,7 +360,12 @@ def _ensure_history_index(conn, history_dir):
             continue
         if seen.get(filepath) == mtime:
             continue                       # unchanged duplicate — skip re-hash
-        _index_file(conn, filepath, mtime)
+        try:
+            _index_file(conn, filepath, mtime)
+        except Exception as error:
+            # One unreadable/locked capture must not abort a database rebuild
+            # or hide every other intact image. The file remains for retry.
+            log.warning(f"Could not index history file {filepath}: {error}")
     conn.commit()
 
 

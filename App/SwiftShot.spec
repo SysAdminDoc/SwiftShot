@@ -3,8 +3,14 @@ import os
 from PyInstaller.utils.hooks import collect_submodules
 
 _here = os.path.dirname(os.path.abspath(SPEC))
+_sqlite_dll = os.environ.get(
+    'SWIFTSHOT_SQLITE_DLL',
+    os.path.join(_here, 'build', 'vendor', 'sqlite-3.53.3', 'sqlite3.dll'),
+)
+if not os.path.isfile(_sqlite_dll):
+    raise SystemExit('Run Build-SwiftShot.ps1 to stage the verified SQLite DLL')
 
-hiddenimports = ['runtime_contract', 'app', 'app_control', 'config', 'theme', 'hotkeys', 'capture', 'capture_menu', 'overlay', 'window_picker', 'monitor_picker', 'editor', 'settings_dialog', 'ocr', 'ocr_dialog', 'pin_window', 'capture_history', 'countdown_overlay', 'scrolling_capture', 'utils', 'safe_io', 'logger', 'updater', 'PyQt5.QtPrintSupport', 'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets', 'PyQt5.QtNetwork']
+hiddenimports = ['runtime_contract', 'app', 'app_control', 'config', 'theme', 'hotkeys', 'capture', 'capture_menu', 'overlay', 'window_picker', 'monitor_picker', 'editor', 'layers', 'settings_dialog', 'ocr', 'ocr_dialog', 'pin_window', 'capture_history', 'countdown_overlay', 'scrolling_capture', 'utils', 'safe_io', 'logger', 'updater', 'cli', 'diagnostics', 'recovery', 'PyQt5.QtPrintSupport', 'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets', 'PyQt5.QtNetwork']
 hiddenimports += collect_submodules('PyQt5.QtCore')
 hiddenimports += collect_submodules('PyQt5.QtGui')
 hiddenimports += collect_submodules('PyQt5.QtWidgets')
@@ -25,6 +31,13 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# Dependency analysis discovers CPython 3.12's older sqlite3.dll. Replace that
+# TOC entry explicitly so direct spec builds cannot silently freeze it.
+a.binaries = [
+    entry for entry in a.binaries
+    if os.path.basename(entry[0]).casefold() != 'sqlite3.dll'
+]
+a.binaries.append(('sqlite3.dll', _sqlite_dll, 'BINARY'))
 pyz = PYZ(a.pure)
 
 exe = EXE(
