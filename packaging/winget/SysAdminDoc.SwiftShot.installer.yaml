@@ -9,7 +9,7 @@ InstallModes:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/SysAdminDoc/SwiftShot/releases/download/v2.9.0/SwiftShot-Setup.exe
-    # SHA-256 from the v2.9.0 release build.
-    InstallerSha256: 18BB273938E5AEF2DA2A25AF69A54AD7206D2D9E9532A974E6DD6C4AA8B9E34C
+    # SHA-256 from the v2.10.0 release build.
+    InstallerSha256: 3AF2968F0887BE9323DB8D921754447F0160CDC65C64826930DC9BA5F8A65AB6
 ManifestType: installer
 ManifestVersion: 1.12.0
