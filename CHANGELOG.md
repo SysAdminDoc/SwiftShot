@@ -4,6 +4,18 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Honest naming for the editor's local "AI" tools (R-28). The old **AI** menu is
+  now **Enhance**: only **Remove Background** is a genuinely trained model
+  (`rembg`); the others are labelled as the heuristics they are — **Upscale
+  (Lanczos)**, **Pseudo-Depth Map (heuristic)**, and **Highlight Busy Regions
+  (heuristic)**. Command-palette entries and progress dialogs match.
+- Remove Background now asks for explicit consent before the first-use `rembg`
+  model download, disclosing the size (~170 MB), source, and cache path, and
+  declining leaves the network untouched. A new **Enhance → Manage AI Model
+  Cache…** dialog shows the cache location/size and can delete it. README
+  privacy/offline claims updated to match.
+
 ## [v2.9.0] - 2026-07-14
 
 First batch of the 2026-07-07 deep-audit fixes (the remaining verified

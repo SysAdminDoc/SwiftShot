@@ -115,3 +115,68 @@ New items from the 2026-07-12 research pass (see RESEARCH.md). Do not duplicate 
 
 Net-new, code-verified findings from auditing the less-examined support modules (build script, hotkeys, config, updater, pickers). Not duplicated above. Delete when done (no `[x]`).
 
+## Research-Driven Additions
+
+### P1
+
+- [ ] R-22 P1 — Add keyboard-complete exact-size and aspect-locked region capture
+  Why: Region selection shows dimensions but cannot enter a required WxH/ratio or create/resize the rectangle without pointer dragging.
+  Evidence: `App/overlay.py`; Snagit exact-dimensions capture and accessibility behavior; Shottr aspect feedback.
+  Touches: `App/overlay.py`, capture settings/presets, region-selection tests.
+  Acceptance: Users can enter custom/common dimensions and ratios, lock/unlock aspect, move and resize by keyboard with coarse/fine steps, see physical-pixel bounds, and complete/cancel without a mouse across mixed-DPI monitors; out-of-bounds values clamp visibly and predictably.
+  Complexity: M
+
+- [ ] R-23 P1 — Move long editor operations behind one cancellable task runner
+  Why: OCR, table OCR, auto-redact, background removal, upscale, depth, and object detection perform substantial work on the GUI thread and can re-enter UI through `processEvents`.
+  Evidence: `App/editor.py:run_ocr`, `run_ocr_table`, `auto_redact`, `remove_background`, `ai_upscale`, `ai_depth_map`, `ai_object_detect`; unused/shared `AIWorker` opportunity.
+  Touches: `App/editor.py`, OCR/transform modules, progress UI, worker/task tests.
+  Acceptance: One operation at a time runs off the GUI thread with progress, cancel, close protection, and immutable input snapshots; cancellation/failure creates no history entry or partial layer; repeated triggers are coalesced; responsiveness and state transitions are regression-tested.
+  Complexity: L
+
+- [ ] R-24 P1 — Add bounded manual and horizontal scrolling capture
+  Why: The 2026-07-14 implementation posts vertical wheel input and performs vertical overlap only, so apps that reject synthetic scrolling or use horizontal canvases have no fallback.
+  Evidence: `App/scrolling_capture.py`; ShareX issue 7334; Shottr manual-scrolling guidance. Supplements, rather than duplicates, the existing multi-monitor and DevTools scrolling items.
+  Touches: `App/scrolling_capture.py`, stitch/overlap helpers, scrolling controls, image-based tests.
+  Acceptance: Users choose vertical/horizontal and automatic/manual advance, set a frame/scroll bound, stop with a documented hotkey, recapture a bad step, and preview progress; manual mode never injects input; horizontal/vertical overlap and no-progress termination are tested on deterministic fixtures.
+  Complexity: L
+
+- [ ] R-25 P1 — Add irreversible solid redaction with preview and proof tests
+  Why: Blur/pixelation are visual obfuscation, while the safe black-out path is limited to auto-detected email/IP/MAC/phone patterns.
+  Evidence: `App/editor.py` blur/pixelate tools; `App/ocr.py:_PII_PATTERNS`; Snagit Smart Redact and Screenpresso sensitive-data workflows.
+  Touches: editor tools/menu, OCR match preview, flatten/export tests, help microcopy.
+  Acceptance: A manual Solid Redact tool removes source pixels on the selected layer or flattened output; blur/pixelate are labeled visual-only; auto-redact previews every detection with include/exclude/edit before applying; exported pixels and project undo/redo are tested, including grouped layers.
+  Complexity: M
+
+- [ ] R-27 P1 — Build a deterministic local release and package gate
+  Why: Broad lower bounds, a floating PyInstaller, unvalidated frozen outputs, stale winget schema/placeholders, and no artifact smoke make releases non-reproducible.
+  Evidence: requirements files, `App/Build-SwiftShot.ps1`, `App/SwiftShot.spec`, `packaging/winget`, `packaging/scoop`; pip secure-install guidance; ShareX checksummed assets. Cross-reference blocked R-07 signing and AB-38 update integrity rather than duplicating them.
+  Touches: dependency constraints/hashes, build script/spec, package manifests, release checks/tests.
+  Acceptance: A clean local command installs exact hash-locked Windows wheels, runs pytest/Ruff, builds supported portable/installer forms, launches/import-smokes each artifact, verifies CLI/editor/history/OCR capability probes, emits checksums plus dependency SBOM, upgrades winget to schema 1.12.0, fills release URLs/hashes, and validation-installs winget/Scoop manifests; identical inputs record tool/runtime versions and produce explainable diffs.
+  Complexity: L
+
+### P2
+
+- [ ] R-29 P2 — Preserve the captured cursor as an editable layer
+  Why: Cursor pixels are baked into the screenshot, preventing QA/tutorial users from hiding, moving, or correcting them.
+  Evidence: `App/capture.py` cursor composition; Snagit editable cursor; ksnip movable cursor annotation.
+  Touches: `App/capture.py`, capture result model, `App/editor.py`, project serialization/tests.
+  Acceptance: Capture returns cursor bitmap, hotspot, position, and visibility separately; the editor creates a named movable/hideable layer without offset drift at mixed DPI; flattening matches legacy output by default; projects round-trip the cursor metadata and old projects still load.
+  Complexity: M
+
+- [ ] R-30 P2 — Expose OCR language discovery and remediation
+  Why: WinRT OCR depends on installed Windows OCR languages and Tesseract availability, but users cannot see or select the effective recognizer language.
+  Evidence: `App/ocr.py`; Windows `OcrEngine.AvailableRecognizerLanguages` platform contract.
+  Touches: `App/ocr.py`, OCR settings/status, diagnostics, OCR tests.
+  Acceptance: Settings list detected WinRT and Tesseract languages/backends, allow an explicit or automatic choice, explain how to install a missing Windows/Tesseract pack, persist stable language identifiers, and fall back visibly; no language model downloads occur without user action.
+  Complexity: M
+
+- [ ] R-31 P2 — Add local history favorites and tags with a reversible migration
+  Why: OCR search and time ordering cannot preserve important captures or organize recurring documentation without renaming/moving files.
+  Evidence: `App/capture_history.py` schema/search; Snagit library tags; CleanShot history workflow.
+  Touches: capture-history schema/UI/search, migration/rollback helpers, diagnostics/tests.
+  Acceptance: A versioned transaction adds favorites and user tags, filters/searches them, protects favorites from count-based retention unless explicitly confirmed, backs up before migration, and can rebuild without losing image files; optional source-app/window metadata is off by default and redacted from diagnostics.
+  Complexity: M
+
+- [ ] R-32 P2 — Finish live and system-following theme switching
+  Why: Existing editor windows embed palette values and generated icons at construction, so changing Preferences updates tray/new windows but cannot safely repaint an open unsaved editor; there is also no system-theme mode or live OS theme/high-contrast change listener.
+  Where: `App/editor.py`, `App/theme.py`, `App/app.py`, `App/settings_dialog.py`

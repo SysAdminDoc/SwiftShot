@@ -3270,6 +3270,68 @@ class AIProgressDialog(QDialog):
         QApplication.processEvents()
 
 
+# ── rembg model cache (optional AI background removal) ────────────────────────
+# rembg is the only genuinely-trained model SwiftShot can use. It downloads a
+# ~170 MB ONNX model on first use. Everything else under the Enhance menu is a
+# local heuristic (Lanczos resampling, luminance depth, variance region maps) —
+# named honestly so users are not misled into expecting neural results.
+REMBG_MODEL_NAME = "u2net"
+REMBG_MODEL_URL = "https://github.com/danielgatis/rembg (u2net.onnx, ~170 MB)"
+
+
+def rembg_cache_dir():
+    """Directory rembg stores its downloaded ONNX models in (may not exist)."""
+    env = os.environ.get("U2NET_HOME")
+    if env:
+        return env
+    return os.path.join(os.path.expanduser("~"), ".u2net")
+
+
+def rembg_cache_info():
+    """Return (present: bool, path: str, size_bytes: int, files: list[str])."""
+    d = rembg_cache_dir()
+    files = []
+    size = 0
+    try:
+        for name in os.listdir(d):
+            if name.lower().endswith(".onnx"):
+                p = os.path.join(d, name)
+                try:
+                    size += os.path.getsize(p)
+                    files.append(name)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return (bool(files), d, size, sorted(files))
+
+
+def rembg_model_present():
+    """True when at least one rembg model is already cached locally."""
+    return rembg_cache_info()[0]
+
+
+def clear_rembg_cache():
+    """Delete cached rembg .onnx models. Returns count removed."""
+    _, d, _, files = rembg_cache_info()
+    removed = 0
+    for name in files:
+        try:
+            os.remove(os.path.join(d, name)); removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _human_size(n):
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
 # ── CommandPaletteDialog ──────────────────────────────────────────────────────
 class CommandPaletteDialog(QDialog):
     """Ctrl+K command palette for quick access to all actions."""
@@ -6199,15 +6261,17 @@ class ImageEditor(QMainWindow):
         self._act(flm, "Chromatic Aberration...", "", self.filter_chromatic_aberration)
         self._act(flm, "Noise Generator...", "", self.filter_noise_gen)
 
-        # AI
-        aim = mb.addMenu("A&I")
-        self._act(aim, "Remove Background", "", self.ai_remove_background)
+        # Enhance (honest naming: only Remove Background is a trained model;
+        # the rest are local heuristics — see R-28)
+        aim = mb.addMenu("&Enhance")
+        self._act(aim, "Remove Background (AI model)…", "", self.ai_remove_background)
+        self._act(aim, "Manage AI Model Cache…", "", self.manage_ai_model_cache)
         aim.addSeparator()
-        self._act(aim, "Smart Upscale 2x", "", lambda: self.ai_upscale(2))
-        self._act(aim, "Smart Upscale 4x", "", lambda: self.ai_upscale(4))
+        self._act(aim, "Upscale 2× (Lanczos)", "", lambda: self.ai_upscale(2))
+        self._act(aim, "Upscale 4× (Lanczos)", "", lambda: self.ai_upscale(4))
         aim.addSeparator()
-        self._act(aim, "Generate Depth Map", "", self.ai_depth_map)
-        self._act(aim, "Detect Objects", "", self.ai_object_detect)
+        self._act(aim, "Pseudo-Depth Map (heuristic)", "", self.ai_depth_map)
+        self._act(aim, "Highlight Busy Regions (heuristic)", "", self.ai_object_detect)
 
         # Select
         selm = mb.addMenu("&Select")
@@ -7978,8 +8042,33 @@ class ImageEditor(QMainWindow):
             )
             return
 
+        # Explicit consent before any first-use model download. rembg fetches a
+        # ~170 MB ONNX model from GitHub on first run; disclose size/source/cache
+        # and let the user decline without touching the network.
+        if not rembg_model_present():
+            cache = rembg_cache_dir()
+            ans = QMessageBox.question(
+                self,
+                "Download AI model?",
+                "Background removal uses the rembg neural model, which is not "
+                "yet cached on this machine.\n\n"
+                f"• Download: {REMBG_MODEL_URL}\n"
+                f"• Cached to: {cache}\n"
+                "• One-time download; reused offline afterwards.\n"
+                "• Only this image is processed locally — no capture data is sent.\n\n"
+                "Download the model now?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                self._status("Background removal cancelled (model not downloaded)")
+                return
+
         progress = AIProgressDialog("Removing Background", self)
-        progress.set_message("Running AI background removal (first run downloads model ~170MB)...")
+        if rembg_model_present():
+            progress.set_message("Running background removal (rembg model)...")
+        else:
+            progress.set_message("Downloading model (~170 MB) then removing background...")
         progress.set_progress(10)
         progress.show(); QApplication.processEvents()
 
@@ -8016,7 +8105,7 @@ class ImageEditor(QMainWindow):
             self._status("Layer is locked"); return
         w, h = layer.image.size
         new_w, new_h = w * factor, h * factor
-        progress = AIProgressDialog(f"Smart Upscale {factor}x", self)
+        progress = AIProgressDialog(f"Upscale {factor}× (Lanczos)", self)
         progress.set_message(f"Resizing {w}x{h} → {new_w}x{new_h}...")
         progress.set_progress(0); progress.show(); QApplication.processEvents()
         try:
@@ -8053,9 +8142,8 @@ class ImageEditor(QMainWindow):
         if not layer:
             QMessageBox.information(self, "AI Depth Map", "No active layer."); return
 
-        # Try transformers first, fall back to local analysis
-        progress = AIProgressDialog("Generating Depth Map", self)
-        progress.set_message("Analyzing image depth...")
+        progress = AIProgressDialog("Pseudo-Depth Map (heuristic)", self)
+        progress.set_message("Estimating depth from luminance and position...")
         progress.set_progress(10); progress.show(); QApplication.processEvents()
 
         try:
@@ -8111,8 +8199,8 @@ class ImageEditor(QMainWindow):
         if not layer:
             QMessageBox.information(self, "AI Object Detect", "No active layer."); return
 
-        progress = AIProgressDialog("Detecting Objects", self)
-        progress.set_message("Analyzing image for regions of interest...")
+        progress = AIProgressDialog("Highlight Busy Regions (heuristic)", self)
+        progress.set_message("Scoring grid cells by pixel variance...")
         progress.set_progress(10); progress.show(); QApplication.processEvents()
 
         try:
@@ -8161,10 +8249,37 @@ class ImageEditor(QMainWindow):
             progress.set_progress(100, "Done!")
             QApplication.processEvents()
             progress.close()
-            self._status(f"Detected {len(detections)} regions of interest")
+            self._status(f"Highlighted {len(detections)} busy regions")
         except Exception as e:
             progress.close()
-            QMessageBox.critical(self, "AI Error", f"Object detection failed:\n{e}")
+            QMessageBox.critical(self, "AI Error", f"Region highlight failed:\n{e}")
+
+    def manage_ai_model_cache(self):
+        """Show the rembg model cache location/size and offer to remove it."""
+        present, path, size, files = rembg_cache_info()
+        if not present:
+            QMessageBox.information(
+                self,
+                "AI Model Cache",
+                "No AI model is cached yet.\n\n"
+                f"Location (created on first Remove Background):\n{path}\n\n"
+                f"Download source: {REMBG_MODEL_URL}",
+            )
+            return
+        listing = ", ".join(files)
+        ans = QMessageBox.question(
+            self,
+            "AI Model Cache",
+            f"Cached AI model(s): {listing}\n"
+            f"Location: {path}\n"
+            f"Size on disk: {_human_size(size)}\n\n"
+            "Delete the cached model(s)? They will re-download on next use.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans == QMessageBox.Yes:
+            removed = clear_rembg_cache()
+            self._status(f"Removed {removed} cached AI model file(s)")
 
     # ── Command Palette ───────────────────────────────────────────────────────
     def open_command_palette(self):
@@ -8220,12 +8335,13 @@ class ImageEditor(QMainWindow):
             ("Tilt Shift", "Filter", self.filter_tilt_shift),
             ("Chromatic Aberration", "Filter", self.filter_chromatic_aberration),
             ("Noise Generator", "Filter", self.filter_noise_gen),
-            # AI
-            ("AI Remove Background", "AI", self.ai_remove_background),
-            ("AI Upscale 2x", "AI", lambda: self.ai_upscale(2)),
-            ("AI Upscale 4x", "AI", lambda: self.ai_upscale(4)),
-            ("AI Depth Map", "AI", self.ai_depth_map),
-            ("AI Object Detection", "AI", self.ai_object_detect),
+            # Enhance
+            ("Remove Background (AI model)", "Enhance", self.ai_remove_background),
+            ("Manage AI Model Cache", "Enhance", self.manage_ai_model_cache),
+            ("Upscale 2x (Lanczos)", "Enhance", lambda: self.ai_upscale(2)),
+            ("Upscale 4x (Lanczos)", "Enhance", lambda: self.ai_upscale(4)),
+            ("Pseudo-Depth Map (heuristic)", "Enhance", self.ai_depth_map),
+            ("Highlight Busy Regions (heuristic)", "Enhance", self.ai_object_detect),
             # View
             ("Toggle Grid", "View", self.toggle_grid),
             ("Toggle Rulers", "View", self.toggle_rulers),

@@ -52,7 +52,7 @@ def test_build_and_docs_use_python_312_and_real_root_paths():
     assert ".\\App\\Build-SwiftShot.ps1" in readme
     assert "Python 3.8" not in readme
     assert "GitHub Releases API" in readme
-    assert "downloads a model on first use" in readme
+    assert "model on first use" in readme
 
 
 def test_runtime_contract_is_in_release_manifests():

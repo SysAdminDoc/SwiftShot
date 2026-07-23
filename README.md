@@ -270,9 +270,21 @@ generate_icon.py        Programmatic icon generation for builds
 
 That's the core runtime. OCR uses the Windows built-in WinRT engine (no Python
 package needed) with an optional local Tesseract + `pytesseract` fallback.
-Background removal is also optional and requires `rembg`; its upstream package
-[downloads a model on first use](https://github.com/danielgatis/rembg#models)
-unless that model is already present in its cache.
+
+**Remove Background** is the only genuinely trained model. It is optional and
+requires `rembg`; its upstream package
+[downloads a ~170 MB model on first use](https://github.com/danielgatis/rembg#models)
+unless that model is already cached. SwiftShot never downloads it silently — the
+editor asks for explicit consent (disclosing size, source, and cache path)
+before the first download, and **Enhance → Manage AI Model Cache…** shows the
+cache location/size and lets you delete it.
+
+The other **Enhance** tools are fast local heuristics, named honestly so they
+are not mistaken for neural models: **Upscale (Lanczos)** is multi-pass Lanczos
+resampling with an adaptive unsharp mask; **Pseudo-Depth Map** derives a depth
+estimate from luminance, vertical position, and saturation; **Highlight Busy
+Regions** scores a 3×3 grid by pixel variance. None of them download anything or
+require a network connection.
 
 ### Network behavior
 
