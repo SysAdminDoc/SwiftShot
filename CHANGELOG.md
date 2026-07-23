@@ -4,6 +4,14 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+## [v2.10.0] - 2026-07-22
+
+Research-backlog drain (R-22..R-32): keyboard-complete region capture, honest
+AI/heuristic labelling with model-cache consent, Solid Redact + previewed
+Auto-Redact, a cancellable background task runner, horizontal/manual scrolling
+capture, a deterministic hash-locked release gate with SBOM, OCR language
+discovery, history favorites/tags, and a system-following theme.
+
 ### Added
 - **System** theme option that follows the Windows dark/light preference, with a
   live listener that repaints the app when Windows switches theme — no restart

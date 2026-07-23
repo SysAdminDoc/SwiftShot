@@ -271,6 +271,13 @@ def test_region_selector_can_complete_capture_by_keyboard(qapp, monkeypatch):
     selector.region_selected.connect(selected.append)
     selector.current_pos = __import__("PyQt5.QtCore", fromlist=["QPoint"]).QPoint(10, 10)
 
+    # Own keyboard focus explicitly so QTest.keyClick routes to this widget
+    # regardless of focus state left behind by earlier tests in the suite.
+    selector.show()
+    QTest.qWaitForWindowExposed(selector)
+    selector.activateWindow()
+    selector.setFocus(Qt.OtherFocusReason)
+
     QTest.keyClick(selector, Qt.Key_Return)
     QTest.keyClick(selector, Qt.Key_Right, Qt.ShiftModifier)
     QTest.keyClick(selector, Qt.Key_Down, Qt.ShiftModifier)
@@ -281,6 +288,7 @@ def test_region_selector_can_complete_capture_by_keyboard(qapp, monkeypatch):
     # QRect includes both keyboard-selected endpoints.
     assert selected[0].width() == 11
     assert selected[0].height() == 11
+    selector.close()
 
 
 def test_hotkey_recorder_keyboard_start_updates_accessible_state(qapp):

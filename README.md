@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="#installation"><img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white"></a>
-  <img alt="Version 2.9.0" src="https://img.shields.io/badge/Version-2.9.0-89b4fa">
+  <img alt="Version 2.10.0" src="https://img.shields.io/badge/Version-2.10.0-89b4fa">
   <a href="#license"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Lines of code" src="https://img.shields.io/badge/Lines_of_Code-18k-green">
@@ -104,7 +104,8 @@ Press `Space` during region selection to switch to window mode (and vice versa) 
 ### Themes and accessibility
 
 Choose the [Catppuccin Mocha](https://github.com/catppuccin/catppuccin)
-dark theme or the light theme. When Windows High Contrast is enabled,
+dark theme, the light theme, or **System** to follow the Windows dark/light
+preference live (no restart). When Windows High Contrast is enabled,
 SwiftShot uses the live system palette instead of overriding the user's
 colors. Editor controls, layer state, pins, countdown cancellation, and region
 selection expose keyboard and assistive-technology paths with visible focus.
