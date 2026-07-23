@@ -184,6 +184,12 @@ class Config:
     CAPTURE_HISTORY_DIR = ""
     CAPTURE_HISTORY_AUTO_OCR = False
 
+    # --- OCR ---
+    # "auto" follows the user's Windows language profile; otherwise a stable
+    # BCP-47 tag (e.g. "en-US", "de-DE") chosen from the installed recognizer
+    # languages. No language pack is ever downloaded automatically.
+    OCR_LANGUAGE = "auto"
+
     # --- Clipboard Watcher ---
     CLIPBOARD_WATCHER_ENABLED = False
 

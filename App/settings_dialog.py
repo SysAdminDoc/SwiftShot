@@ -703,6 +703,19 @@ class SettingsDialog(QDialog):
             "Extract text from each capture and include it in history search")
         layout.addRow(self.history_auto_ocr)
 
+        # OCR recognizer language (R-30): Automatic follows the Windows language
+        # profile; otherwise pick an installed recognizer language. Nothing is
+        # ever downloaded.
+        self.ocr_language = QComboBox()
+        self.ocr_language.addItem("Automatic (Windows profile)", "auto")
+        self._populate_ocr_languages()
+        layout.addRow("OCR language:", self.ocr_language)
+        self.ocr_lang_status = QLabel()
+        self.ocr_lang_status.setWordWrap(True)
+        self.ocr_lang_status.setObjectName("hint")
+        layout.addRow("", self.ocr_lang_status)
+        self._refresh_ocr_lang_status()
+
         self.history_max = QSpinBox()
         self.history_max.setRange(5, 500)
         self.history_max.setValue(config.CAPTURE_HISTORY_MAX)
@@ -735,6 +748,37 @@ class SettingsDialog(QDialog):
         return w
 
     # --- Helpers ---
+
+    def _populate_ocr_languages(self):
+        """Fill the OCR language combo from installed recognizer languages and
+        select the persisted choice. Discovery failures leave just Automatic."""
+        try:
+            import ocr
+            for tag in ocr.available_windows_ocr_languages():
+                self.ocr_language.addItem(tag, tag)
+            for tag in ocr.available_tesseract_languages():
+                data = f"tesseract:{tag}"
+                if self.ocr_language.findData(data) < 0:
+                    self.ocr_language.addItem(f"Tesseract: {tag}", data)
+        except Exception:
+            pass
+        idx = self.ocr_language.findData(getattr(config, "OCR_LANGUAGE", "auto"))
+        self.ocr_language.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _refresh_ocr_lang_status(self):
+        try:
+            import ocr
+            st = ocr.ocr_language_status()
+            if st["windows"] or st["tesseract"]:
+                self.ocr_lang_status.setText(
+                    f"Effective: {st['effective']}. Installed — "
+                    f"Windows: {', '.join(st['windows']) or 'none'}; "
+                    f"Tesseract: {', '.join(st['tesseract']) or 'none'}.")
+            else:
+                self.ocr_lang_status.setText(
+                    "No recognizer languages detected. " + st["install_hint"])
+        except Exception:
+            self.ocr_lang_status.setText("")
 
     def _populate_after_capture_list(self):
         configured = config.get_after_capture_actions()
@@ -995,6 +1039,7 @@ class SettingsDialog(QDialog):
         # Advanced
         config.CAPTURE_HISTORY_ENABLED = self.history_enabled.isChecked()
         config.CAPTURE_HISTORY_AUTO_OCR = self.history_auto_ocr.isChecked()
+        config.OCR_LANGUAGE = self.ocr_language.currentData() or "auto"
         config.CAPTURE_HISTORY_MAX = self.history_max.value()
         config.PIN_OPACITY = self.pin_opacity.value()
 

@@ -5,6 +5,13 @@ All notable changes to SwiftShot will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- OCR language discovery and selection (R-30). Settings ▸ Advanced now lists the
+  installed WinRT recognizer languages and any Tesseract languages, and lets you
+  pick **Automatic** (Windows profile) or a specific language; the choice is
+  persisted as a stable BCP-47 tag and threaded through the WinRT engine (or the
+  Tesseract fallback). A status line shows the effective recognizer and, when no
+  languages are found, how to install a pack. No language pack is ever
+  downloaded automatically.
 - Deterministic release + package gate (R-27): `packaging/release-gate.ps1` runs
   the runtime-contract check, ruff, pytest, the build, a `--version` artifact
   smoke, `SHA256SUMS.txt`, a CycloneDX SBOM (`packaging/gen_sbom.py`), and

@@ -128,13 +128,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
   Acceptance: Capture returns cursor bitmap, hotspot, position, and visibility separately; the editor creates a named movable/hideable layer without offset drift at mixed DPI; flattening matches legacy output by default; projects round-trip the cursor metadata and old projects still load.
   Complexity: M
 
-- [ ] R-30 P2 — Expose OCR language discovery and remediation
-  Why: WinRT OCR depends on installed Windows OCR languages and Tesseract availability, but users cannot see or select the effective recognizer language.
-  Evidence: `App/ocr.py`; Windows `OcrEngine.AvailableRecognizerLanguages` platform contract.
-  Touches: `App/ocr.py`, OCR settings/status, diagnostics, OCR tests.
-  Acceptance: Settings list detected WinRT and Tesseract languages/backends, allow an explicit or automatic choice, explain how to install a missing Windows/Tesseract pack, persist stable language identifiers, and fall back visibly; no language model downloads occur without user action.
-  Complexity: M
-
 - [ ] R-31 P2 — Add local history favorites and tags with a reversible migration
   Why: OCR search and time ordering cannot preserve important captures or organize recurring documentation without renaming/moving files.
   Evidence: `App/capture_history.py` schema/search; Snagit library tags; CleanShot history workflow.

@@ -19,6 +19,30 @@ from logger import log
 
 OCR_TIMEOUT_SECONDS = 30
 
+# Lists the Windows recognizer languages actually installed (nothing is
+# downloaded). Emits one BCP-47 tag per line.
+_WIN_OCR_LANGS_SCRIPT = r'''
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+    $null = [Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime]
+    foreach ($l in [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages) {
+        Write-Output $l.LanguageTag
+    }
+} catch {
+    Write-Error "OCR_ERROR: $($_.Exception.Message)"
+    exit 1
+}
+'''
+
+
+def _configured_ocr_language():
+    """The persisted OCR language tag ('auto' when unset/unavailable)."""
+    try:
+        import config
+        return getattr(config, "OCR_LANGUAGE", "auto") or "auto"
+    except Exception:
+        return "auto"
+
 
 _PII_PATTERNS = [
     re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),   # email
@@ -98,10 +122,24 @@ try {
     $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) `
                     ([Windows.Graphics.Imaging.SoftwareBitmap])
 
-    $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-    if ($null -eq $ocrEngine) {
-        Write-Error "OCR_ERROR: No OCR engine available for your language settings."
-        exit 1
+    # A specific BCP-47 tag (SWIFTSHOT_OCR_LANG) creates the engine from that
+    # language; "auto"/empty follows the user's Windows language profile. The
+    # requested language must already be installed — nothing is downloaded.
+    $lang = $env:SWIFTSHOT_OCR_LANG
+    if ($lang -and $lang -ne 'auto') {
+        $null = [Windows.Globalization.Language,Windows.Foundation,ContentType=WindowsRuntime]
+        $langObj = New-Object Windows.Globalization.Language $lang
+        $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($langObj)
+        if ($null -eq $ocrEngine) {
+            Write-Error "OCR_ERROR: No OCR engine for language '$lang'. Install it under Settings > Time & language > Language & region > (language) > Optional features > Language pack."
+            exit 1
+        }
+    } else {
+        $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+        if ($null -eq $ocrEngine) {
+            Write-Error "OCR_ERROR: No OCR engine available for your language settings."
+            exit 1
+        }
     }
 
     $ocrResult = Await ($ocrEngine.RecognizeAsync($bitmap)) `
@@ -153,19 +191,24 @@ def ocr_file(image_path):
     """Run OCR on an image file. Returns extracted text string."""
     image_path = os.path.abspath(image_path)
 
-    # Strategy 1: Windows built-in OCR
-    if sys.platform == 'win32':
+    # An explicit "tesseract:<lang>" selection forces the Tesseract path with
+    # that language and skips WinRT entirely (visible, deterministic).
+    configured = _configured_ocr_language()
+    tess_lang = configured.split(":", 1)[1] if configured.startswith("tesseract:") else None
+
+    # Strategy 1: Windows built-in OCR (unless a Tesseract language was chosen)
+    if sys.platform == 'win32' and tess_lang is None:
         try:
             return _ocr_windows(image_path)
         except Exception as e:
             win_error = str(e)
     else:
-        win_error = "Not on Windows"
+        win_error = "Tesseract language selected" if tess_lang else "Not on Windows"
 
     # Strategy 2: pytesseract
     tess_error = None
     try:
-        return _ocr_tesseract(image_path)
+        return _ocr_tesseract(image_path, lang=tess_lang)
     except ImportError:
         tess_error = "pytesseract not installed"
     except Exception as e:
@@ -258,9 +301,10 @@ def words_to_table(words):
     return "\n".join(lines)
 
 
-def _ocr_windows(image_path, mode="text"):
+def _ocr_windows(image_path, mode="text", language=None):
     """Use Windows 10/11 WinRT OcrEngine via PowerShell. mode 'words' emits
-    per-word bounding boxes (X\\tY\\tW\\tH\\tText) for table detection."""
+    per-word bounding boxes (X\\tY\\tW\\tH\\tText) for table detection.
+    language is a BCP-47 tag or 'auto'/None to follow the language profile."""
     script_tmp = tempfile.NamedTemporaryFile(
         suffix='.ps1', mode='w', delete=False, encoding='utf-8'
     )
@@ -275,6 +319,7 @@ def _ocr_windows(image_path, mode="text"):
         run_env = dict(os.environ)
         run_env['SWIFTSHOT_OCR_PATH'] = os.path.abspath(image_path)
         run_env['SWIFTSHOT_OCR_MODE'] = mode
+        run_env['SWIFTSHOT_OCR_LANG'] = language or _configured_ocr_language()
         result = subprocess.run(
             [
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
@@ -303,17 +348,110 @@ def _ocr_windows(image_path, mode="text"):
         f"Windows OCR failed (exit code {result.returncode}). stderr: {stderr}")
 
 
-def _ocr_tesseract(image_path):
-    """Use pytesseract (requires Tesseract installed)."""
+def _ocr_tesseract(image_path, lang=None):
+    """Use pytesseract (requires Tesseract installed). lang is a Tesseract
+    language code (e.g. 'deu') or None for the default."""
     import pytesseract
     from PIL import Image
     # Explicitly close the decoder before ocr_pixmap() removes its temporary
     # file. Relying on CPython refcounting left the file locked with alternate
     # Pillow plugins/runtimes and leaked handles during repeated OCR batches.
+    kwargs = {"timeout": OCR_TIMEOUT_SECONDS}
+    if lang:
+        kwargs["lang"] = lang
     with Image.open(image_path) as img:
-        text = pytesseract.image_to_string(
-            img, timeout=OCR_TIMEOUT_SECONDS)
+        text = pytesseract.image_to_string(img, **kwargs)
     return text.strip()
+
+
+# ── Language discovery / remediation (R-30) ──────────────────────────────────
+def _parse_lang_tags(text):
+    """Parse newline-separated BCP-47 tags; dedupe preserving order."""
+    seen = []
+    for line in (text or "").splitlines():
+        tag = line.strip()
+        if tag and "OCR_ERROR" not in tag and tag not in seen:
+            seen.append(tag)
+    return seen
+
+
+def _parse_tesseract_langs(text):
+    """Parse `tesseract --list-langs` output (a header line then one lang per
+    line). 'osd' is an orientation model, not a language — drop it."""
+    langs = []
+    for line in (text or "").splitlines():
+        t = line.strip()
+        if not t or t.lower().startswith("list of available") or t == "osd":
+            continue
+        # A language code is a short token with no spaces.
+        if " " not in t and "/" not in t and "\\" not in t:
+            langs.append(t)
+    return langs
+
+
+def available_windows_ocr_languages():
+    """Installed WinRT recognizer language tags (empty off Windows/on error)."""
+    if sys.platform != 'win32':
+        return []
+    script_tmp = tempfile.NamedTemporaryFile(
+        suffix='.ps1', mode='w', delete=False, encoding='utf-8')
+    script_path = script_tmp.name
+    script_tmp.write(_WIN_OCR_LANGS_SCRIPT)
+    script_tmp.close()
+    try:
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+             '-File', script_path],
+            capture_output=True, text=True, timeout=OCR_TIMEOUT_SECONDS,
+            encoding='utf-8', errors='replace',
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except Exception:
+        return []
+    finally:
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
+    if result.returncode != 0:
+        return []
+    return _parse_lang_tags(result.stdout)
+
+
+def available_tesseract_languages():
+    """Installed Tesseract languages via `tesseract --list-langs` ([] if none)."""
+    try:
+        result = subprocess.run(
+            ['tesseract', '--list-langs'],
+            capture_output=True, text=True, timeout=OCR_TIMEOUT_SECONDS,
+            encoding='utf-8', errors='replace',
+            creationflags=(subprocess.CREATE_NO_WINDOW
+                           if sys.platform == 'win32' else 0))
+    except Exception:
+        return []
+    # tesseract prints the list to stderr on some builds, stdout on others.
+    return _parse_tesseract_langs((result.stdout or "") + "\n" + (result.stderr or ""))
+
+
+def ocr_language_status():
+    """Discovery + remediation snapshot for the Settings UI:
+    {selected, windows: [...], tesseract: [...], effective, install_hint}."""
+    selected = _configured_ocr_language()
+    win = available_windows_ocr_languages()
+    tess = available_tesseract_languages()
+    if selected != "auto" and selected in win:
+        effective = selected
+    elif win:
+        effective = "auto (" + win[0] + ")"
+    elif tess:
+        effective = "tesseract:" + tess[0]
+    else:
+        effective = "none"
+    hint = ("Add a Windows OCR language under Settings > Time & language > "
+            "Language & region > (language) > Language options > install the "
+            "language pack. For Tesseract, install a traineddata pack "
+            "(e.g. winget install UB-Mannheim.TesseractOCR) and add languages.")
+    return {"selected": selected, "windows": win, "tesseract": tess,
+            "effective": effective, "install_hint": hint}
 
 
 def is_ocr_available():
