@@ -19,16 +19,34 @@ def _frame(width, height, footer_h, content_offset):
     return QPixmap.fromImage(img)
 
 
-def _stub(frames):
+def _hframe(width, height, sidebar_w, content_offset):
+    """A horizontal-scroll frame: the right `sidebar_w` columns are a constant
+    sidebar; the rest scroll horizontally with `content_offset`."""
+    img = QImage(width, height, QImage.Format_RGB32)
+    for x in range(width):
+        if x >= width - sidebar_w:
+            col = QColor(10, 10, 10)                  # static sidebar
+        else:
+            v = x + content_offset
+            col = QColor(v % 256, (v * 3) % 256, (v * 7) % 256)
+        for y in range(height):
+            img.setPixelColor(x, y, col)
+    return QPixmap.fromImage(img)
+
+
+def _stub(frames, direction="vertical"):
     from scrolling_capture import ScrollingCaptureDialog
 
     class _S:
+        _static_edge_size = ScrollingCaptureDialog._static_edge_size
         _static_bottom_height = ScrollingCaptureDialog._static_bottom_height
         _find_overlap = ScrollingCaptureDialog._find_overlap
         _stitch_frames = ScrollingCaptureDialog._stitch_frames
 
     s = _S()
     s._frames = frames
+    s._direction = direction
+    s._truncated_for_safety = False
     return s
 
 
@@ -51,6 +69,86 @@ def test_stitch_collapses_footer(qapp):
     # Taller than one frame (new content added) but far less than 2x (the
     # footer is not duplicated).
     assert 100 < result.height() < 200
+
+
+def test_find_overlap_horizontal(qapp):
+    a = _hframe(100, 40, 0, 0)
+    b = _hframe(100, 40, 0, 70)   # scrolled right by 70 px
+    assert _stub([], "horizontal")._find_overlap(a, b, "horizontal") == 30
+
+
+def test_stitch_horizontal_grows_width_not_height(qapp):
+    frames = [_hframe(100, 40, 0, 0), _hframe(100, 40, 0, 70)]
+    result = _stub(frames, "horizontal")._stitch_frames()
+    assert result is not None
+    assert result.height() == 40          # cross-axis fixed
+    assert 100 < result.width() <= 200    # scroll axis grows, overlap collapsed
+
+
+def test_static_edge_detects_horizontal_sidebar(qapp):
+    frames = [_hframe(100, 40, 20, 0), _hframe(100, 40, 20, 30),
+              _hframe(100, 40, 20, 60)]
+    assert _stub(frames, "horizontal")._static_edge_size("horizontal") == 20
+
+
+def test_identical_frames_do_not_double_width(qapp):
+    # Two identical frames must collapse (via overlap/static-edge detection),
+    # never stitch to twice the width — the no-progress guarantee.
+    frames = [_hframe(60, 30, 0, 0), _hframe(60, 30, 0, 0)]
+    result = _stub(frames, "horizontal")._stitch_frames()
+    assert result is not None
+    assert result.height() == 30
+    assert result.width() < 120
+
+
+def test_manual_mode_never_injects_scroll(qapp, monkeypatch):
+    import capture
+    import scrolling_capture
+    from PyQt5.QtCore import QRect
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._generation = 5
+    dialog._capturing = True
+    dialog._manual = True
+    dialog._target_rect = QRect(0, 0, 10, 10)
+    frame = QPixmap(10, 10)
+    frame.fill(QColor("green"))
+    scrolls = []
+    callbacks = []
+    monkeypatch.setattr(capture.CaptureManager, "capture_rect", lambda _r: frame)
+    monkeypatch.setattr(dialog, "_scroll_window", lambda *_a: scrolls.append(True))
+    monkeypatch.setattr(
+        scrolling_capture.QTimer, "singleShot",
+        lambda _d, cb: callbacks.append(cb))
+
+    dialog._capture_frame(5)
+
+    assert dialog._frames == [frame]
+    assert scrolls == []          # manual mode injects nothing
+    assert callbacks == []        # and schedules no auto-advance
+    assert dialog.add_frame_btn.isEnabled()
+    dialog.close()
+
+
+def test_redo_last_frame_drops_and_rewinds(qapp):
+    import scrolling_capture
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._capturing = True
+    f1 = QPixmap(10, 10); f2 = QPixmap(10, 10)
+    dialog._frames = [f1, f2]
+    dialog._raw_pixels = 200
+    dialog._scroll_count = 2
+
+    dialog._redo_last_frame()
+
+    assert dialog._frames == [f1]
+    assert dialog._scroll_count == 1
+    assert dialog._raw_pixels == 100
+    assert dialog.add_frame_btn.isEnabled()
+    dialog.close()
 
 
 def test_reject_invalidates_pending_window_identification(qapp, monkeypatch):

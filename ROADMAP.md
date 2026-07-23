@@ -126,13 +126,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
   Acceptance: One operation at a time runs off the GUI thread with progress, cancel, close protection, and immutable input snapshots; cancellation/failure creates no history entry or partial layer; repeated triggers are coalesced; responsiveness and state transitions are regression-tested.
   Complexity: L
 
-- [ ] R-24 P1 — Add bounded manual and horizontal scrolling capture
-  Why: The 2026-07-14 implementation posts vertical wheel input and performs vertical overlap only, so apps that reject synthetic scrolling or use horizontal canvases have no fallback.
-  Evidence: `App/scrolling_capture.py`; ShareX issue 7334; Shottr manual-scrolling guidance. Supplements, rather than duplicates, the existing multi-monitor and DevTools scrolling items.
-  Touches: `App/scrolling_capture.py`, stitch/overlap helpers, scrolling controls, image-based tests.
-  Acceptance: Users choose vertical/horizontal and automatic/manual advance, set a frame/scroll bound, stop with a documented hotkey, recapture a bad step, and preview progress; manual mode never injects input; horizontal/vertical overlap and no-progress termination are tested on deterministic fixtures.
-  Complexity: L
-
 - [ ] R-27 P1 — Build a deterministic local release and package gate
   Why: Broad lower bounds, a floating PyInstaller, unvalidated frozen outputs, stale winget schema/placeholders, and no artifact smoke make releases non-reproducible.
   Evidence: requirements files, `App/Build-SwiftShot.ps1`, `App/SwiftShot.spec`, `packaging/winget`, `packaging/scoop`; pip secure-install guidance; ShareX checksummed assets. Cross-reference blocked R-07 signing and AB-38 update integrity rather than duplicating them.

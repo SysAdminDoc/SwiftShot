@@ -5,6 +5,13 @@ All notable changes to SwiftShot will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Scrolling capture gains direction, manual advance, a frame bound, and redo
+  (R-24). Choose **Vertical** or **Horizontal** scrolling; **Manual** mode
+  captures a frame each time you click *Add Frame* after scrolling yourself and
+  never injects synthetic input (for apps that reject it); set a **Max frames**
+  bound; and *Redo Last* drops a mis-scrolled frame so you can recapture it.
+  Overlap detection and static-edge (footer/sidebar) trimming now work along
+  either axis. Stop with the Stop button or Esc.
 - Keyboard-complete region capture (R-22): in the rectangle overlay, press **D**
   to type an exact width×height, **A** to cycle an aspect-ratio lock
   (Free/1:1/4:3/16:9/3:2/2:3/9:16), plain/Shift arrows to resize the region
