@@ -319,7 +319,13 @@ def _ocr_windows(image_path, mode="text", language=None):
         run_env = dict(os.environ)
         run_env['SWIFTSHOT_OCR_PATH'] = os.path.abspath(image_path)
         run_env['SWIFTSHOT_OCR_MODE'] = mode
-        run_env['SWIFTSHOT_OCR_LANG'] = language or _configured_ocr_language()
+        # A "tesseract:<lang>" selection is meaningless to the WinRT engine
+        # (and ':' is not valid BCP-47 — the Language ctor throws, killing
+        # word-box OCR for auto-redact/tables). Fall back to profile-auto.
+        lang = language or _configured_ocr_language()
+        if lang.startswith("tesseract:"):
+            lang = "auto"
+        run_env['SWIFTSHOT_OCR_LANG'] = lang
         result = subprocess.run(
             [
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
@@ -389,9 +395,19 @@ def _parse_tesseract_langs(text):
     return langs
 
 
-def available_windows_ocr_languages():
-    """Installed WinRT recognizer language tags (empty off Windows/on error)."""
+# Discovery spawns subprocesses (PowerShell WinRT ~1-4 s cold start), so both
+# lists are cached for the session — installed language packs don't change
+# while SwiftShot runs, and a stale list is harmless.
+_LANG_CACHE = {}
+
+
+def available_windows_ocr_languages(refresh=False):
+    """Installed WinRT recognizer language tags (empty off Windows/on error).
+    Cached per session; pass refresh=True to force a re-probe."""
+    if not refresh and "windows" in _LANG_CACHE:
+        return _LANG_CACHE["windows"]
     if sys.platform != 'win32':
+        _LANG_CACHE["windows"] = []
         return []
     script_tmp = tempfile.NamedTemporaryFile(
         suffix='.ps1', mode='w', delete=False, encoding='utf-8')
@@ -406,7 +422,7 @@ def available_windows_ocr_languages():
             encoding='utf-8', errors='replace',
             creationflags=subprocess.CREATE_NO_WINDOW)
     except Exception:
-        return []
+        return []          # transient failure: don't cache, allow retry
     finally:
         try:
             os.unlink(script_path)
@@ -414,11 +430,16 @@ def available_windows_ocr_languages():
             pass
     if result.returncode != 0:
         return []
-    return _parse_lang_tags(result.stdout)
+    langs = _parse_lang_tags(result.stdout)
+    _LANG_CACHE["windows"] = langs
+    return langs
 
 
-def available_tesseract_languages():
-    """Installed Tesseract languages via `tesseract --list-langs` ([] if none)."""
+def available_tesseract_languages(refresh=False):
+    """Installed Tesseract languages via `tesseract --list-langs` ([] if none).
+    Cached per session; pass refresh=True to force a re-probe."""
+    if not refresh and "tesseract" in _LANG_CACHE:
+        return _LANG_CACHE["tesseract"]
     try:
         result = subprocess.run(
             ['tesseract', '--list-langs'],
@@ -426,10 +447,16 @@ def available_tesseract_languages():
             encoding='utf-8', errors='replace',
             creationflags=(subprocess.CREATE_NO_WINDOW
                            if sys.platform == 'win32' else 0))
-    except Exception:
+    except FileNotFoundError:
+        _LANG_CACHE["tesseract"] = []    # not installed: stable, cache it
         return []
+    except Exception:
+        return []          # transient failure: don't cache, allow retry
     # tesseract prints the list to stderr on some builds, stdout on others.
-    return _parse_tesseract_langs((result.stdout or "") + "\n" + (result.stderr or ""))
+    langs = _parse_tesseract_langs(
+        (result.stdout or "") + "\n" + (result.stderr or ""))
+    _LANG_CACHE["tesseract"] = langs
+    return langs
 
 
 def ocr_language_status():

@@ -134,3 +134,50 @@ def test_cycle_aspect_wraps_back_to_free(qapp):
     for _ in range(len(s.ASPECT_PRESETS)):
         s._cycle_aspect()
     assert s.aspect_ratio is None            # full cycle returns to Free
+
+
+# ── aspect lock constrains mouse drags too ─────────────────────────────────
+
+def _drag_stub(qapp, w=400, h=400):
+    RS = _cls()
+
+    class _S:
+        MODE_RECTANGLE = RS.MODE_RECTANGLE
+        _apply_aspect_to_end = RS._apply_aspect_to_end
+
+        def height(self): return h
+
+    s = _S()
+    s.mode = RS.MODE_RECTANGLE
+    s.start_pos = QPoint(10, 10)
+    return s
+
+
+def test_apply_aspect_to_end_locks_height_to_width(qapp):
+    s = _drag_stub(qapp)
+    s.aspect_ratio = 2.0                     # w/h = 2
+    end = s._apply_aspect_to_end(QPoint(109, 300))   # width 100 dragged down
+    assert end.x() == 109
+    assert end.y() == 10 + 49                # height 50 follows the lock
+
+
+def test_apply_aspect_to_end_respects_drag_direction(qapp):
+    s = _drag_stub(qapp)
+    s.aspect_ratio = 1.0
+    s.start_pos = QPoint(10, 200)
+    end = s._apply_aspect_to_end(QPoint(60, 0))      # dragging up-right
+    assert end.y() == 200 - 50               # square (w=51), above the anchor
+
+
+def test_apply_aspect_to_end_clamps_to_overlay(qapp):
+    s = _drag_stub(qapp)
+    s.aspect_ratio = 1.0
+    s.start_pos = QPoint(10, 10)
+    end = s._apply_aspect_to_end(QPoint(60, 0))      # would land at y=-40
+    assert end.y() == 0                      # clamped to the overlay top
+
+
+def test_apply_aspect_to_end_free_passthrough(qapp):
+    s = _drag_stub(qapp)
+    s.aspect_ratio = None
+    assert s._apply_aspect_to_end(QPoint(99, 77)) == QPoint(99, 77)

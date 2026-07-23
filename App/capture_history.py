@@ -617,9 +617,19 @@ class HistoryThumbnail(QFrame):
         self.setFixedSize(180, 150)
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
-        self.setToolTip(f"{self._filename}\n{self._timestamp}")
+        tooltip = f"{self._filename}\n{self._timestamp}"
+        if self._favorite:
+            tooltip += "\nFavorite (kept during history pruning)"
+        if self._tags:
+            tooltip += "\nTags: " + ", ".join(self._tags)
+        self.setToolTip(tooltip)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setAccessibleName(f"Capture {self._filename}")
+        name = f"Capture {self._filename}"
+        if self._favorite:
+            name += ", favorite"
+        if self._tags:
+            name += ", tagged " + ", ".join(self._tags)
+        self.setAccessibleName(name)
         self.setAccessibleDescription(
             "Press Enter to open in the editor, or the menu key for more actions.")
 

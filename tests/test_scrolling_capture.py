@@ -131,6 +131,34 @@ def test_manual_mode_never_injects_scroll(qapp, monkeypatch):
     dialog.close()
 
 
+def test_escape_during_capture_stops_instead_of_discarding(qapp, monkeypatch):
+    """Esc mid-capture must stop and stitch (the documented behaviour), not
+    reject the dialog and silently throw away every collected frame."""
+    import scrolling_capture
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtGui import QKeyEvent
+    from PyQt5.QtCore import QEvent
+
+    dialog = scrolling_capture.ScrollingCaptureDialog()
+    dialog.show()
+    dialog._capturing = True
+    stopped = []
+    rejected = []
+    real_reject = dialog.reject
+    monkeypatch.setattr(dialog, "_stop_capture", lambda: stopped.append(True))
+    monkeypatch.setattr(dialog, "reject",
+                        lambda: rejected.append(True) or real_reject())
+
+    dialog.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+
+    assert stopped == [True]
+    assert rejected == []                          # frames not discarded
+    dialog._capturing = False
+    dialog.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    assert rejected == [True]                      # idle Esc still cancels
+    dialog.close()
+
+
 def test_redo_last_frame_drops_and_rewinds(qapp):
     import scrolling_capture
 

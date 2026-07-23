@@ -67,6 +67,54 @@ def test_language_status_none_when_nothing_installed(monkeypatch):
     assert "language pack" in st["install_hint"]
 
 
+def test_ocr_windows_never_sends_tesseract_lang_to_winrt(monkeypatch, tmp_path):
+    """A 'tesseract:<lang>' selection must not reach the WinRT script — ':' is
+    not valid BCP-47, the Language ctor throws, and word-box OCR (auto-redact,
+    tables) dies. It must fall back to profile-auto."""
+    import ocr
+    captured = {}
+
+    class _R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _R()
+
+    monkeypatch.setattr(ocr, "_configured_ocr_language", lambda: "tesseract:deu")
+    monkeypatch.setattr(ocr.subprocess, "run", fake_run)
+    monkeypatch.setattr(ocr.sys, "platform", "win32", raising=False)
+    img = tmp_path / "x.png"
+    img.write_bytes(b"")
+    ocr._ocr_windows(str(img))
+    assert captured.get("SWIFTSHOT_OCR_LANG") == "auto"
+
+
+def test_language_discovery_is_session_cached(monkeypatch):
+    """Discovery spawns PowerShell/Tesseract — the Settings dialog must not
+    pay that cost on every open."""
+    import ocr
+    calls = []
+
+    class _R:
+        returncode = 0
+        stdout = "en-US\nde-DE\n"
+        stderr = ""
+
+    monkeypatch.setattr(ocr.subprocess, "run",
+                        lambda *a, **k: calls.append(1) or _R())
+    monkeypatch.setattr(ocr.sys, "platform", "win32", raising=False)
+    monkeypatch.setattr(ocr, "_LANG_CACHE", {}, raising=False)
+    first = ocr.available_windows_ocr_languages()
+    second = ocr.available_windows_ocr_languages()
+    assert first == second == ["en-US", "de-DE"]
+    assert len(calls) == 1                       # second call served from cache
+    assert ocr.available_windows_ocr_languages(refresh=True) == first
+    assert len(calls) == 2                       # refresh=True re-probes
+
+
 def test_ocr_file_routes_tesseract_language(monkeypatch, tmp_path):
     import ocr
     monkeypatch.setattr(ocr, "_configured_ocr_language", lambda: "tesseract:deu")

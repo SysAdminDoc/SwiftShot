@@ -119,6 +119,15 @@ class ScrollingCaptureDialog(QDialog):
         self._invalidate_capture()
         super().reject()
 
+    def keyPressEvent(self, event):
+        # Esc during an active capture stops and stitches what was collected
+        # (the documented behaviour); the default QDialog Esc would reject and
+        # silently discard every frame. Esc while idle still cancels.
+        if event.key() == Qt.Key_Escape and self._capturing:
+            self._stop_capture()
+            return
+        super().keyPressEvent(event)
+
     def closeEvent(self, event):
         self._invalidate_capture()
         super().closeEvent(event)
@@ -245,7 +254,12 @@ class ScrollingCaptureDialog(QDialog):
             self.start_btn.setEnabled(True)
             return
 
-        self.status_label.setText("Capturing... scrolling down")
+        if self._manual:
+            self.status_label.setText("Capturing the first frame...")
+        elif self._direction == "horizontal":
+            self.status_label.setText("Capturing... scrolling right")
+        else:
+            self.status_label.setText("Capturing... scrolling down")
         self.stop_btn.setEnabled(True)
         self.progress.setVisible(True)
         self._awaiting_target = False

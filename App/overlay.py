@@ -475,8 +475,8 @@ class RegionSelector(QWidget):
             label = "Freehand Region  |  Space: Window Mode  |  S: toggle snap  |  Esc: cancel"
         else:
             aspect = self.ASPECT_PRESETS[self._aspect_index][1]
-            label = (f"Region  |  D: dimensions  |  A: aspect [{aspect}]  |  "
-                     "Ctrl+arrows: move  |  Space: Window  |  Esc: cancel")
+            label = (f"Region  |  D: size  |  A: aspect [{aspect}]  |  "
+                     "Ctrl+arrows: move  |  S: snap  |  Space: Window  |  Esc: cancel")
         font = QFont("Segoe UI", 9)
         painter.setFont(font)
         fm = painter.fontMetrics()
@@ -509,7 +509,8 @@ class RegionSelector(QWidget):
         self.current_pos = event.pos()
         if self.selecting:
             if self.mode == self.MODE_RECTANGLE:
-                self.end_pos = self._snap_point(event.pos())
+                self.end_pos = self._apply_aspect_to_end(
+                    self._snap_point(event.pos()))
             else:
                 self.end_pos = event.pos()
             if self.mode == self.MODE_FREEHAND:
@@ -523,7 +524,8 @@ class RegionSelector(QWidget):
         if event.button() == Qt.LeftButton and self.selecting:
             self.selecting = False
             if self.mode == self.MODE_RECTANGLE:
-                self.end_pos = self._snap_point(event.pos())
+                self.end_pos = self._apply_aspect_to_end(
+                    self._snap_point(event.pos()))
             else:
                 self.end_pos = event.pos()
 
@@ -590,6 +592,18 @@ class RegionSelector(QWidget):
 
     def _current_rect(self):
         return QRect(self.start_pos, self.end_pos).normalized()
+
+    def _apply_aspect_to_end(self, end):
+        """Constrain a drag endpoint so the selection honours the active aspect
+        lock: height follows the dragged width, keeping the drag's vertical
+        direction, clamped to the overlay."""
+        if not self.aspect_ratio or self.mode != self.MODE_RECTANGLE:
+            return end
+        w = abs(end.x() - self.start_pos.x()) + 1
+        h = max(1, int(round(w / self.aspect_ratio)))
+        sy = 1 if end.y() >= self.start_pos.y() else -1
+        y = self.start_pos.y() + sy * (h - 1)
+        return QPoint(end.x(), max(0, min(self.height() - 1, y)))
 
     def _set_selection_rect(self, x, y, w, h):
         """Point the selection at a clamped rect and refresh the readouts."""

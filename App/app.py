@@ -1760,21 +1760,12 @@ class SwiftShotApp:
     def show_settings(self):
         try:
             from settings_dialog import SettingsDialog
-            from theme import apply_theme, stylesheet_for_theme
 
-            previous_theme = config.THEME
             dialog = SettingsDialog()
             if dialog.exec_() == QDialog.Accepted:
-                apply_theme(self.app, config.THEME)
-                if config.THEME != previous_theme:
-                    # Live-retheme open editors (non-destructive; keeps unsaved
-                    # workspace state). Paint-time surfaces update immediately.
-                    for editor in list(self.editors):
-                        try:
-                            if editor.isVisible() and hasattr(editor, "retheme"):
-                                editor.retheme()
-                        except Exception:
-                            log.warning("Could not re-theme editor", exc_info=True)
+                # Re-apply app + tray + open-editor theming in one place;
+                # retheme is non-destructive and cheap, so no change-detection.
+                self._reapply_theme()
                 if not self._reregister_hotkeys():
                     self._notify(
                         "Capture shortcuts unavailable",
@@ -1793,10 +1784,6 @@ class SwiftShotApp:
                         self._start_clipboard_watcher()
                     else:
                         self._stop_clipboard_watcher()
-                if self.tray_icon:
-                    menu = self.tray_icon.contextMenu()
-                    if menu:
-                        menu.setStyleSheet(stylesheet_for_theme(config.THEME))
         except Exception as e:
             log.error(f"Settings dialog failed: {e}", exc_info=True)
             self._notify(

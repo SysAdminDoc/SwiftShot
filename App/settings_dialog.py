@@ -705,16 +705,25 @@ class SettingsDialog(QDialog):
 
         # OCR recognizer language (R-30): Automatic follows the Windows language
         # profile; otherwise pick an installed recognizer language. Nothing is
-        # ever downloaded.
+        # ever downloaded. Discovery spawns PowerShell/Tesseract, so it runs on
+        # a background thread — the combo seeds instantly with the persisted
+        # choice and fills in when the probe finishes.
         self.ocr_language = QComboBox()
         self.ocr_language.addItem("Automatic (Windows profile)", "auto")
-        self._populate_ocr_languages()
+        persisted = getattr(config, "OCR_LANGUAGE", "auto") or "auto"
+        if persisted != "auto":
+            label = (f"Tesseract: {persisted.split(':', 1)[1]}"
+                     if persisted.startswith("tesseract:") else persisted)
+            self.ocr_language.addItem(label, persisted)
+            self.ocr_language.setCurrentIndex(1)
         layout.addRow("OCR language:", self.ocr_language)
-        self.ocr_lang_status = QLabel()
+        self.ocr_lang_status = QLabel("Detecting installed OCR languages…")
         self.ocr_lang_status.setWordWrap(True)
-        self.ocr_lang_status.setObjectName("hint")
+        colors = colors_for_theme(config.THEME)
+        self.ocr_lang_status.setStyleSheet(
+            f"color: {colors['TEXT_MUT']}; font-size: 9pt;")
         layout.addRow("", self.ocr_lang_status)
-        self._refresh_ocr_lang_status()
+        self._start_ocr_language_discovery()
 
         self.history_max = QSpinBox()
         self.history_max.setRange(5, 500)
@@ -749,36 +758,55 @@ class SettingsDialog(QDialog):
 
     # --- Helpers ---
 
-    def _populate_ocr_languages(self):
-        """Fill the OCR language combo from installed recognizer languages and
-        select the persisted choice. Discovery failures leave just Automatic."""
-        try:
-            import ocr
-            for tag in ocr.available_windows_ocr_languages():
-                self.ocr_language.addItem(tag, tag)
-            for tag in ocr.available_tesseract_languages():
-                data = f"tesseract:{tag}"
-                if self.ocr_language.findData(data) < 0:
-                    self.ocr_language.addItem(f"Tesseract: {tag}", data)
-        except Exception:
-            pass
-        idx = self.ocr_language.findData(getattr(config, "OCR_LANGUAGE", "auto"))
-        self.ocr_language.setCurrentIndex(idx if idx >= 0 else 0)
+    def _start_ocr_language_discovery(self):
+        """Probe installed OCR languages off the GUI thread and apply the
+        result when it lands. The probe is session-cached in the ocr module,
+        so reopening Settings is instant after the first discovery."""
+        import threading
+        result_box = []
 
-    def _refresh_ocr_lang_status(self):
-        try:
-            import ocr
-            st = ocr.ocr_language_status()
-            if st["windows"] or st["tesseract"]:
-                self.ocr_lang_status.setText(
-                    f"Effective: {st['effective']}. Installed — "
-                    f"Windows: {', '.join(st['windows']) or 'none'}; "
-                    f"Tesseract: {', '.join(st['tesseract']) or 'none'}.")
-            else:
-                self.ocr_lang_status.setText(
-                    "No recognizer languages detected. " + st["install_hint"])
-        except Exception:
+        def probe():
+            try:
+                import ocr
+                result_box.append(ocr.ocr_language_status())
+            except Exception:
+                result_box.append(None)
+
+        threading.Thread(target=probe, daemon=True).start()
+        self._ocr_probe_timer = QTimer(self)
+        self._ocr_probe_timer.setInterval(150)
+
+        def poll():
+            if not result_box:
+                return
+            self._ocr_probe_timer.stop()
+            self._apply_ocr_language_discovery(result_box[0])
+
+        self._ocr_probe_timer.timeout.connect(poll)
+        self._ocr_probe_timer.start()
+
+    def _apply_ocr_language_discovery(self, status):
+        if status is None:
             self.ocr_lang_status.setText("")
+            return
+        current = self.ocr_language.currentData() or "auto"
+        for tag in status["windows"]:
+            if self.ocr_language.findData(tag) < 0:
+                self.ocr_language.addItem(tag, tag)
+        for tag in status["tesseract"]:
+            data = f"tesseract:{tag}"
+            if self.ocr_language.findData(data) < 0:
+                self.ocr_language.addItem(f"Tesseract: {tag}", data)
+        idx = self.ocr_language.findData(current)
+        self.ocr_language.setCurrentIndex(idx if idx >= 0 else 0)
+        if status["windows"] or status["tesseract"]:
+            self.ocr_lang_status.setText(
+                f"Effective: {status['effective']}. Installed — "
+                f"Windows: {', '.join(status['windows']) or 'none'}; "
+                f"Tesseract: {', '.join(status['tesseract']) or 'none'}.")
+        else:
+            self.ocr_lang_status.setText(
+                "No recognizer languages detected. " + status["install_hint"])
 
     def _populate_after_capture_list(self):
         configured = config.get_after_capture_actions()
@@ -1153,6 +1181,7 @@ class SettingsDialog(QDialog):
             self.backdrop_color2_btn: "Backdrop end color picker",
             self.history_enabled: "Enable capture history",
             self.history_auto_ocr: "Auto-OCR captures for searchable history",
+            self.ocr_language: "OCR recognizer language",
             self.history_max: "Maximum history items",
             self.pin_opacity: "Pin window opacity",
             self.open_log_btn: "Open log file",

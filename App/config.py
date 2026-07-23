@@ -16,6 +16,7 @@ MAX_CONFIG_BYTES = 1024 * 1024
 MAX_FILENAME_PATTERN_LENGTH = 512
 MAX_FILENAME_STEM_LENGTH = 180
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_OCR_LANGUAGE_RE = re.compile(r"^(auto|[A-Za-z0-9-]{2,35}|tesseract:[A-Za-z0-9_]{2,35})$")
 _WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{index}" for index in range(1, 10)),
@@ -307,6 +308,12 @@ class Config:
             self.BACKDROP_TYPE = Config.BACKDROP_TYPE
         if self.BACKDROP_FRAME not in BACKDROP_FRAME_CHOICES:
             self.BACKDROP_FRAME = Config.BACKDROP_FRAME
+        # OCR_LANGUAGE: "auto", a BCP-47 tag, or "tesseract:<lang>". Anything
+        # else (hand-edited/imported junk) would reach the WinRT engine and
+        # break OCR with a cryptic error — reset it instead.
+        if not (isinstance(self.OCR_LANGUAGE, str)
+                and _OCR_LANGUAGE_RE.fullmatch(self.OCR_LANGUAGE)):
+            self.OCR_LANGUAGE = Config.OCR_LANGUAGE
         for key, (lo, hi) in self._NUMERIC_RANGES.items():
             val = getattr(self, key, None)
             if isinstance(val, int) and not isinstance(val, bool):

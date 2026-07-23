@@ -343,3 +343,15 @@ def test_version_info_uses_config_version(fresh_config, monkeypatch):
 
     assert namespace["_VERSION"] == fresh_config.Config.APP_VERSION
     assert namespace["_VERSION4"] == f"{fresh_config.Config.APP_VERSION}.0"
+
+
+def test_ocr_language_normalizes_invalid_values(fresh_config):
+    cfg = fresh_config.config
+    for bad in ("junk with spaces", "a", "x" * 60, "tesseract:", "de;rm"):
+        cfg.OCR_LANGUAGE = bad
+        cfg._normalize_enums()
+        assert cfg.OCR_LANGUAGE == "auto", bad
+    for good in ("auto", "en-US", "de-DE", "tesseract:deu", "tesseract:chi_sim"):
+        cfg.OCR_LANGUAGE = good
+        cfg._normalize_enums()
+        assert cfg.OCR_LANGUAGE == good

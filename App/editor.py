@@ -3293,11 +3293,13 @@ class AIProgressDialog(QDialog):
         self._msg_lbl.setText(msg)
 
     def set_progress(self, pct, msg=""):
+        # Driven by BackgroundWorker signals on the GUI thread — no
+        # processEvents here (re-entering the event loop from a slot is the
+        # exact hazard the background runner exists to remove).
         self._bar.setValue(int(pct))
         self._pct_lbl.setText(f"{int(pct)}%")
         if msg:
             self._msg_lbl.setText(msg)
-        QApplication.processEvents()
 
 
 # ── rembg model cache (optional AI background removal) ────────────────────────
@@ -6394,8 +6396,8 @@ class ImageEditor(QMainWindow):
         # Enhance (honest naming: only Remove Background is a trained model;
         # the rest are local heuristics — see R-28)
         aim = mb.addMenu("&Enhance")
-        self._act(aim, "Remove Background (AI model)…", "", self.ai_remove_background)
-        self._act(aim, "Manage AI Model Cache…", "", self.manage_ai_model_cache)
+        self._act(aim, "Remove Background (AI model)...", "", self.ai_remove_background)
+        self._act(aim, "Manage AI Model Cache...", "", self.manage_ai_model_cache)
         aim.addSeparator()
         self._act(aim, "Upscale 2× (Lanczos)", "", lambda: self.ai_upscale(2))
         self._act(aim, "Upscale 4× (Lanczos)", "", lambda: self.ai_upscale(4))
@@ -8165,9 +8167,11 @@ class ImageEditor(QMainWindow):
         if layer.locked:
             self._status("Layer is locked"); return
 
-        try:
-            import rembg
-        except ImportError:
+        # Availability check only — the actual `import rembg` pulls in
+        # onnxruntime (a multi-second load), so it happens inside compute() on
+        # the worker thread with the progress dialog already visible.
+        import importlib.util
+        if importlib.util.find_spec("rembg") is None:
             QMessageBox.information(
                 self,
                 "AI Remove BG",
@@ -8204,6 +8208,9 @@ class ImageEditor(QMainWindow):
         target_size = layer.image.size
 
         def compute(progress, cancel):
+            progress(10, "Loading the rembg engine…")
+            import rembg
+            _check_cancel(cancel)
             progress(20, "Processing with rembg model…")
             buf = io.BytesIO()
             snapshot.save(buf, format="PNG")
@@ -8322,6 +8329,9 @@ class ImageEditor(QMainWindow):
         dlg.set_message("Working…")
         dlg.set_progress(0)
         dlg.enable_cancel(cancel.set)
+        # Esc dismisses a QDialog via reject() — treat that as Cancel so the
+        # task can't keep running headless behind a vanished progress dialog.
+        dlg.rejected.connect(cancel.set)
 
         thread = QThread(self)
         worker = BackgroundWorker(compute, cancel)
@@ -8358,6 +8368,7 @@ class ImageEditor(QMainWindow):
         worker.error.connect(on_error)
         worker.progress.connect(dlg.set_progress)
         thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
         self._task_thread = thread
         self._task_worker = worker
         dlg.show()
