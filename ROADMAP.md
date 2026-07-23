@@ -119,13 +119,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
 
 ### P1
 
-- [ ] R-27 P1 — Build a deterministic local release and package gate
-  Why: Broad lower bounds, a floating PyInstaller, unvalidated frozen outputs, stale winget schema/placeholders, and no artifact smoke make releases non-reproducible.
-  Evidence: requirements files, `App/Build-SwiftShot.ps1`, `App/SwiftShot.spec`, `packaging/winget`, `packaging/scoop`; pip secure-install guidance; ShareX checksummed assets. Cross-reference blocked R-07 signing and AB-38 update integrity rather than duplicating them.
-  Touches: dependency constraints/hashes, build script/spec, package manifests, release checks/tests.
-  Acceptance: A clean local command installs exact hash-locked Windows wheels, runs pytest/Ruff, builds supported portable/installer forms, launches/import-smokes each artifact, verifies CLI/editor/history/OCR capability probes, emits checksums plus dependency SBOM, upgrades winget to schema 1.12.0, fills release URLs/hashes, and validation-installs winget/Scoop manifests; identical inputs record tool/runtime versions and produce explainable diffs.
-  Complexity: L
-
 ### P2
 
 - [ ] R-29 P2 — Preserve the captured cursor as an editable layer

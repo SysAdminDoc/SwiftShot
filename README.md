@@ -304,6 +304,18 @@ py -3.12 -m pip install -r requirements-dev.txt
 py -3.12 -m pytest
 ```
 
+## Reproducible release build
+
+`requirements.lock` pins the exact hash-verified Windows wheels, and the release
+gate runs the full pipeline — lint, tests, build, artifact smoke, SHA-256
+checksums, a CycloneDX SBOM, and winget/Scoop manifest validation — in one
+command:
+
+```powershell
+pwsh packaging\release-gate.ps1                 # build portable + installer, gate everything
+pwsh packaging\release-gate.ps1 -LockedInstall  # + fresh venv from the hash-locked wheels
+```
+
 ---
 
 ## License

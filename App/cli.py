@@ -18,7 +18,7 @@ import argparse
 # Flags that mean "run headless"; anything else (bare image path, --minimized)
 # falls through to the GUI.
 _CLI_FLAGS = {"--region", "--fullscreen", "--monitor", "--ocr", "--out",
-              "--diagnostics", "-h", "--help"}
+              "--diagnostics", "--version", "-h", "--help"}
 
 # Holds the QApplication so its Python wrapper is not garbage-collected before
 # process exit (a collected wrapper fast-fails the interpreter on teardown).
@@ -48,6 +48,8 @@ def _build_parser():
     p.add_argument("--diagnostics", action="store_true",
                    help="Write a privacy-sanitized diagnostics zip and "
                         "print its path. Use --out to choose the destination.")
+    p.add_argument("--version", action="store_true",
+                   help="Print the SwiftShot version and exit (artifact smoke).")
     return p
 
 
@@ -89,6 +91,13 @@ def run(argv):
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    # --version is a standalone probe used by the release gate to smoke-test the
+    # frozen artifact (no display, no QApplication).
+    if args.version:
+        from config import Config
+        print(f"SwiftShot {Config.APP_VERSION}")
+        return 0
 
     # Diagnostics is a standalone verb — no capture source or QApplication.
     if args.diagnostics:

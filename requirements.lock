@@ -1,0 +1,23 @@
+# SwiftShot deterministic runtime lock (R-27).
+#
+# Exact, hash-pinned Windows (cp312 / win_amd64) wheels for a reproducible
+# release build. Install with:
+#
+#   py -3.12 -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+#
+# Regenerate after a runtime dependency bump:
+#   py -3.12 -m pip download --no-deps --only-binary=:all: --python-version 3.12 \
+#       --platform win_amd64 -d .lockwheels <pkg>==<ver> ...
+#   py -3.12 -m pip hash .lockwheels/*.whl
+# then update the versions and hashes below and in App/requirements.txt.
+
+PyQt5==5.15.11 \
+    --hash=sha256:bdde598a3bb95022131a5c9ea62e0a96bd6fb28932cc1619fd7ba211531b7517
+PyQt5-Qt5==5.15.2 \
+    --hash=sha256:750b78e4dba6bdf1607febedc08738e318ea09e9b10aea9ff0d73073f11f6962
+PyQt5-sip==12.15.0 \
+    --hash=sha256:24a1d4937332bf0a38dd95bb2ce4d89723df449f6e912b52ef0e107e11fefac1
+Pillow==12.3.0 \
+    --hash=sha256:a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09
+numpy==2.0.2 \
+    --hash=sha256:cfd41e13fdc257aa5778496b8caa5e856dc4896d4ccf01841daee1d96465467a

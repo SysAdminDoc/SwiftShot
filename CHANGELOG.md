@@ -4,6 +4,15 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Deterministic release + package gate (R-27): `packaging/release-gate.ps1` runs
+  the runtime-contract check, ruff, pytest, the build, a `--version` artifact
+  smoke, `SHA256SUMS.txt`, a CycloneDX SBOM (`packaging/gen_sbom.py`), and
+  winget/Scoop manifest validation in one reproducible command. Added
+  `requirements.lock` with exact hash-pinned wheels, `packaging/check_versions.py`
+  for cross-file version consistency, and a `swiftshot --version` probe.
+- winget manifests upgraded to schema 1.12.0 with schema headers.
+
 ### Changed
 - Long editor operations (Remove Background, Upscale, Pseudo-Depth Map, Highlight
   Busy Regions) now run on a background thread behind one cancellable task runner

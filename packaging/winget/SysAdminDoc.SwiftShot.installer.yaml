@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: SysAdminDoc.SwiftShot
 PackageVersion: 2.9.0
 InstallerType: inno
@@ -11,4 +12,4 @@ Installers:
     # SHA-256 from the v2.9.0 release build.
     InstallerSha256: 18BB273938E5AEF2DA2A25AF69A54AD7206D2D9E9532A974E6DD6C4AA8B9E34C
 ManifestType: installer
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0

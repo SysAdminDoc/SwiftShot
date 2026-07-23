@@ -1,4 +1,6 @@
 # Runtime contract: CPython 3.12.x (enforced by main.py and the release build).
-PyQt5>=5.15.0
-Pillow>=12.3.0
-numpy>=1.24.0
+# Bounded to the tested majors; requirements.lock holds the exact hash-pinned
+# wheels used for reproducible release builds (see packaging/release-gate.ps1).
+PyQt5>=5.15.11,<5.16
+Pillow>=12.3.0,<13
+numpy>=2.0.2,<3
