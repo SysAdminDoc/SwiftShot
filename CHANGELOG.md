@@ -4,6 +4,47 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+## [v2.10.1] - 2026-07-23
+
+Deep-audit pass over the v2.10.0 feature drain: ~20 verified fixes across
+correctness, UX, theming and performance.
+
+### Fixed
+- OCR: selecting a Tesseract language no longer breaks word-box OCR
+  (auto-redact, Copy as Table) — the `tesseract:<lang>` tag leaked into the
+  WinRT engine, whose Language constructor rejects it. `OCR_LANGUAGE` values
+  from config/import files are now validated (junk resets to `auto`).
+- Settings no longer freezes on open: OCR language discovery (a PowerShell
+  WinRT probe that can take seconds) runs on a background thread with the
+  combo seeded from the persisted choice, and the probe result is cached for
+  the session.
+- Editor task runner: the progress dialog no longer pumps `processEvents`
+  from worker signals (the re-entrancy hazard the runner was built to
+  remove); pressing Esc on the progress dialog now cancels the task instead
+  of leaving it running with no UI; the heavy rembg/onnxruntime import moved
+  onto the worker thread so the first Remove Background doesn't stall the
+  GUI; finished worker threads are released instead of accumulating.
+- Region overlay: the aspect-ratio lock now constrains mouse drags too (it
+  only applied to keyboard resizing while the hint claimed a lock), and the
+  on-screen hint mentions snap toggling again.
+- Scrolling capture: Esc during a capture stops and stitches the collected
+  frames (the documented behaviour) instead of discarding them; the status
+  line no longer says "scrolling down" in horizontal or manual mode.
+- Live theme switching now restyles the editor's full chrome (menu bar,
+  toolbars, window) plus the canvas surround, not just paint-time surfaces.
+- Capture-history empty state is favorites-aware: filtering to favorites with
+  none marked explains how to mark one instead of claiming "No captures yet".
+
+### Changed
+- The capture menu and tray menu show the *live* configured hotkeys instead
+  of hardcoded `Alt+PrtSc`/`Shift+PrtSc` labels that went stale after a
+  rebind; rebindable actions (freehand, OCR, scrolling) show their shortcut
+  when bound, and tray labels refresh when Preferences are accepted.
+- Pin window context menu: opacity and zoom entries are checkable and show
+  the pin's current state.
+- History thumbnails expose favorite/tag state in their tooltip and
+  accessible name; the new OCR language setting is searchable in Settings.
+
 ## [v2.10.0] - 2026-07-22
 
 Research-backlog drain (R-22..R-32): keyboard-complete region capture, honest

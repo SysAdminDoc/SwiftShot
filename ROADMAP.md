@@ -120,3 +120,15 @@ Net-new, code-verified findings from auditing the less-examined support modules 
 ### P1
 
 ### P2
+
+## Audit Findings (2026-07-23 deep-audit pass — not fixed, prioritized)
+
+- [ ] P3 — Live retheme leaves editor dock-panel internals on the old palette
+  Why: ~30 panel widgets bake `C.*` values into local construction-time stylesheets; retheme() re-applies the window sheet + canvas, but layer/adjust/tool panels keep the previous palette until the editor reopens. Fixing it properly means folding those local stylesheets into the cascading window sheet (object-name selectors), which is the R-02b-scale refactor.
+  Where: `App/editor.py` (panel builders around lines 3480-5010), `ImageEditor.retheme`
+- [ ] P3 — Expose the capture-history tag filter in the UI
+  Why: `_history_entries(tag_filter=...)` filters by exact tag token but no control calls it — only free-text search matches tags. A tag dropdown/chips row next to "Show favorites only" would complete the R-31 workflow.
+  Where: `App/capture_history.py` (`CaptureHistoryDialog._load_history`)
+- [ ] P3 — PS installer scripts not re-audited this pass
+  Why: `Install-SwiftShot.ps1`, `Build-SwiftShot.ps1` internals and `SwiftShot.iss` were only regression-gated (existing tests), not line-audited in the 2026-07-23 pass; they were hardened in the 2026-07 audits but deserve their own pass if they churn.
+  Where: `App/Install-SwiftShot.ps1`, `App/Build-SwiftShot.ps1`, `App/SwiftShot.iss`

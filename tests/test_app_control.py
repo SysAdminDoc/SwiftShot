@@ -117,15 +117,18 @@ def test_local_control_round_trip(qapp):
     server = ApplicationControlServer(controller, qapp)
     assert server.server.socketOptions() & QLocalServer.UserAccessOption
     result = []
+    # Generous margins: under a fully loaded parallel test run the local-socket
+    # round trip has been observed to exceed 5 s, flaking the assert below.
+    # Normal runs still finish in milliseconds.
     client = threading.Thread(
-        target=lambda: result.append(request_shutdown(timeout_ms=3000))
+        target=lambda: result.append(request_shutdown(timeout_ms=10000))
     )
     client.start()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 15
     while client.is_alive() and time.monotonic() < deadline:
         qapp.processEvents()
         time.sleep(0.01)
-    client.join(timeout=0.1)
+    client.join(timeout=1.0)
     server.server.close()
     QLocalServer.removeServer(SERVER_NAME)
 
