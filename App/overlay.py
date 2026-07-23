@@ -32,6 +32,13 @@ class RegionSelector(QWidget):
     # Snap distance in pixels
     SNAP_DISTANCE = 8
 
+    # Aspect-ratio presets cycled with the "A" key. Values are width/height;
+    # None means free-form. (R-22 keyboard-complete region capture.)
+    ASPECT_PRESETS = [
+        (None, "Free"), (1 / 1, "1:1"), (4 / 3, "4:3"), (16 / 9, "16:9"),
+        (3 / 2, "3:2"), (2 / 3, "2:3"), (9 / 16, "9:16"),
+    ]
+
     def __init__(self, screenshot: QPixmap, mode="rectangle", parent=None):
         super().__init__(parent)
         self.screenshot = screenshot
@@ -47,6 +54,10 @@ class RegionSelector(QWidget):
 
         # Freehand
         self.freehand_points = []
+
+        # Aspect lock (R-22): index into ASPECT_PRESETS; ratio is width/height.
+        self._aspect_index = 0
+        self.aspect_ratio = None
 
         # Edge snapping
         self._snap_enabled = True
@@ -91,8 +102,10 @@ class RegionSelector(QWidget):
             else "Rectangular capture region")
         self.setAccessibleDescription(
             "Move the crosshair with the arrow keys. Press Enter to start, "
-            "move or draw with arrows, then press Enter to capture. Escape "
-            "cancels; Space switches to window capture; S toggles snapping.")
+            "resize with arrows (Shift = coarse), Ctrl+arrows to move the whole "
+            "region, D to type an exact width×height, A to cycle an aspect-ratio "
+            "lock, then press Enter to capture. Escape cancels; Space switches "
+            "to window capture; S toggles snapping.")
 
         geo = virtual_geometry()
         self._desktop_geo = geo
@@ -356,6 +369,8 @@ class RegionSelector(QWidget):
     def _draw_dimensions(self, painter, selection):
         w, h = selection.width(), selection.height()
         text = f"{w} x {h}"
+        if self.mode == self.MODE_RECTANGLE and self.aspect_ratio:
+            text += f"  [{self.ASPECT_PRESETS[self._aspect_index][1]}]"
         font = QFont("Segoe UI", 10)
         painter.setFont(font)
         fm = painter.fontMetrics()
@@ -459,7 +474,9 @@ class RegionSelector(QWidget):
         if self.mode == self.MODE_FREEHAND:
             label = "Freehand Region  |  Space: Window Mode  |  S: toggle snap  |  Esc: cancel"
         else:
-            label = "Region  |  Space: Window Mode  |  S: toggle snap  |  Esc: cancel"
+            aspect = self.ASPECT_PRESETS[self._aspect_index][1]
+            label = (f"Region  |  D: dimensions  |  A: aspect [{aspect}]  |  "
+                     "Ctrl+arrows: move  |  Space: Window  |  Esc: cancel")
         font = QFont("Segoe UI", 9)
         painter.setFont(font)
         fm = painter.fontMetrics()
@@ -534,6 +551,90 @@ class RegionSelector(QWidget):
         else:
             self._defer_emit(self.cancelled)
 
+    # --- Keyboard region geometry (R-22) ---
+
+    @staticmethod
+    def _fit_to_ratio(w, h, ratio):
+        """Adjust (w, h) so w/h == ratio, deriving height from width. ratio is
+        width/height; None/<=0 leaves the size untouched."""
+        w = max(1, int(round(w))); h = max(1, int(round(h)))
+        if not ratio or ratio <= 0:
+            return w, h
+        return w, max(1, int(round(w / ratio)))
+
+    @staticmethod
+    def _clamp_rect(x, y, w, h, max_w, max_h):
+        """Clamp a rect (origin x,y, size w,h) inside 0..max. Keeps the origin
+        and shrinks the size to fit — predictable, always on-screen."""
+        x = max(0, min(int(x), max_w - 1)); y = max(0, min(int(y), max_h - 1))
+        w = max(1, min(int(w), max_w - x)); h = max(1, min(int(h), max_h - y))
+        return x, y, w, h
+
+    @staticmethod
+    def _translate_rect(x, y, w, h, dx, dy, max_w, max_h):
+        """Move a rect by (dx, dy) without letting it leave the bounds or change
+        size (it stops at the edge)."""
+        x = max(0, min(int(x) + dx, max_w - w))
+        y = max(0, min(int(y) + dy, max_h - h))
+        return x, y, w, h
+
+    @staticmethod
+    def _parse_dimensions(text):
+        """Parse 'WxH' / 'W H' / 'W,H' / 'W×H' into (w, h) ints, else None."""
+        import re
+        m = re.match(r"^\s*(\d+)\s*[x×,\s]\s*(\d+)\s*$", text or "", re.I)
+        if not m:
+            return None
+        w, h = int(m.group(1)), int(m.group(2))
+        return (w, h) if w >= 1 and h >= 1 else None
+
+    def _current_rect(self):
+        return QRect(self.start_pos, self.end_pos).normalized()
+
+    def _set_selection_rect(self, x, y, w, h):
+        """Point the selection at a clamped rect and refresh the readouts."""
+        x, y, w, h = self._clamp_rect(x, y, w, h, self.width(), self.height())
+        self.selecting = True
+        # QRect(topLeft, bottomRight) is inclusive, so the far corner is
+        # (x+w-1, y+h-1) — this makes the captured rect exactly w×h.
+        self.start_pos = QPoint(x, y)
+        self.end_pos = QPoint(x + w - 1, y + h - 1)
+        self.current_pos = QPoint(x + w - 1, y + h - 1)
+        lock = self.ASPECT_PRESETS[self._aspect_index][1]
+        self.setAccessibleDescription(
+            f"Selection {w} by {h} pixels at {x}, {y}. Aspect lock {lock}. "
+            "Press Enter to capture.")
+        self.update()
+
+    def _cycle_aspect(self):
+        self._aspect_index = (self._aspect_index + 1) % len(self.ASPECT_PRESETS)
+        self.aspect_ratio = self.ASPECT_PRESETS[self._aspect_index][0]
+        if self.selecting and self.aspect_ratio:
+            r = self._current_rect()
+            w, h = self._fit_to_ratio(r.width(), r.height(), self.aspect_ratio)
+            self._set_selection_rect(r.x(), r.y(), w, h)
+        else:
+            self.update()
+
+    def _prompt_dimensions(self):
+        from PyQt5.QtWidgets import QInputDialog
+        r = self._current_rect() if self.selecting else \
+            QRect(self.current_pos, self.current_pos)
+        default = f"{max(r.width(), 1)}x{max(r.height(), 1)}"
+        text, ok = QInputDialog.getText(
+            self, "Exact Dimensions",
+            "Width x Height (e.g. 1920x1080):", text=default)
+        if not ok:
+            return
+        dims = self._parse_dimensions(text)
+        if not dims:
+            return
+        w, h = dims
+        if self.aspect_ratio:
+            w, h = self._fit_to_ratio(w, h, self.aspect_ratio)
+        anchor = self.start_pos if self.selecting else self.current_pos
+        self._set_selection_rect(anchor.x(), anchor.y(), w, h)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self._defer_emit(self.cancelled)
@@ -554,19 +655,36 @@ class RegionSelector(QWidget):
                   step if event.key() == Qt.Key_Right else 0)
             dy = (-step if event.key() == Qt.Key_Up else
                   step if event.key() == Qt.Key_Down else 0)
-            moved = QPoint(
-                max(0, min(self.width() - 1, self.current_pos.x() + dx)),
-                max(0, min(self.height() - 1, self.current_pos.y() + dy)))
-            self.current_pos = moved
-            if self.selecting:
-                self.end_pos = QPoint(moved)
-                if self.mode == self.MODE_FREEHAND:
-                    self.freehand_points.append(QPoint(moved))
-                selection = QRect(self.start_pos, self.end_pos).normalized()
-                self.setAccessibleDescription(
-                    f"Keyboard selection {selection.width()} by "
-                    f"{selection.height()} pixels. Press Enter to capture.")
-            self.update()
+            ctrl = bool(event.modifiers() & Qt.ControlModifier)
+            if self.selecting and ctrl and self.mode == self.MODE_RECTANGLE:
+                # Ctrl+arrows move the whole region without resizing it.
+                r = self._current_rect()
+                x, y, w, h = self._translate_rect(
+                    r.x(), r.y(), r.width(), r.height(), dx, dy,
+                    self.width(), self.height())
+                self._set_selection_rect(x, y, w, h)
+            elif self.selecting and self.mode == self.MODE_RECTANGLE:
+                # Plain/Shift arrows resize the bottom-right edge; re-apply the
+                # aspect lock so height tracks width.
+                r = self._current_rect()
+                w = max(1, r.width() + dx); h = max(1, r.height() + dy)
+                if self.aspect_ratio:
+                    w, h = self._fit_to_ratio(w, h, self.aspect_ratio)
+                self._set_selection_rect(r.x(), r.y(), w, h)
+            else:
+                moved = QPoint(
+                    max(0, min(self.width() - 1, self.current_pos.x() + dx)),
+                    max(0, min(self.height() - 1, self.current_pos.y() + dy)))
+                self.current_pos = moved
+                if self.selecting:
+                    self.end_pos = QPoint(moved)
+                    if self.mode == self.MODE_FREEHAND:
+                        self.freehand_points.append(QPoint(moved))
+                self.update()
+        elif event.key() == Qt.Key_D and self.mode == self.MODE_RECTANGLE:
+            self._prompt_dimensions()
+        elif event.key() == Qt.Key_A and self.mode == self.MODE_RECTANGLE:
+            self._cycle_aspect()
         elif event.key() == Qt.Key_Space:
             self._defer_emit(self.switch_to_window)
         elif event.key() == Qt.Key_S:

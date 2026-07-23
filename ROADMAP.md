@@ -119,13 +119,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
 
 ### P1
 
-- [ ] R-22 P1 — Add keyboard-complete exact-size and aspect-locked region capture
-  Why: Region selection shows dimensions but cannot enter a required WxH/ratio or create/resize the rectangle without pointer dragging.
-  Evidence: `App/overlay.py`; Snagit exact-dimensions capture and accessibility behavior; Shottr aspect feedback.
-  Touches: `App/overlay.py`, capture settings/presets, region-selection tests.
-  Acceptance: Users can enter custom/common dimensions and ratios, lock/unlock aspect, move and resize by keyboard with coarse/fine steps, see physical-pixel bounds, and complete/cancel without a mouse across mixed-DPI monitors; out-of-bounds values clamp visibly and predictably.
-  Complexity: M
-
 - [ ] R-23 P1 — Move long editor operations behind one cancellable task runner
   Why: OCR, table OCR, auto-redact, background removal, upscale, depth, and object detection perform substantial work on the GUI thread and can re-enter UI through `processEvents`.
   Evidence: `App/editor.py:run_ocr`, `run_ocr_table`, `auto_redact`, `remove_background`, `ai_upscale`, `ai_depth_map`, `ai_object_detect`; unused/shared `AIWorker` opportunity.

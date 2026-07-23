@@ -5,6 +5,12 @@ All notable changes to SwiftShot will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Keyboard-complete region capture (R-22): in the rectangle overlay, press **D**
+  to type an exact width×height, **A** to cycle an aspect-ratio lock
+  (Free/1:1/4:3/16:9/3:2/2:3/9:16), plain/Shift arrows to resize the region
+  (fine/coarse), and **Ctrl+arrows** to move the whole region — all without a
+  mouse. Out-of-bounds sizes clamp visibly to the desktop, the readout shows the
+  active aspect lock, and Enter/Escape complete or cancel.
 - **Solid Redact** (Tools ▸ Solid Redact Selection): permanently overwrites the
   selected region with a solid block, removing the underlying source pixels so
   the exported image carries no recoverable original — the safe alternative to
