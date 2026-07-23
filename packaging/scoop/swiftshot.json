@@ -6,7 +6,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/SysAdminDoc/SwiftShot/releases/download/v2.9.0/SwiftShot-Portable.exe#/SwiftShot.exe",
-            "hash": "c7417bbe37173c2daaf0eb9dade50e823f490097c421b0733556d2a4e6f3e798"
+            "hash": "211d4742b920de1fcee1cf080de6449279a83d4bc6a7af238afff56c8e640f43"
         }
     },
     "bin": "SwiftShot.exe",
