@@ -119,13 +119,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
 
 ### P1
 
-- [ ] R-23 P1 — Move long editor operations behind one cancellable task runner
-  Why: OCR, table OCR, auto-redact, background removal, upscale, depth, and object detection perform substantial work on the GUI thread and can re-enter UI through `processEvents`.
-  Evidence: `App/editor.py:run_ocr`, `run_ocr_table`, `auto_redact`, `remove_background`, `ai_upscale`, `ai_depth_map`, `ai_object_detect`; unused/shared `AIWorker` opportunity.
-  Touches: `App/editor.py`, OCR/transform modules, progress UI, worker/task tests.
-  Acceptance: One operation at a time runs off the GUI thread with progress, cancel, close protection, and immutable input snapshots; cancellation/failure creates no history entry or partial layer; repeated triggers are coalesced; responsiveness and state transitions are regression-tested.
-  Complexity: L
-
 - [ ] R-27 P1 — Build a deterministic local release and package gate
   Why: Broad lower bounds, a floating PyInstaller, unvalidated frozen outputs, stale winget schema/placeholders, and no artifact smoke make releases non-reproducible.
   Evidence: requirements files, `App/Build-SwiftShot.ps1`, `App/SwiftShot.spec`, `packaging/winget`, `packaging/scoop`; pip secure-install guidance; ShareX checksummed assets. Cross-reference blocked R-07 signing and AB-38 update integrity rather than duplicating them.

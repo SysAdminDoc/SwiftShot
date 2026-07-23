@@ -3204,25 +3204,41 @@ class HistogramWidget(QWidget):
         p.end()
 
 
-# ── AIWorker ──────────────────────────────────────────────────────────────────
-class AIWorker(QObject):
-    """Runs AI operations in a background thread."""
-    finished = pyqtSignal(object, str)  # result, label
-    error = pyqtSignal(str)
-    progress = pyqtSignal(int, str)     # pct, message
+# ── Background task runner (R-23) ─────────────────────────────────────────────
+class TaskCancelled(Exception):
+    """Raised inside a background compute callable when the user cancels."""
 
-    def __init__(self, func, *args, **kwargs):
+
+class BackgroundWorker(QObject):
+    """Runs a compute callable off the GUI thread. The callable receives
+    (progress_cb, cancel_event) and returns a result; TaskCancelled or a set
+    cancel event yields a cancelled outcome (no result applied)."""
+    finished = pyqtSignal(object)   # result
+    error = pyqtSignal(str)
+    cancelled = pyqtSignal()
+    progress = pyqtSignal(int, str)  # pct, message
+
+    def __init__(self, compute, cancel_event):
         super().__init__()
-        self._func = func
-        self._args = args
-        self._kwargs = kwargs
+        self._compute = compute
+        self._cancel = cancel_event
+
+    def _emit_progress(self, pct, msg=""):
+        self.progress.emit(int(pct), msg)
 
     def run(self):
         try:
-            result = self._func(*self._args, **self._kwargs)
-            self.finished.emit(result, "")
-        except Exception as e:
+            result = self._compute(self._emit_progress, self._cancel)
+        except TaskCancelled:
+            self.cancelled.emit()
+            return
+        except Exception as e:   # noqa: BLE001 - surfaced to the user
             self.error.emit(str(e))
+            return
+        if self._cancel.is_set():
+            self.cancelled.emit()
+        else:
+            self.finished.emit(result)
 
 
 # ── AIProgressDialog ──────────────────────────────────────────────────────────
@@ -3258,6 +3274,20 @@ class AIProgressDialog(QDialog):
         self._pct_lbl.setStyleSheet(f"color:{C.TEXT_MUT};font-size:10px;")
         self._pct_lbl.setAlignment(Qt.AlignRight)
         layout.addWidget(self._pct_lbl)
+
+        # Optional Cancel button (wired by the background task runner).
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setVisible(False)
+        layout.addWidget(self._cancel_btn, alignment=Qt.AlignRight)
+
+    def enable_cancel(self, callback):
+        """Show a Cancel button that invokes *callback* (and disables itself)."""
+        def _fire():
+            self._cancel_btn.setEnabled(False)
+            self._cancel_btn.setText("Cancelling…")
+            callback()
+        self._cancel_btn.clicked.connect(_fire)
+        self._cancel_btn.setVisible(True)
 
     def set_message(self, msg):
         self._msg_lbl.setText(msg)
@@ -3330,6 +3360,99 @@ def _human_size(n):
             return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} GB"
+
+
+# ── Pure compute for background tasks (R-23) ─────────────────────────────────
+# These run on a worker thread. They take a *copy* of the image (immutable
+# snapshot), touch no Qt widgets or editor state, and cooperatively cancel by
+# checking the cancel event. Results are applied on the GUI thread.
+def _check_cancel(cancel):
+    if cancel is not None and cancel.is_set():
+        raise TaskCancelled()
+
+
+def compute_lanczos_upscale(image, factor, progress=None, cancel=None):
+    """Multi-pass Lanczos upscale + adaptive unsharp mask."""
+    current = image.copy()
+    remaining = factor
+    step = 0
+    while remaining > 1:
+        _check_cancel(cancel)
+        scale = 2 if remaining >= 2 else remaining
+        nw = int(current.width * scale); nh = int(current.height * scale)
+        current = current.resize((nw, nh), Image.LANCZOS)
+        remaining /= scale; step += 1
+        if progress:
+            progress(30 + step * 20, f"Upscale pass {step}")
+    _check_cancel(cancel)
+    if progress:
+        progress(70, "Applying adaptive sharpening…")
+    return current.filter(ImageFilter.UnsharpMask(radius=1.0, percent=50, threshold=2))
+
+
+def compute_depth_map(image, progress=None, cancel=None):
+    """Heuristic pseudo-depth from luminance, vertical position and saturation.
+    Returns an RGBA plasma image the size of *image*."""
+    arr = np.array(image.convert("RGB")).astype(np.float32)
+    h, w = arr.shape[:2]
+    _check_cancel(cancel)
+    if progress:
+        progress(30, "Computing depth channels…")
+    lum = (arr[:, :, 0] * 0.299 + arr[:, :, 1] * 0.587 + arr[:, :, 2] * 0.114)
+    vert = np.linspace(0, 255, h).reshape(-1, 1) * np.ones((1, w))
+    r, g, b2 = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    mx = np.maximum(np.maximum(r, g), b2)
+    mn = np.minimum(np.minimum(r, g), b2)
+    sat = (mx - mn) / (mx + 1e-6) * 255
+    depth = 0.4 * lum + 0.4 * (255 - vert) + 0.2 * sat
+    _check_cancel(cancel)
+    if progress:
+        progress(60, "Applying plasma colormap…")
+    mn_d, mx_d = depth.min(), depth.max()
+    t = (depth - mn_d) / (mx_d - mn_d + 1e-6)
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+    out[:, :, 0] = np.clip((1.5 - abs(t - 0.75) * 4).clip(0, 1) * 255, 0, 255)
+    out[:, :, 1] = np.clip((1.5 - abs(t - 0.5) * 4).clip(0, 1) * 255, 0, 255)
+    out[:, :, 2] = np.clip((1.5 - abs(t - 0.25) * 4).clip(0, 1) * 255, 0, 255)
+    out[:, :, 3] = 220
+    return Image.fromarray(out, "RGBA")
+
+
+def compute_busy_regions(image, progress=None, cancel=None):
+    """Score a 3×3 grid by pixel variance and paint boxes over the busy cells.
+    Returns (rgba_layer_image, count)."""
+    arr = np.array(image.convert("RGB"))
+    h, w = arr.shape[:2]
+    _check_cancel(cancel)
+    if progress:
+        progress(30, "Finding busy regions…")
+    grid_r, grid_c = 3, 3
+    cell_h, cell_w = h // grid_r, w // grid_c
+    colors = ["#ff5555", "#55cc55", "#4488ff", "#ffcc44", "#cc55cc", "#55cccc"]
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(out)
+    detections = []
+    for row in range(grid_r):
+        for col in range(grid_c):
+            y0 = row * cell_h; x0 = col * cell_w
+            y1 = min(y0 + cell_h, h); x1 = min(x0 + cell_w, w)
+            cell = arr[y0:y1, x0:x1]
+            variance = float(cell.var())
+            if variance > 500:
+                detections.append((x0, y0, x1, y1, f"Region ({variance:.0f})"))
+    _check_cancel(cancel)
+    if progress:
+        progress(70, "Drawing detection boxes…")
+    for i, (x0, y0, x1, y1, label) in enumerate(detections):
+        c = QColor(colors[i % len(colors)])
+        fill_c = (c.red(), c.green(), c.blue(), 40)
+        stroke_c = (c.red(), c.green(), c.blue(), 200)
+        draw.rectangle([x0, y0, x1, y1], fill=fill_c, outline=stroke_c, width=2)
+        try:
+            draw.text((x0 + 4, y0 + 4), label, fill=stroke_c)
+        except Exception:
+            pass
+    return out, len(detections)
 
 
 # ── CommandPaletteDialog ──────────────────────────────────────────────────────
@@ -5321,6 +5444,13 @@ class ImageEditor(QMainWindow):
         self.magic_wand_sample_all = False
         self.clone_source = None
         self._dirty = False
+        # Background task runner (R-23): one long op at a time, off the GUI
+        # thread, cancellable, with close protection.
+        self._task_busy = False
+        self._active_task_label = ""
+        self._task_thread = None
+        self._task_worker = None
+        self._task_cancel = None
         self.history = HistoryManager()
         self.history.on_change = self._mark_dirty
         self.file_path = None
@@ -8068,195 +8198,170 @@ class ImageEditor(QMainWindow):
                 self._status("Background removal cancelled (model not downloaded)")
                 return
 
-        progress = AIProgressDialog("Removing Background", self)
-        if rembg_model_present():
-            progress.set_message("Running background removal (rembg model)...")
-        else:
-            progress.set_message("Downloading model (~170 MB) then removing background...")
-        progress.set_progress(10)
-        progress.show(); QApplication.processEvents()
+        import io
+        snapshot = layer.image.copy()
+        target = layer
+        target_size = layer.image.size
 
-        try:
-            self.history.save_state(self.layers, self.active_layer_index, "AI BG Remove")
-            # Convert to PNG bytes
-            import io
+        def compute(progress, cancel):
+            progress(20, "Processing with rembg model…")
             buf = io.BytesIO()
-            layer.image.save(buf, format="PNG")
+            snapshot.save(buf, format="PNG")
             buf.seek(0)
-            progress.set_progress(30, "Processing with AI model...")
-            QApplication.processEvents()
             result_bytes = rembg.remove(buf.read())
-            progress.set_progress(80, "Applying result...")
-            QApplication.processEvents()
-            result_img = load_image(result_bytes)
-            layer.image = result_img.resize(layer.image.size, Image.LANCZOS)
-            self.canvas.update()
-            self.update_layer_panel()
-            progress.set_progress(100, "Done!")
-            QApplication.processEvents()
-            progress.close()
+            _check_cancel(cancel)
+            progress(80, "Applying result…")
+            return load_image(result_bytes).resize(target_size, Image.LANCZOS)
+
+        def apply_result(result):
+            if target not in self.layers:
+                return
+            self.history.save_state(self.layers, self.active_layer_index, "AI BG Remove")
+            target.image = result
+            self.canvas.update(); self.update_layer_panel()
             self._status("Background removed (AI)")
-        except Exception as e:
-            progress.close()
-            QMessageBox.critical(self, "AI Error", f"Background removal failed:\n{e}")
+
+        self._run_background("Removing Background", compute, apply_result)
 
     def ai_upscale(self, factor=2):
-        """Smart upscale using Lanczos + adaptive sharpening."""
+        """Lanczos upscale + adaptive sharpening on a background thread."""
         layer = self.active_layer()
         if not layer:
-            QMessageBox.information(self, "AI Upscale", "No active layer."); return
+            QMessageBox.information(self, "Upscale", "No active layer."); return
         if layer.locked:
             self._status("Layer is locked"); return
         w, h = layer.image.size
         new_w, new_h = w * factor, h * factor
-        progress = AIProgressDialog(f"Upscale {factor}× (Lanczos)", self)
-        progress.set_message(f"Resizing {w}x{h} → {new_w}x{new_h}...")
-        progress.set_progress(0); progress.show(); QApplication.processEvents()
-        try:
+        snapshot = layer.image.copy()
+        target = layer
+
+        def compute(progress, cancel):
+            progress(10, f"Resizing {w}x{h} → {new_w}x{new_h}…")
+            return compute_lanczos_upscale(snapshot, factor, progress, cancel)
+
+        def apply_result(result):
+            if target not in self.layers:
+                return
             self.history.save_state(self.layers, self.active_layer_index, f"Upscale {factor}x")
-            # Step 1: Multi-pass Lanczos
-            current = layer.image.copy()
-            remaining = factor
-            step = 0
-            while remaining > 1:
-                scale = 2 if remaining >= 2 else remaining
-                nw = int(current.width * scale); nh = int(current.height * scale)
-                current = current.resize((nw, nh), Image.LANCZOS)
-                remaining /= scale; step += 1
-                progress.set_progress(30 + step * 20, f"Upscale pass {step}")
-                QApplication.processEvents()
-            # Step 2: Adaptive unsharp mask
-            progress.set_progress(70, "Applying adaptive sharpening...")
-            QApplication.processEvents()
-            current = current.filter(ImageFilter.UnsharpMask(radius=1.0, percent=50, threshold=2))
-            layer.image = current
-            self.canvas.update()
-            self.update_layer_panel()
-            progress.set_progress(100, "Done!")
-            QApplication.processEvents()
-            progress.close()
+            target.image = result
+            self.canvas.update(); self.update_layer_panel()
             self._status(f"Upscaled {factor}x → {new_w}x{new_h}")
-        except Exception as e:
-            progress.close()
-            QMessageBox.critical(self, "AI Error", f"Upscale failed:\n{e}")
+
+        self._run_background(f"Upscale {factor}× (Lanczos)", compute, apply_result)
 
     def ai_depth_map(self):
-        """Generate depth map using luminance and edge analysis (local, instant)."""
+        """Heuristic pseudo-depth map added as a new layer (background thread)."""
         layer = self.active_layer()
         if not layer:
-            QMessageBox.information(self, "AI Depth Map", "No active layer."); return
+            QMessageBox.information(self, "Depth Map", "No active layer."); return
+        snapshot = layer.image.copy()
+        size = layer.image.size
 
-        progress = AIProgressDialog("Pseudo-Depth Map (heuristic)", self)
-        progress.set_message("Estimating depth from luminance and position...")
-        progress.set_progress(10); progress.show(); QApplication.processEvents()
+        def compute(progress, cancel):
+            progress(10, "Estimating depth…")
+            depth = compute_depth_map(snapshot, progress, cancel)
+            return depth.resize(size, Image.LANCZOS)
 
-        try:
+        def apply_result(result):
             self.history.save_state(self.layers, self.active_layer_index, "Depth Map")
-            arr = np.array(layer.image.convert("RGB")).astype(np.float32)
-            h, w = arr.shape[:2]
-            progress.set_progress(30, "Computing depth channels...")
-            QApplication.processEvents()
-
-            # Local depth estimation: luminance + vertical gradient + edge distance
-            lum = (arr[:,:,0] * 0.299 + arr[:,:,1] * 0.587 + arr[:,:,2] * 0.114)
-            # Vertical gradient (things higher tend to be farther)
-            vert = np.linspace(0, 255, h).reshape(-1, 1) * np.ones((1, w))
-            # Saturation (more saturated = closer in natural photos)
-            r, g, b2 = arr[:,:,0], arr[:,:,1], arr[:,:,2]
-            mx = np.maximum(np.maximum(r, g), b2)
-            mn = np.minimum(np.minimum(r, g), b2)
-            sat = (mx - mn) / (mx + 1e-6) * 255
-
-            depth = 0.4 * lum + 0.4 * (255 - vert) + 0.2 * sat
-
-            progress.set_progress(60, "Applying plasma colormap...")
-            QApplication.processEvents()
-            # Normalize and apply plasma colormap
-            mn_d, mx_d = depth.min(), depth.max()
-            t = (depth - mn_d) / (mx_d - mn_d + 1e-6)
-            out = np.zeros((h, w, 4), dtype=np.uint8)
-            out[:,:,0] = np.clip((1.5 - abs(t - 0.75) * 4).clip(0, 1) * 255, 0, 255)
-            out[:,:,1] = np.clip((1.5 - abs(t - 0.5) * 4).clip(0, 1) * 255, 0, 255)
-            out[:,:,2] = np.clip((1.5 - abs(t - 0.25) * 4).clip(0, 1) * 255, 0, 255)
-            out[:,:,3] = 220  # slightly transparent
-
-            # Add as new layer
-            depth_layer = Layer("Depth Map", layer.image.width, layer.image.height)
-            depth_layer.image = Image.fromarray(out, "RGBA").resize(layer.image.size, Image.LANCZOS)
+            depth_layer = Layer("Depth Map", size[0], size[1])
+            depth_layer.image = result
             depth_layer.opacity = 200
             depth_layer.blend_mode = "Normal"
             self.layers.append(depth_layer)
             self.active_layer_index = len(self.layers) - 1
-            self.canvas.update()
-            self.update_layer_panel()
-            progress.set_progress(100, "Done!")
-            QApplication.processEvents()
-            progress.close()
+            self.canvas.update(); self.update_layer_panel()
             self._status("Depth map generated (added as new layer)")
-        except Exception as e:
-            progress.close()
-            QMessageBox.critical(self, "AI Error", f"Depth map failed:\n{e}")
+
+        self._run_background("Pseudo-Depth Map (heuristic)", compute, apply_result)
 
     def ai_object_detect(self):
-        """Detect regions of interest using color clustering and edge detection."""
+        """Highlight busy (high-variance) grid regions on a new layer."""
         layer = self.active_layer()
         if not layer:
-            QMessageBox.information(self, "AI Object Detect", "No active layer."); return
+            QMessageBox.information(self, "Highlight Regions", "No active layer."); return
+        snapshot = layer.image.copy()
+        w, h = layer.image.size
 
-        progress = AIProgressDialog("Highlight Busy Regions (heuristic)", self)
-        progress.set_message("Scoring grid cells by pixel variance...")
-        progress.set_progress(10); progress.show(); QApplication.processEvents()
+        def compute(progress, cancel):
+            progress(10, "Scoring grid cells…")
+            return compute_busy_regions(snapshot, progress, cancel)
 
-        try:
-            self.history.save_state(self.layers, self.active_layer_index, "Object Detect")
-            arr = np.array(layer.image.convert("RGB"))
-            h, w = arr.shape[:2]
-
-            progress.set_progress(30, "Finding dominant color regions...")
-            QApplication.processEvents()
-
-            # Simple grid-based color region detection
-            grid_r, grid_c = 3, 3
-            cell_h, cell_w = h // grid_r, w // grid_c
-            colors = ["#ff5555", "#55cc55", "#4488ff", "#ffcc44", "#cc55cc", "#55cccc"]
-            det_layer = Layer("Object Regions", w, h)
-            draw = ImageDraw.Draw(det_layer.image)
-
-            detections = []
-            for row in range(grid_r):
-                for col in range(grid_c):
-                    y0 = row * cell_h; x0 = col * cell_w
-                    y1 = min(y0 + cell_h, h); x1 = min(x0 + cell_w, w)
-                    cell = arr[y0:y1, x0:x1]
-                    # Measure variance (interesting regions have high variance)
-                    variance = float(cell.var())
-                    if variance > 500:  # Only show interesting regions
-                        detections.append((x0, y0, x1, y1, f"Region ({variance:.0f})", variance))
-
-            progress.set_progress(70, "Drawing detection boxes...")
-            QApplication.processEvents()
-            for i, (x0, y0, x1, y1, label, score) in enumerate(detections):
-                color_hex = colors[i % len(colors)]
-                c = QColor(color_hex)
-                fill_c = (c.red(), c.green(), c.blue(), 40)
-                stroke_c = (c.red(), c.green(), c.blue(), 200)
-                draw.rectangle([x0, y0, x1, y1], fill=fill_c, outline=stroke_c, width=2)
-                try:
-                    draw.text((x0 + 4, y0 + 4), label, fill=stroke_c)
-                except Exception:
-                    pass
-
+        def apply_result(result):
+            det_image, count = result
+            self.history.save_state(self.layers, self.active_layer_index, "Highlight Regions")
+            det_layer = Layer("Busy Regions", w, h)
+            det_layer.image = det_image
             self.layers.append(det_layer)
             self.active_layer_index = len(self.layers) - 1
-            self.canvas.update()
-            self.update_layer_panel()
-            progress.set_progress(100, "Done!")
-            QApplication.processEvents()
-            progress.close()
-            self._status(f"Highlighted {len(detections)} busy regions")
-        except Exception as e:
-            progress.close()
-            QMessageBox.critical(self, "AI Error", f"Region highlight failed:\n{e}")
+            self.canvas.update(); self.update_layer_panel()
+            self._status(f"Highlighted {count} busy regions")
+
+        self._run_background("Highlight Busy Regions (heuristic)", compute, apply_result)
+
+    def _run_background(self, label, compute, apply_result):
+        """Run *compute(progress, cancel)* off the GUI thread with a modal
+        progress+cancel dialog, then call *apply_result(result)* on the GUI
+        thread. Single-flight: a second request while one runs is coalesced
+        (ignored with a status message). Cancellation or failure applies
+        nothing — no history entry, no partial layer. (R-23)"""
+        if self._task_busy:
+            self._status(
+                f"'{self._active_task_label}' is still running — one operation "
+                "at a time")
+            return
+        import threading
+        from PyQt5.QtCore import QThread
+
+        self._task_busy = True
+        self._active_task_label = label
+        cancel = threading.Event()
+        self._task_cancel = cancel
+
+        dlg = AIProgressDialog(label, self)
+        dlg.set_message("Working…")
+        dlg.set_progress(0)
+        dlg.enable_cancel(cancel.set)
+
+        thread = QThread(self)
+        worker = BackgroundWorker(compute, cancel)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        def cleanup():
+            self._task_busy = False
+            self._active_task_label = ""
+            self._task_cancel = None
+            thread.quit()
+            try:
+                dlg.close()
+            except Exception:
+                pass
+
+        def on_finished(result):
+            cleanup()
+            try:
+                apply_result(result)
+            except Exception as e:   # noqa: BLE001
+                QMessageBox.critical(self, f"{label} Error", str(e))
+
+        def on_cancelled():
+            cleanup()
+            self._status(f"{label} cancelled")
+
+        def on_error(msg):
+            cleanup()
+            QMessageBox.critical(self, f"{label} Error", msg)
+
+        worker.finished.connect(on_finished)
+        worker.cancelled.connect(on_cancelled)
+        worker.error.connect(on_error)
+        worker.progress.connect(dlg.set_progress)
+        thread.finished.connect(worker.deleteLater)
+        self._task_thread = thread
+        self._task_worker = worker
+        dlg.show()
+        thread.start()
 
     def manage_ai_model_cache(self):
         """Show the rembg model cache location/size and offer to remove it."""
@@ -8683,6 +8788,8 @@ class ImageEditor(QMainWindow):
 
     def run_ocr(self):
         """Extract text from the current image using OCR module."""
+        if self._task_busy:
+            self._status(f"'{self._active_task_label}' is still running"); return
         try:
             from ocr import ocr_pixmap
             from ocr_dialog import OcrResultDialog
@@ -8778,6 +8885,8 @@ class ImageEditor(QMainWindow):
         active layer's type or size."""
         if not self.layers:
             return
+        if self._task_busy:
+            self._status(f"'{self._active_task_label}' is still running"); return
         try:
             from ocr import ocr_words_pixmap, find_pii_words
         except ImportError:
@@ -8842,6 +8951,8 @@ class ImageEditor(QMainWindow):
 
     def run_ocr_table(self):
         """Detect table structure from OCR word boxes and copy it as TSV."""
+        if self._task_busy:
+            self._status(f"'{self._active_task_label}' is still running"); return
         try:
             from ocr import ocr_words_pixmap, words_to_table
             from ocr_dialog import OcrResultDialog
@@ -8889,6 +9000,15 @@ class ImageEditor(QMainWindow):
             self._status(f"Pin failed: {e}")
 
     def closeEvent(self, event):
+        # Close protection: don't tear the window down while a background task
+        # is still touching the document.
+        if self._task_busy:
+            QMessageBox.information(
+                self, "Operation running",
+                f"'{self._active_task_label}' is still running. Cancel it or "
+                "wait for it to finish before closing.")
+            event.ignore()
+            return
         if not self._confirm_discard():
             event.ignore()
             return

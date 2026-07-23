@@ -4,6 +4,15 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Long editor operations (Remove Background, Upscale, Pseudo-Depth Map, Highlight
+  Busy Regions) now run on a background thread behind one cancellable task runner
+  (R-23). Each works from an immutable snapshot, shows progress with a Cancel
+  button, and only commits its result — and a single history entry — on success;
+  cancelling or failing leaves no partial layer. Only one long operation runs at
+  a time (repeat/OCR triggers are coalesced), and the editor window refuses to
+  close while a task is still running.
+
 ### Added
 - Scrolling capture gains direction, manual advance, a frame bound, and redo
   (R-24). Choose **Vertical** or **Horizontal** scrolling; **Manual** mode
