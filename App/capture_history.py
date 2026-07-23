@@ -870,8 +870,14 @@ class CaptureHistoryDialog(QDialog):
         self.clear_btn.setEnabled(bool(_history_files(history_dir)))
 
         if not entries:
-            if search:
+            if search and favorites_only:
+                lbl = QLabel(f'No favorite captures match "{search}"')
+            elif search:
                 lbl = QLabel(f'No captures match "{search}"')
+            elif favorites_only:
+                lbl = QLabel("No favorites yet.\n"
+                             "Right-click a capture and choose "
+                             "'Mark as Favorite' to keep it here.")
             else:
                 lbl = QLabel("No captures yet.\n"
                              "Screenshots you take will show up here.")

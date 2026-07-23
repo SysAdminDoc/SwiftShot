@@ -9018,9 +9018,13 @@ class ImageEditor(QMainWindow):
         be safely rebuilt keep their look until the window is reopened."""
         theme_name = getattr(config, "THEME", "dark") if config is not None else "dark"
         apply_editor_theme(theme_name)
-        # Canvas and other paintEvent-based surfaces read class C at paint time,
-        # so a repaint picks up the new palette immediately.
+        # build_ss() reads class C at call time, so re-applying the window
+        # stylesheet restyles the whole chrome via Qt's cascade; the canvas
+        # surround is a local construction-time stylesheet and needs its own
+        # re-apply. paintEvent-based surfaces pick C up on the next repaint.
         try:
+            self.setStyleSheet(build_ss())
+            self.canvas.setStyleSheet(f"background-color: {C.CANVAS_BG};")
             self.canvas.update()
         except Exception:
             pass
