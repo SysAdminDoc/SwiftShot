@@ -13,7 +13,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import config
 from theme import colors_for_theme, stylesheet_for_theme
-from utils import exclude_window_from_capture
+from utils import exclude_window_from_capture, hotkey_suffix as _hotkey_suffix
 
 
 class CaptureMenu(QMenu):
@@ -85,9 +85,11 @@ class CaptureMenu(QMenu):
         self.addSeparator()
 
         # Capture modes (\t right-aligns the shortcut column properly;
-        # space-padding misaligns with proportional fonts)
+        # space-padding misaligns with proportional fonts). Shortcut labels
+        # read the live config — hotkeys are remappable in Settings, so a
+        # hardcoded "Alt+PrtSc" would lie after a rebind.
         a = self._add_menu_action(
-            "Window Mode\tAlt+PrtSc",
+            "Window Mode" + _hotkey_suffix(config.CAPTURE_WINDOW_HOTKEY),
             "Capture the selected window.",
         )
         a.triggered.connect(lambda: self.capture_window.emit())
@@ -99,13 +101,13 @@ class CaptureMenu(QMenu):
         a.triggered.connect(lambda: self.capture_region.emit())
 
         a = self._add_menu_action(
-            "Region (Freehand)",
+            "Region (Freehand)" + _hotkey_suffix(config.CAPTURE_FREEHAND_HOTKEY),
             "Draw a freehand region to capture.",
         )
         a.triggered.connect(lambda: self.capture_freehand.emit())
 
         a = self._add_menu_action(
-            "Last Region\tShift+PrtSc",
+            "Last Region" + _hotkey_suffix(config.CAPTURE_LAST_REGION_HOTKEY),
             "Capture the previous region again.",
         )
         a.triggered.connect(lambda: self.capture_last_region.emit())
@@ -114,7 +116,7 @@ class CaptureMenu(QMenu):
 
         # Scrolling capture
         a = self._add_menu_action(
-            "Scrolling Capture...",
+            "Scrolling Capture..." + _hotkey_suffix(config.CAPTURE_SCROLLING_HOTKEY),
             "Capture a scrollable page or window.",
         )
         a.triggered.connect(lambda: self.capture_scrolling.emit())
@@ -123,7 +125,7 @@ class CaptureMenu(QMenu):
 
         # OCR
         a = self._add_menu_action(
-            "OCR Region  (Extract Text)",
+            "OCR Region  (Extract Text)" + _hotkey_suffix(config.CAPTURE_OCR_HOTKEY),
             "Capture a region and extract text from it.",
         )
         a.triggered.connect(lambda: self.capture_ocr.emit())

@@ -161,3 +161,23 @@ def test_monitor_picker_omits_redundant_all_button_for_one_screen(
         assert not any(text.startswith("All Monitors") for text in button_texts)
     finally:
         picker.close()
+
+
+# ── Capture menu shows the LIVE configured hotkeys (R: remappable) ─────────
+
+def test_capture_menu_labels_follow_configured_hotkeys(qapp, fresh_config):
+    cfg = fresh_config.config
+    cfg.CAPTURE_WINDOW_HOTKEY = "F9"
+    cfg.CAPTURE_LAST_REGION_HOTKEY = ""      # unbound: no shortcut column
+    cfg.CAPTURE_OCR_HOTKEY = "Ctrl+Alt+O"
+    import sys
+    sys.modules.pop("capture_menu", None)
+    import capture_menu
+
+    menu = capture_menu.CaptureMenu()
+    texts = [a.text() for a in menu.actions() if a.text()]
+    assert any(t == "Window Mode\tF9" for t in texts)
+    assert any(t == "Last Region" for t in texts)          # no stale Alt+PrtSc
+    assert any(t.endswith("\tCtrl+Alt+O") for t in texts)  # OCR shows binding
+    assert not any("Alt+PrtSc" in t for t in texts)
+    menu.deleteLater()

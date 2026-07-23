@@ -192,3 +192,12 @@ def test_display_affinity_is_noop_off_windows(monkeypatch):
 
     assert utils.exclude_window_from_capture(_AffinityWidget(), api) == utils.WDA_NONE
     assert api.calls == []
+
+
+def test_hotkey_suffix_formats_menu_column():
+    from utils import hotkey_suffix
+    assert hotkey_suffix("") == ""
+    assert hotkey_suffix(None) == ""
+    assert hotkey_suffix("Alt+Print") == "\tAlt+PrtSc"
+    assert hotkey_suffix("F9") == "\tF9"
+    assert hotkey_suffix("Ctrl+Shift+Print") == "\tCtrl+Shift+PrtSc"

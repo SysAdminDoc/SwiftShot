@@ -407,16 +407,34 @@ class SwiftShotApp:
         menu = QMenu()
         menu.setStyleSheet(stylesheet_for_theme(config.THEME))
 
-        menu.addAction("Capture Menu\tPrintScreen").triggered.connect(self.show_capture_menu)
+        # Hotkey columns are refreshed from live config via
+        # _refresh_tray_hotkey_labels — hardcoded shortcuts lie after a rebind.
+        self._tray_hotkey_actions = {}
+        act = menu.addAction("Capture Menu")
+        act.triggered.connect(self.show_capture_menu)
+        self._tray_hotkey_actions[("Capture Menu", "CAPTURE_REGION_HOTKEY")] = act
         menu.addSeparator()
         menu.addAction("Capture Region").triggered.connect(self.capture_region)
-        menu.addAction("Capture Window\tAlt+PrtSc").triggered.connect(self.capture_window)
-        menu.addAction("Capture Full Screen\tCtrl+PrtSc").triggered.connect(self.capture_fullscreen)
-        menu.addAction("Capture Last Region\tShift+PrtSc").triggered.connect(self.capture_last_region)
+        act = menu.addAction("Capture Window")
+        act.triggered.connect(self.capture_window)
+        self._tray_hotkey_actions[("Capture Window", "CAPTURE_WINDOW_HOTKEY")] = act
+        act = menu.addAction("Capture Full Screen")
+        act.triggered.connect(self.capture_fullscreen)
+        self._tray_hotkey_actions[("Capture Full Screen", "CAPTURE_FULLSCREEN_HOTKEY")] = act
+        act = menu.addAction("Capture Last Region")
+        act.triggered.connect(self.capture_last_region)
+        self._tray_hotkey_actions[("Capture Last Region", "CAPTURE_LAST_REGION_HOTKEY")] = act
         menu.addSeparator()
-        menu.addAction("Region (Freehand)").triggered.connect(self.capture_freehand)
-        menu.addAction("OCR Region").triggered.connect(self.capture_ocr)
-        menu.addAction("Scrolling Capture...").triggered.connect(self.capture_scrolling)
+        act = menu.addAction("Region (Freehand)")
+        act.triggered.connect(self.capture_freehand)
+        self._tray_hotkey_actions[("Region (Freehand)", "CAPTURE_FREEHAND_HOTKEY")] = act
+        act = menu.addAction("OCR Region")
+        act.triggered.connect(self.capture_ocr)
+        self._tray_hotkey_actions[("OCR Region", "CAPTURE_OCR_HOTKEY")] = act
+        act = menu.addAction("Scrolling Capture...")
+        act.triggered.connect(self.capture_scrolling)
+        self._tray_hotkey_actions[("Scrolling Capture...", "CAPTURE_SCROLLING_HOTKEY")] = act
+        self._refresh_tray_hotkey_labels()
         menu.addSeparator()
         menu.addAction("Open Image from File...").triggered.connect(self.open_from_file)
         menu.addAction("Open Image from Clipboard").triggered.connect(self.open_from_clipboard)
@@ -469,6 +487,12 @@ class SwiftShotApp:
                 "SwiftShot could not create the support bundle. Verify the "
                 "destination folder and try again.",
                 warning=True, required=True)
+
+    def _refresh_tray_hotkey_labels(self):
+        """Sync tray-menu shortcut columns with the configured hotkeys."""
+        from utils import hotkey_suffix
+        for (base, key), action in getattr(self, "_tray_hotkey_actions", {}).items():
+            action.setText(base + hotkey_suffix(getattr(config, key, "")))
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -1766,6 +1790,7 @@ class SwiftShotApp:
                 # Re-apply app + tray + open-editor theming in one place;
                 # retheme is non-destructive and cheap, so no change-detection.
                 self._reapply_theme()
+                self._refresh_tray_hotkey_labels()
                 if not self._reregister_hotkeys():
                     self._notify(
                         "Capture shortcuts unavailable",

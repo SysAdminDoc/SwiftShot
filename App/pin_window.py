@@ -224,23 +224,22 @@ class PinWindow(QWidget):
 
         menu.addSeparator()
 
-        op100 = menu.addAction("100% Opacity")
-        op100.triggered.connect(lambda: self._set_opacity(1.0))
-        op75 = menu.addAction("75% Opacity")
-        op75.triggered.connect(lambda: self._set_opacity(0.75))
-        op50 = menu.addAction("50% Opacity")
-        op50.triggered.connect(lambda: self._set_opacity(0.50))
-        op25 = menu.addAction("25% Opacity")
-        op25.triggered.connect(lambda: self._set_opacity(0.25))
+        # Check the active opacity/zoom so the menu reflects current state.
+        for label, val in (("100% Opacity", 1.0), ("75% Opacity", 0.75),
+                           ("50% Opacity", 0.50), ("25% Opacity", 0.25)):
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(abs(self._opacity - val) < 0.01)
+            act.triggered.connect(lambda _=False, v=val: self._set_opacity(v))
 
         menu.addSeparator()
 
-        zoom_fit = menu.addAction("Reset Zoom (100%)")
-        zoom_fit.triggered.connect(lambda: self._set_scale(1.0))
-        zoom_50 = menu.addAction("Zoom 50%")
-        zoom_50.triggered.connect(lambda: self._set_scale(0.5))
-        zoom_200 = menu.addAction("Zoom 200%")
-        zoom_200.triggered.connect(lambda: self._set_scale(2.0))
+        for label, val in (("Reset Zoom (100%)", 1.0), ("Zoom 50%", 0.5),
+                           ("Zoom 200%", 2.0)):
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(abs(self._scale - val) < 0.01)
+            act.triggered.connect(lambda _=False, v=val: self._set_scale(v))
 
         menu.addSeparator()
 

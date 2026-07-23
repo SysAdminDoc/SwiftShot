@@ -115,6 +115,16 @@ def clamp(value, lo, hi):
     return max(lo, min(hi, value))
 
 
+def hotkey_suffix(hotkey):
+    """Tab-aligned menu shortcut column for a configured hotkey ('' when
+    unbound). 'Print' is shortened to the conventional 'PrtSc'. Menus must
+    read the LIVE config through this — hotkeys are remappable in Settings,
+    so a hardcoded shortcut label lies after a rebind."""
+    if not hotkey:
+        return ""
+    return "\t" + hotkey.replace("Print", "PrtSc")
+
+
 def distance(p1: QPoint, p2: QPoint) -> float:
     """Euclidean distance between two QPoints."""
     dx = p2.x() - p1.x()
