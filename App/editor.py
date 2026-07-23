@@ -6250,7 +6250,7 @@ class ImageEditor(QMainWindow):
         flm.addSeparator()
         self._act(flm, "Posterize...", "", self.posterize)
         self._act(flm, "Solarize...", "", self.solarize)
-        self._act(flm, "Obfuscate...", "", self.pixelate)
+        self._act(flm, "Obfuscate (visual only)...", "", self.pixelate)
         flm.addSeparator()
         self._act(flm, "Add &Noise...", "", self.add_noise)
         self._act(flm, "&Vignette...", "", self.vignette)
@@ -6343,7 +6343,10 @@ class ImageEditor(QMainWindow):
         tm.addSeparator()
         self._act(tm, "OCR – Extract Text", "Ctrl+Shift+O", self.run_ocr)
         self._act(tm, "OCR – Copy as Table", "", self.run_ocr_table)
+        tm.addSeparator()
+        self._act(tm, "Solid Redact Selection", "", self.solid_redact)
         self._act(tm, "Auto-Redact Personal Data", "", self.auto_redact)
+        tm.addSeparator()
         self._act(tm, "Compare With Image...", "", self.compare_with_image)
 
     def _set_ui_scale(self, scale_val):
@@ -7740,8 +7743,9 @@ class ImageEditor(QMainWindow):
         if config is not None:
             factor = int(getattr(config, "EDITOR_OBFUSCATE_FACTOR", 8))
             mode = getattr(config, "EDITOR_OBFUSCATE_MODE", "pixelate")
-        label = "Blur radius:" if mode == "blur" else "Block size:"
-        v, ok = QInputDialog.getInt(self, "Obfuscate", label, factor, 2, 100)
+        label = ("Blur radius:" if mode == "blur" else "Block size:") + \
+            "\n(visual only — use Tools ▸ Solid Redact to remove pixels)"
+        v, ok = QInputDialog.getInt(self, "Obfuscate (visual only)", label, factor, 2, 100)
         if ok:
             if mode == "blur":
                 def ap(img):
@@ -8342,6 +8346,9 @@ class ImageEditor(QMainWindow):
             ("Upscale 4x (Lanczos)", "Enhance", lambda: self.ai_upscale(4)),
             ("Pseudo-Depth Map (heuristic)", "Enhance", self.ai_depth_map),
             ("Highlight Busy Regions (heuristic)", "Enhance", self.ai_object_detect),
+            # Tools
+            ("Solid Redact Selection", "Tools", self.solid_redact),
+            ("Auto-Redact Personal Data", "Tools", self.auto_redact),
             # View
             ("Toggle Grid", "View", self.toggle_grid),
             ("Toggle Rulers", "View", self.toggle_rulers),
@@ -8692,13 +8699,83 @@ class ImageEditor(QMainWindow):
             QMessageBox.warning(
                 self, "OCR Error", f"Could not extract text:\n\n{e}")
 
+    @staticmethod
+    def _composite_solid(image, mask, fill):
+        """Return a copy of *image* with *fill* burned into every pixel the *mask*
+        selects (mask resized to match if needed). Source pixels under the mask
+        are gone — the core of irreversible Solid Redact."""
+        m = mask if mask.size == image.size else mask.resize(image.size, Image.NEAREST)
+        block = Image.new("RGBA", image.size, fill)
+        return Image.composite(block, image.convert("RGBA"), m)
+
+    @staticmethod
+    def _redaction_boxes_layer(size, boxes):
+        """Build a transparent RGBA layer of opaque black rectangles for *boxes*
+        (each a dict with x/y/w/h). Shared by the layer and burn-in paths."""
+        img = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        for b in boxes:
+            draw.rectangle([b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]],
+                           fill=(0, 0, 0, 255))
+        return img
+
+    def solid_redact(self):
+        """Permanently overwrite the selected region with a solid block, removing
+        the underlying source pixels. Unlike Blur/Obfuscate (which only scramble
+        pixels that a determined viewer can sometimes reconstruct), Solid Redact
+        exports no recoverable original. Undoable within the session."""
+        if self.canvas.selection_mask is None:
+            QMessageBox.information(
+                self, "Solid Redact",
+                "Select the region to redact first (rectangle, lasso or any "
+                "selection tool), then run Solid Redact.\n\nBlur and Obfuscate "
+                "only visually scramble pixels — Solid Redact removes them.")
+            return
+        dlg = QDialog(self); dlg.setWindowTitle("Solid Redact")
+        form = QFormLayout(dlg)
+        scope = QComboBox(); scope.addItem("Active layer", "active")
+        if len(self.layers) > 1:
+            scope.addItem("Flatten all layers (removes pixels underneath)", "flatten")
+        color = QComboBox(); color.addItems(["Black", "White"])
+        form.addRow("Redact on:", scope); form.addRow("Fill:", color)
+        note = QLabel("Overwrites source pixels inside the selection. The "
+                      "exported image carries no recoverable original.")
+        note.setWordWrap(True); note.setStyleSheet(f"color:{C.TEXT_MUT};font-size:11px;")
+        form.addRow(note)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("Redact")
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        fill = (0, 0, 0, 255) if color.currentText() == "Black" else (255, 255, 255, 255)
+        mask = self.canvas.selection_mask
+        if scope.currentData() == "flatten":
+            self.history.save_state(self.layers, self.active_layer_index, "Solid Redact")
+            flat = self._composite_solid(self.get_composite(), mask, fill)
+            self.layers = [Layer("Background", image=flat)]; self.active_layer_index = 0
+            self._mark_dirty(); self.update_layer_panel(); self.canvas.update()
+            self._status("Redacted selection (flattened — pixels removed)")
+            return
+        l = self.active_layer()
+        if not l:
+            return
+        if l.locked:
+            self._status("Layer is locked"); return
+        if isinstance(l, LayerGroup):
+            self._status("Solid Redact applies to layers, not groups"); return
+        self.history.save_state(self.layers, self.active_layer_index, "Solid Redact")
+        l.image = self._composite_solid(l.image, mask, fill)
+        self._mark_dirty(); self.canvas.update(); self.update_history_panel()
+        self._status("Redacted selection on active layer (pixels removed)")
+
     def auto_redact(self):
-        """Detect emails/IPs/MACs/phone numbers via OCR and black them out on a
-        new redaction layer. Drawing on a dedicated full-canvas layer (not the
-        active one) keeps the box coordinates in composite space, so it works
-        regardless of the active layer's type or size — an active group used to
-        silently redact nothing (its image setter is a no-op) and a pasted,
-        differently-sized active layer got boxes at the wrong pixels."""
+        """Detect emails/IPs/MACs/phone numbers via OCR, preview each detection
+        for include/exclude, and black them out. By default the boxes go on a
+        dedicated full-canvas redaction layer (removable/undoable); ticking
+        "burn into image" flattens and overwrites the source pixels for an
+        irreversible redaction. Composite-space boxes work regardless of the
+        active layer's type or size."""
         if not self.layers:
             return
         try:
@@ -8713,26 +8790,55 @@ class ImageEditor(QMainWindow):
             return
         if not boxes:
             self._status("Auto-redact: no personal data detected"); return
+
         # OCR PII matching has false positives (long numbers can look like phone
-        # numbers), so confirm before defacing the image.
-        if QMessageBox.question(
-                self, "Auto-Redact",
-                f"Black out {len(boxes)} detected item(s) — emails, IP/MAC "
-                f"addresses and phone numbers?\n\nThis adds a redaction layer "
-                f"you can undo or delete.",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) != QMessageBox.Yes:
-            return
-        self.history.save_state(self.layers, self.active_layer_index, "Auto-Redact")
-        redaction = Image.new("RGBA", comp.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(redaction)
+        # numbers), so preview every detection and let the user exclude them.
+        dlg = QDialog(self); dlg.setWindowTitle("Auto-Redact — Review Detections")
+        dlg.resize(dp(440), dp(380))
+        v = QVBoxLayout(dlg)
+        hdr = QLabel(f"{len(boxes)} possible personal-data item(s) detected. "
+                     "Uncheck any false positives before redacting.")
+        hdr.setWordWrap(True); v.addWidget(hdr)
+        listw = QListWidget()
         for b in boxes:
-            draw.rectangle([b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]],
-                           fill=(0, 0, 0, 255))
-        nl = Layer("Redaction"); nl.image = redaction
+            text = (b.get("text") or "").strip() or "(image region)"
+            it = QListWidgetItem(f"{text}    @ {b['x']},{b['y']}  {b['w']}×{b['h']}")
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked)
+            listw.addItem(it)
+        v.addWidget(listw, 1)
+        burn = QCheckBox("Burn into image (flatten & remove underlying pixels)")
+        v.addWidget(burn)
+        note = QLabel("Unchecked: adds a removable redaction layer.  "
+                      "Checked: irreversible — source pixels are overwritten.")
+        note.setWordWrap(True); note.setStyleSheet(f"color:{C.TEXT_MUT};font-size:11px;")
+        v.addWidget(note)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("Redact Selected")
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        v.addWidget(btns)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        chosen = [boxes[i] for i in range(len(boxes))
+                  if listw.item(i).checkState() == Qt.Checked]
+        if not chosen:
+            self._status("Auto-redact: no items selected"); return
+
+        if burn.isChecked():
+            self.history.save_state(self.layers, self.active_layer_index, "Auto-Redact")
+            flat = self.get_composite().convert("RGBA")
+            flat = Image.alpha_composite(flat, self._redaction_boxes_layer(flat.size, chosen))
+            self.layers = [Layer("Background", image=flat)]; self.active_layer_index = 0
+            self._mark_dirty(); self.canvas.update(); self.update_layer_panel()
+            self._status(f"Redacted {len(chosen)} item(s) — burned into image")
+            return
+
+        self.history.save_state(self.layers, self.active_layer_index, "Auto-Redact")
+        nl = Layer("Redaction"); nl.image = self._redaction_boxes_layer(comp.size, chosen)
         self.layers.append(nl); self.active_layer_index = len(self.layers) - 1
         self._mark_dirty()
         self.canvas.update(); self.update_layer_panel()
-        self._status(f"Redacted {len(boxes)} item(s) on a new layer")
+        self._status(f"Redacted {len(chosen)} item(s) on a new layer")
 
     def run_ocr_table(self):
         """Detect table structure from OCR word boxes and copy it as TSV."""

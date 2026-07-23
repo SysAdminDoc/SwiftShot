@@ -4,7 +4,20 @@ All notable changes to SwiftShot will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Solid Redact** (Tools ▸ Solid Redact Selection): permanently overwrites the
+  selected region with a solid block, removing the underlying source pixels so
+  the exported image carries no recoverable original — the safe alternative to
+  Blur/Obfuscate, which only scramble pixels. Redact the active layer or flatten
+  all layers first (removing anything hidden underneath) (R-25).
+- Auto-Redact now previews every OCR detection in a checklist so false
+  positives can be excluded before applying, and offers a "burn into image"
+  option that flattens and overwrites source pixels for an irreversible
+  redaction (default remains a removable redaction layer) (R-25).
+
 ### Changed
+- Blur/Obfuscate are now labelled "visual only" in the menu and dialog to make
+  clear they do not remove pixels; use Solid Redact for that.
 - Honest naming for the editor's local "AI" tools (R-28). The old **AI** menu is
   now **Enhance**: only **Remove Background** is a genuinely trained model
   (`rembg`); the others are labelled as the heuristics they are — **Upscale

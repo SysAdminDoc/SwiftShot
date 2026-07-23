@@ -140,13 +140,6 @@ Net-new, code-verified findings from auditing the less-examined support modules 
   Acceptance: Users choose vertical/horizontal and automatic/manual advance, set a frame/scroll bound, stop with a documented hotkey, recapture a bad step, and preview progress; manual mode never injects input; horizontal/vertical overlap and no-progress termination are tested on deterministic fixtures.
   Complexity: L
 
-- [ ] R-25 P1 — Add irreversible solid redaction with preview and proof tests
-  Why: Blur/pixelation are visual obfuscation, while the safe black-out path is limited to auto-detected email/IP/MAC/phone patterns.
-  Evidence: `App/editor.py` blur/pixelate tools; `App/ocr.py:_PII_PATTERNS`; Snagit Smart Redact and Screenpresso sensitive-data workflows.
-  Touches: editor tools/menu, OCR match preview, flatten/export tests, help microcopy.
-  Acceptance: A manual Solid Redact tool removes source pixels on the selected layer or flattened output; blur/pixelate are labeled visual-only; auto-redact previews every detection with include/exclude/edit before applying; exported pixels and project undo/redo are tested, including grouped layers.
-  Complexity: M
-
 - [ ] R-27 P1 — Build a deterministic local release and package gate
   Why: Broad lower bounds, a floating PyInstaller, unvalidated frozen outputs, stale winget schema/placeholders, and no artifact smoke make releases non-reproducible.
   Evidence: requirements files, `App/Build-SwiftShot.ps1`, `App/SwiftShot.spec`, `packaging/winget`, `packaging/scoop`; pip secure-install guidance; ShareX checksummed assets. Cross-reference blocked R-07 signing and AB-38 update integrity rather than duplicating them.
