@@ -197,7 +197,7 @@ class Config:
     LAUNCH_AT_STARTUP = False
     CHECK_FOR_UPDATES = True
     SHOW_NOTIFICATIONS = True
-    THEME = "dark"  # "dark" or "light"
+    THEME = "dark"  # "dark", "light", or "system" (follow Windows)
 
     # --- Persisted State ---
     LAST_SAVE_DIR = ""
@@ -297,7 +297,7 @@ class Config:
     def _normalize_enums(self):
         if self.OUTPUT_FILE_FORMAT not in OUTPUT_FILE_FORMAT_CHOICES:
             self.OUTPUT_FILE_FORMAT = Config.OUTPUT_FILE_FORMAT
-        if self.THEME not in ("dark", "light"):
+        if self.THEME not in ("dark", "light", "system"):
             self.THEME = Config.THEME
         if self.BEAUTIFY_PRESET not in BEAUTIFICATION_PRESETS:
             self.BEAUTIFY_PRESET = Config.BEAUTIFY_PRESET

@@ -5,6 +5,11 @@ All notable changes to SwiftShot will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **System** theme option that follows the Windows dark/light preference, with a
+  live listener that repaints the app when Windows switches theme — no restart
+  (R-32). Changing the theme in Preferences now also live-re-themes open editor
+  windows (non-destructively, preserving unsaved workspace state) instead of
+  waiting for a reopen.
 - Capture-history favorites and tags (R-31). Right-click a capture to mark it a
   favorite or edit comma-separated tags; filter with **Show favorites only** and
   search matches tags too. Favorites are exempt from count-based history pruning.

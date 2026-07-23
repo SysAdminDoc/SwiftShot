@@ -302,8 +302,8 @@ def apply_editor_theme(theme_name):
     editor widgets. Falls back to the dark set if theme.py is unavailable."""
     global _EDITOR_THEME
     try:
-        from theme import colors_for_theme, normalize_theme
-        theme_name = normalize_theme(theme_name)
+        from theme import colors_for_theme, effective_theme
+        theme_name = effective_theme(theme_name)
         colors = colors_for_theme(theme_name)
     except ImportError:
         theme_name, colors = "dark", EDITOR_COLORS
@@ -8998,6 +8998,22 @@ class ImageEditor(QMainWindow):
                     )
         except Exception as e:
             self._status(f"Pin failed: {e}")
+
+    def retheme(self):
+        """Best-effort live re-theme of an open editor WITHOUT rebuilding the
+        document, so unsaved workspace state is preserved (R-32). Rebinds the
+        editor palette (class C) and re-applies the canvas/toolbar surfaces that
+        read it, then repaints. Construction-time widget stylesheets that can't
+        be safely rebuilt keep their look until the window is reopened."""
+        theme_name = getattr(config, "THEME", "dark") if config is not None else "dark"
+        apply_editor_theme(theme_name)
+        # Canvas and other paintEvent-based surfaces read class C at paint time,
+        # so a repaint picks up the new palette immediately.
+        try:
+            self.canvas.update()
+        except Exception:
+            pass
+        self.update()
 
     def closeEvent(self, event):
         # Close protection: don't tear the window down while a background task

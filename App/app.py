@@ -19,13 +19,39 @@ from PyQt5.QtWidgets import (
     QSystemTrayIcon, QMenu, QApplication, QMessageBox, QDialog, QAction
 )
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
-from PyQt5.QtCore import Qt, QTimer, QRect, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QRect, QThread, pyqtSignal, QAbstractNativeEventFilter
 
 from config import config
 from logger import log
 from ocr_dialog import OcrResultDialog
 from safe_io import MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, load_image
 from utils import pil_to_qpixmap
+
+
+class _SystemThemeFilter(QAbstractNativeEventFilter):
+    """Watch for Windows app-theme changes (WM_SETTINGCHANGE / ImmersiveColorSet)
+    and notify the app so a 'system' theme selection repaints live (R-32)."""
+
+    WM_SETTINGCHANGE = 0x001A
+
+    def __init__(self, on_change):
+        super().__init__()
+        self._on_change = on_change
+
+    def nativeEventFilter(self, event_type, message):
+        try:
+            et = bytes(event_type) if not isinstance(event_type, bytes) else event_type
+            if et == b"windows_generic_MSG":
+                import ctypes
+                from ctypes import wintypes
+                msg = ctypes.cast(int(message),
+                                  ctypes.POINTER(wintypes.MSG)).contents
+                if msg.message == self.WM_SETTINGCHANGE and msg.lParam:
+                    if ctypes.wstring_at(msg.lParam) == "ImmersiveColorSet":
+                        self._on_change()
+        except Exception:
+            pass
+        return False, 0
 
 
 def _load_file_pixmap(path):
@@ -114,6 +140,15 @@ class SwiftShotApp:
         # Set app-wide icon so every QWidget/QDialog inherits it
         app_icon = self._create_app_icon()
         self.app.setWindowIcon(app_icon)
+
+        # Live OS-theme listener so a "system" theme selection follows Windows
+        # dark/light changes without a restart (R-32).
+        if sys.platform == 'win32':
+            try:
+                self._theme_filter = _SystemThemeFilter(self._on_system_theme_changed)
+                self.app.installNativeEventFilter(self._theme_filter)
+            except Exception:
+                log.warning("Could not install system-theme listener", exc_info=True)
 
         self._create_tray_icon()
         hotkeys_ready = self._register_hotkeys()
@@ -1703,6 +1738,25 @@ class SwiftShotApp:
     # Settings / About
     # -------------------------------------------------------------------
 
+    def _reapply_theme(self):
+        """Re-apply the current theme across the app, tray, and open editors."""
+        from theme import apply_theme, stylesheet_for_theme
+        apply_theme(self.app, config.THEME)
+        if self.tray_icon and self.tray_icon.contextMenu():
+            self.tray_icon.contextMenu().setStyleSheet(
+                stylesheet_for_theme(config.THEME))
+        for editor in list(self.editors):
+            try:
+                if editor.isVisible() and hasattr(editor, "retheme"):
+                    editor.retheme()
+            except Exception:
+                log.warning("Could not re-theme an open editor", exc_info=True)
+
+    def _on_system_theme_changed(self):
+        """WM_SETTINGCHANGE handler: refresh only when following the system."""
+        if config.THEME == "system":
+            self._reapply_theme()
+
     def show_settings(self):
         try:
             from settings_dialog import SettingsDialog
@@ -1712,16 +1766,15 @@ class SwiftShotApp:
             dialog = SettingsDialog()
             if dialog.exec_() == QDialog.Accepted:
                 apply_theme(self.app, config.THEME)
-                if (config.THEME != previous_theme
-                        and any(editor.isVisible() for editor in self.editors)):
-                    self._notify(
-                        "Theme saved",
-                        "Tray windows and new editors now use the selected "
-                        "theme. Existing editor windows keep their current "
-                        "theme until reopened so unsaved workspace state is "
-                        "not rebuilt.",
-                        duration_ms=5000,
-                    )
+                if config.THEME != previous_theme:
+                    # Live-retheme open editors (non-destructive; keeps unsaved
+                    # workspace state). Paint-time surfaces update immediately.
+                    for editor in list(self.editors):
+                        try:
+                            if editor.isVisible() and hasattr(editor, "retheme"):
+                                editor.retheme()
+                        except Exception:
+                            log.warning("Could not re-theme editor", exc_info=True)
                 if not self._reregister_hotkeys():
                     self._notify(
                         "Capture shortcuts unavailable",

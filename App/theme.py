@@ -48,7 +48,7 @@ LIGHT_COLORS = {
     "YELLOW": "#854d0e",
     "CANVAS_BG": "#e2e8f0",
 }
-THEME_LABELS = {"dark": "Dark", "light": "Light"}
+THEME_LABELS = {"system": "System (follow Windows)", "dark": "Dark", "light": "Light"}
 
 
 _BASE_STYLESHEET = """
@@ -401,6 +401,30 @@ def normalize_theme(theme_name):
     return theme_name if theme_name in THEME_LABELS else "dark"
 
 
+def windows_prefers_light():
+    """Read the Windows app-theme preference (True = light). False off Windows
+    or when the key is unreadable (defaults to dark)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return bool(value)
+    except OSError:
+        return False
+
+
+def effective_theme(theme_name):
+    """Resolve a theme setting to a concrete 'dark'/'light'. 'system' follows
+    the Windows app-theme preference; anything else normalizes directly."""
+    if theme_name == "system":
+        return "light" if windows_prefers_light() else "dark"
+    return normalize_theme(theme_name)
+
+
 def is_high_contrast_enabled():
     """Return the live Windows high-contrast preference without caching it."""
     if sys.platform != "win32":
@@ -456,7 +480,7 @@ def colors_for_theme(theme_name, high_contrast=None):
         high_contrast = is_high_contrast_enabled()
     if high_contrast:
         return _system_colors()
-    return LIGHT_COLORS if normalize_theme(theme_name) == "light" else DARK_COLORS
+    return LIGHT_COLORS if effective_theme(theme_name) == "light" else DARK_COLORS
 
 
 def stylesheet_for_theme(theme_name, high_contrast=None):
@@ -466,7 +490,7 @@ def stylesheet_for_theme(theme_name, high_contrast=None):
         # Native styling is the only reliable way to preserve user-selected
         # Windows high-contrast colors and focus indicators.
         return ""
-    return LIGHT_STYLESHEET if normalize_theme(theme_name) == "light" else DARK_STYLESHEET
+    return LIGHT_STYLESHEET if effective_theme(theme_name) == "light" else DARK_STYLESHEET
 
 
 def _apply_palette(app: QApplication, colors):

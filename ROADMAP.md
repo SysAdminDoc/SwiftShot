@@ -120,14 +120,3 @@ Net-new, code-verified findings from auditing the less-examined support modules 
 ### P1
 
 ### P2
-
-- [ ] R-29 P2 — Preserve the captured cursor as an editable layer
-  Why: Cursor pixels are baked into the screenshot, preventing QA/tutorial users from hiding, moving, or correcting them.
-  Evidence: `App/capture.py` cursor composition; Snagit editable cursor; ksnip movable cursor annotation.
-  Touches: `App/capture.py`, capture result model, `App/editor.py`, project serialization/tests.
-  Acceptance: Capture returns cursor bitmap, hotspot, position, and visibility separately; the editor creates a named movable/hideable layer without offset drift at mixed DPI; flattening matches legacy output by default; projects round-trip the cursor metadata and old projects still load.
-  Complexity: M
-
-- [ ] R-32 P2 — Finish live and system-following theme switching
-  Why: Existing editor windows embed palette values and generated icons at construction, so changing Preferences updates tray/new windows but cannot safely repaint an open unsaved editor; there is also no system-theme mode or live OS theme/high-contrast change listener.
-  Where: `App/editor.py`, `App/theme.py`, `App/app.py`, `App/settings_dialog.py`
