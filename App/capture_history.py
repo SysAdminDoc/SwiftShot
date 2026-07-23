@@ -7,6 +7,8 @@ import os
 import glob
 import hashlib
 import json
+import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -16,7 +18,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QApplication, QGridLayout, QFrame,
-    QMenu, QMessageBox, QLineEdit
+    QMenu, QMessageBox, QLineEdit, QCheckBox, QInputDialog
 )
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen
 from PyQt5.QtCore import (
@@ -58,8 +60,54 @@ def _history_files(history_dir):
     return files
 
 
+HISTORY_SCHEMA_VERSION = 2   # 1 = base, 2 = + favorite/tags (R-31)
+
+
 def _db_path(history_dir):
     return os.path.join(history_dir, "history.sqlite3")
+
+
+def _backup_db_file(history_dir, suffix):
+    """Copy the SQLite file to a timestamped backup before a schema migration
+    so a bad migration never loses the index. Best-effort — image files are the
+    source of truth and can rebuild the DB regardless."""
+    src = _db_path(history_dir)
+    if not os.path.exists(src):
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dst = os.path.join(history_dir, f"history.{suffix}.{stamp}.bak")
+    try:
+        shutil.copy2(src, dst)
+        return dst
+    except OSError:
+        log.warning("Could not back up history DB before migration", exc_info=True)
+        return None
+
+
+def _normalize_tags(value):
+    """Normalize tags (list or comma/space string) to a sorted, deduped,
+    lowercase list of non-empty tokens."""
+    if isinstance(value, str):
+        raw = re.split(r"[,\n]", value)
+    else:
+        raw = list(value or [])
+    seen = []
+    for t in raw:
+        tok = str(t).strip().lower()
+        if tok and tok not in seen:
+            seen.append(tok)
+    return sorted(seen)
+
+
+def _tags_to_str(tags):
+    """Store tags as a leading/trailing-comma-wrapped string so a LIKE
+    '%,tag,%' match is exact (no partial-token false positives)."""
+    norm = _normalize_tags(tags)
+    return "," + ",".join(norm) + "," if norm else ""
+
+
+def _tags_from_str(text):
+    return [t for t in (text or "").strip(",").split(",") if t]
 
 
 def _open_schema_db(history_dir):
@@ -83,8 +131,28 @@ def _open_schema_db(history_dir):
     }
     if "ocr_text" not in columns:
         conn.execute("ALTER TABLE captures ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''")
+    # Favorites + tags (R-31): a versioned, reversible migration. Back up the
+    # database before adding columns to an already-populated table, then apply
+    # the additive (non-destructive) ALTERs in one transaction.
+    needs_favorites = "favorite" not in columns
+    needs_tags = "tags" not in columns
+    if needs_favorites or needs_tags:
+        has_rows = conn.execute("SELECT COUNT(*) FROM captures").fetchone()[0] > 0
+        if has_rows:
+            _backup_db_file(history_dir, "pre-favorites")
+        with conn:
+            if needs_favorites:
+                conn.execute(
+                    "ALTER TABLE captures ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+            if needs_tags:
+                conn.execute(
+                    "ALTER TABLE captures ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+            conn.execute(f"PRAGMA user_version = {HISTORY_SCHEMA_VERSION}")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_captures_favorite ON captures(favorite)"
     )
     # Files we've already examined. A content-duplicate file can't be inserted
     # into `captures` (its sha256 is taken), so without this we'd re-read and
@@ -386,7 +454,8 @@ def _escape_like(text):
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _history_entries(history_dir, search_text=""):
+def _history_entries(history_dir, search_text="", favorites_only=False,
+                     tag_filter=""):
     if not os.path.isdir(history_dir):
         return []
     with _db(history_dir) as conn:
@@ -396,20 +465,58 @@ def _history_entries(history_dir, search_text=""):
         if search_text:
             where += (" AND (created_at LIKE ? ESCAPE '\\'"
                       " OR path LIKE ? ESCAPE '\\'"
-                      " OR ocr_text LIKE ? ESCAPE '\\')")
+                      " OR ocr_text LIKE ? ESCAPE '\\'"
+                      " OR tags LIKE ? ESCAPE '\\')")
             like = f"%{_escape_like(search_text)}%"
-            params.extend([like, like, like])
+            params.extend([like, like, like, like])
+        if favorites_only:
+            where += " AND favorite = 1"
+        tag = _normalize_tags(tag_filter)
+        if tag:
+            # Match the exact tag token via the ,tag, wrapping.
+            where += " AND tags LIKE ? ESCAPE '\\'"
+            params.append(f"%,{_escape_like(tag[0])},%")
+        # Favorites are never dropped by the display cap: keep every favorite,
+        # then fill the rest of the window with the newest non-favorites.
         rows = conn.execute(
             f"""
-            SELECT path, created_at, width, height, sha256, ocr_text, thumbnail_blob
+            SELECT path, created_at, width, height, sha256, ocr_text,
+                   favorite, tags, thumbnail_blob
             FROM captures
             {where}
-            ORDER BY created_at DESC, id DESC
+            ORDER BY favorite DESC, created_at DESC, id DESC
             LIMIT ?
             """,
             (*params, config.CAPTURE_HISTORY_MAX),
         ).fetchall()
-    return [dict(row) for row in rows if os.path.exists(row["path"])]
+    out = []
+    for row in rows:
+        if not os.path.exists(row["path"]):
+            continue
+        d = dict(row)
+        d["tags"] = _tags_from_str(d.get("tags", ""))
+        out.append(d)
+    return out
+
+
+def set_history_favorite(history_dir, filepath, favorite):
+    """Flag/unflag a capture as a favorite (protected from count retention)."""
+    try:
+        with _db(history_dir) as conn:
+            conn.execute("UPDATE captures SET favorite = ? WHERE path = ?",
+                         (1 if favorite else 0, filepath))
+    except Exception as e:
+        log.warning(f"Failed to update history favorite: {e}")
+
+
+def set_history_tags(history_dir, filepath, tags):
+    """Replace the tag set for a capture (list or comma/space string)."""
+    try:
+        with _db(history_dir) as conn:
+            conn.execute("UPDATE captures SET tags = ? WHERE path = ?",
+                         (_tags_to_str(tags), filepath))
+    except Exception as e:
+        log.warning(f"Failed to update history tags: {e}")
 
 
 def _delete_history_entry(history_dir, filepath):
@@ -434,9 +541,12 @@ def _remove_history_file(filepath):
 def _prune_history_retention(history_dir):
     """Retry old files without dropping their only DB reference on failure."""
     with _db(history_dir) as conn:
+        # Favorites are exempt from count-based retention: only non-favorites
+        # past the newest CAPTURE_HISTORY_MAX are eligible for pruning (R-31).
         old_entries = conn.execute(
             """
             SELECT path FROM captures
+            WHERE favorite = 0
             ORDER BY created_at DESC, id DESC
             LIMIT -1 OFFSET ?
             """,
@@ -478,10 +588,14 @@ class HistoryThumbnail(QFrame):
     copy_clipboard = pyqtSignal(str)    # filepath
     pin_image = pyqtSignal(str)         # filepath
     delete_entry = pyqtSignal(str)      # filepath
+    toggle_favorite = pyqtSignal(str, bool)   # filepath, favorite
+    edit_tags = pyqtSignal(str)               # filepath
 
     def __init__(self, entry, parent=None):
         super().__init__(parent)
         self.filepath = entry["path"] if isinstance(entry, dict) else entry
+        self._favorite = bool(entry.get("favorite")) if isinstance(entry, dict) else False
+        self._tags = entry.get("tags", []) if isinstance(entry, dict) else []
         self._hovered = False
         self._pixmap = QPixmap()
         if isinstance(entry, dict) and entry.get("thumbnail_blob"):
@@ -554,6 +668,18 @@ class HistoryThumbnail(QFrame):
             time_part = self._timestamp.split(" ")[-1] if " " in self._timestamp else self._timestamp
             painter.drawText(8, h - 8, time_part)
 
+        # Favorite star (top-right) and a tag dot (top-left) indicators.
+        if self._favorite:
+            painter.setPen(QColor(colors["ACCENT"]))
+            star_font = QFont("Segoe UI", 12)
+            painter.setFont(star_font)
+            painter.drawText(w - 22, 20, "★")   # ★
+        if self._tags:
+            painter.setPen(QColor(colors["TEXT_MUT"]))
+            tag_font = QFont("Segoe UI", 8)
+            painter.setFont(tag_font)
+            painter.drawText(8, 18, "●")         # ● tag marker
+
         painter.end()
 
     def enterEvent(self, event):
@@ -599,6 +725,17 @@ class HistoryThumbnail(QFrame):
 
         pin_act = menu.addAction("Pin to Desktop")
         pin_act.triggered.connect(lambda: self.pin_image.emit(self.filepath))
+
+        menu.addSeparator()
+
+        fav_act = menu.addAction(
+            "Remove Favorite" if self._favorite else "Mark as Favorite")
+        fav_act.triggered.connect(
+            lambda: self.toggle_favorite.emit(self.filepath, not self._favorite))
+
+        tags_label = f"Edit Tags ({len(self._tags)})…" if self._tags else "Edit Tags…"
+        tags_act = menu.addAction(tags_label)
+        tags_act.triggered.connect(lambda: self.edit_tags.emit(self.filepath))
 
         menu.addSeparator()
 
@@ -684,6 +821,12 @@ class CaptureHistoryDialog(QDialog):
             lambda _: self._search_timer.start())
         layout.addWidget(self.search_box)
 
+        self.favorites_filter = QCheckBox("Show favorites only")
+        self.favorites_filter.setToolTip(
+            "Favorites are protected from automatic history pruning")
+        self.favorites_filter.toggled.connect(lambda _: self._load_history())
+        layout.addWidget(self.favorites_filter)
+
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.PlainText)
         self.status_label.setWordWrap(True)
@@ -707,8 +850,11 @@ class CaptureHistoryDialog(QDialog):
 
         history_dir = config.CAPTURE_HISTORY_DIR
         search = self.search_box.text().strip()
+        favorites_only = bool(getattr(self, "favorites_filter", None)
+                              and self.favorites_filter.isChecked())
         if os.path.isdir(history_dir):
-            entries = _history_entries(history_dir, search)
+            entries = _history_entries(history_dir, search,
+                                       favorites_only=favorites_only)
         else:
             entries = []   # dir not created yet — show the same empty guidance
         self.clear_btn.setEnabled(bool(_history_files(history_dir)))
@@ -732,6 +878,8 @@ class CaptureHistoryDialog(QDialog):
                 thumb.copy_clipboard.connect(self._on_copy)
                 thumb.pin_image.connect(self._on_pin)
                 thumb.delete_entry.connect(self._on_delete)
+                thumb.toggle_favorite.connect(self._on_toggle_favorite)
+                thumb.edit_tags.connect(self._on_edit_tags)
                 self.grid.addWidget(thumb, i // cols, i % cols)
             suffix = "result" if len(entries) == 1 else "results"
             self.status_label.setText(f"Showing {len(entries)} {suffix}.")
@@ -770,6 +918,29 @@ class CaptureHistoryDialog(QDialog):
 
     def _on_pin(self, filepath):
         self.pin_to_desktop.emit(filepath)
+
+    def _on_toggle_favorite(self, filepath, favorite):
+        set_history_favorite(config.CAPTURE_HISTORY_DIR, filepath, favorite)
+        self.status_label.setText(
+            f"{'Marked' if favorite else 'Unmarked'} "
+            f"{os.path.basename(filepath)} as favorite.")
+        self.status_label.show()
+        self._load_history()
+
+    def _on_edit_tags(self, filepath):
+        with _db(config.CAPTURE_HISTORY_DIR) as conn:
+            row = conn.execute("SELECT tags FROM captures WHERE path = ?",
+                               (filepath,)).fetchone()
+        current = ", ".join(_tags_from_str(row["tags"])) if row else ""
+        text, ok = QInputDialog.getText(
+            self, "Edit Tags",
+            "Comma-separated tags (e.g. invoice, receipt):", text=current)
+        if not ok:
+            return
+        set_history_tags(config.CAPTURE_HISTORY_DIR, filepath, text)
+        self.status_label.setText(f"Updated tags for {os.path.basename(filepath)}.")
+        self.status_label.show()
+        self._load_history()
 
     def _on_delete(self, filepath):
         filename = os.path.basename(filepath)

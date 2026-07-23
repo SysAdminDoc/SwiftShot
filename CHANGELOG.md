@@ -5,6 +5,11 @@ All notable changes to SwiftShot will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Capture-history favorites and tags (R-31). Right-click a capture to mark it a
+  favorite or edit comma-separated tags; filter with **Show favorites only** and
+  search matches tags too. Favorites are exempt from count-based history pruning.
+  The schema migration is versioned and backs up the database before adding the
+  columns (reversible; image files remain the source of truth).
 - OCR language discovery and selection (R-30). Settings ▸ Advanced now lists the
   installed WinRT recognizer languages and any Tesseract languages, and lets you
   pick **Automatic** (Windows profile) or a specific language; the choice is
